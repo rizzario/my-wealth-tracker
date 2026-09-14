@@ -1,9 +1,17 @@
 <!-- BEGIN:nextjs-agent-rules -->
 
-# This is NOT the Next.js you know
+## Project: Personal Wealth & Expense Tracker
+- Tech Stack: Next.js (App Router), Tailwind CSS, Supabase (PostgreSQL)
 
-This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+## Database Tables:
+1. `portfolio_holdings`: Tracks Asset on Hand (Stocks, Funds, Crypto, Gold). Has generated columns for total costs and yield.
+2. `trade_transactions`: Trade ledger across BLS, FNS, and Dime.
+3. `cash_and_pvd_assets`: Liquid bank accounts, promo interest rates, and Provident Fund (PVD).
+4. `expense_income_transactions`: Daily/monthly income and expense records.
 
-This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+## Rules:
+- All queries must use `@/lib/supabase` client.
+- When calculating Net Worth: Sum of (total_present_price_thb) + liquid cash + PVD balance.
+- Keep UI mobile-friendly and fast.
 
 <!-- END:nextjs-agent-rules -->
