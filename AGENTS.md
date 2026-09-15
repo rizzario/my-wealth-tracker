@@ -39,6 +39,28 @@ Stores positions in stocks, crypto, gold, and mutual funds.
 
 *Note: Do NOT query `category` column from `portfolio_holdings` unless explicitly added in migration.*
 
+### Table: `cash_and_pvd_assets`
+Stores bank accounts, high-yield digital savings, fixed deposits, and Provident Fund (PVD).
+- `id` (BIGINT, PK)
+- `account_name` (VARCHAR(100))
+- `account_type` (VARCHAR(30)) - 'SAVINGS', 'HIGH_YIELD', 'FIXED_DEPOSIT', 'PVD'
+- `bank_name` (VARCHAR(50), nullable)
+- `account_number` (VARCHAR(30), nullable)
+- `current_balance` (NUMERIC(14,2))
+- `pvd_employee_contrib` (NUMERIC(14,2), nullable)
+- `pvd_employer_contrib` (NUMERIC(14,2), nullable)
+- `interest_rate` (NUMERIC(5,2), nullable)
+- `promo_interest_rate` (NUMERIC(5,2), nullable)
+- `promo_duration_days` (INTEGER, nullable)
+- `deposit_start_date` (DATE, nullable)
+- `maturity_date` (DATE, nullable)
+- `base_interest_rate` (NUMERIC(5,2), default 0.25)
+- `is_liquid` (BOOLEAN, default true)
+- `is_tax_exempt` (BOOLEAN, default false)
+- `interest_payout_frequency` (VARCHAR(30), default 'SEMI_ANNUAL')
+- `next_interest_payout_date` (DATE, nullable)
+- `updated_at` (TIMESTAMPTZ)
+
 ---
 
 ## 4. Architecture & Data Flow
