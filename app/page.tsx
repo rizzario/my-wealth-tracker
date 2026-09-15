@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { Wallet, TrendingUp, PiggyBank, PlusCircle, CalendarClock } from 'lucide-react';
+import PortfolioTable from './components/PortfolioTable';
 
 export default function Dashboard() {
   const [activeTab, setActiveTab] = useState<'overview' | 'holdings' | 'cash_pvd' | 'expenses'>('overview');
@@ -240,47 +241,7 @@ export default function Dashboard() {
 
         {/* Tab 2: Asset on Hand */}
         {activeTab === 'holdings' && (
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-            <div className="p-4 bg-slate-900 text-white flex justify-between items-center">
-              <h2 className="text-sm font-semibold">Asset on Hand ({holdings.length} รายการ)</h2>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs text-left border-collapse">
-                <thead className="bg-slate-100 text-slate-600 font-semibold border-b border-slate-200">
-                  <tr>
-                    <th className="p-3">Stock / List</th>
-                    <th className="p-3 text-right">Volume</th>
-                    <th className="p-3 text-right">Initial Cost</th>
-                    <th className="p-3 text-right">Total THB (Cost)</th>
-                    <th className="p-3 text-right">Present Price</th>
-                    <th className="p-3 text-right">Present THB</th>
-                    <th className="p-3 text-right">Yield (%)</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {holdings.map((item) => (
-                    <tr key={item.id} className="hover:bg-slate-50 transition-colors">
-                      <td className="p-3 font-semibold text-slate-800">{item.symbol}</td>
-                      <td className="p-3 text-right font-mono">{Number(item.volume).toLocaleString()}</td>
-                      <td className="p-3 text-right font-mono">{Number(item.initial_cost).toLocaleString()}</td>
-                      <td className="p-3 text-right font-mono text-slate-600">
-                        ฿{Number(item.total_cost_thb).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      </td>
-                      <td className="p-3 text-right font-mono font-medium text-blue-700">
-                        {Number(item.present_price).toLocaleString()}
-                      </td>
-                      <td className="p-3 text-right font-mono font-semibold text-slate-900">
-                        ฿{Number(item.total_present_price_thb).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      </td>
-                      <td className={`p-3 text-right font-mono font-bold ${Number(item.yield_percent) >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                        {Number(item.yield_percent) >= 0 ? '+' : ''}{Number(item.yield_percent).toFixed(2)}%
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
+          <PortfolioTable />
         )}
 
         {/* Tab 3: เงินฝาก & PVD */}
