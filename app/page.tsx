@@ -241,7 +241,7 @@ export default function Dashboard() {
 
         {/* Tab 2: Asset on Hand */}
         {activeTab === 'holdings' && (
-          <PortfolioTable />
+          <PortfolioTable onHoldingsUpdated={fetchData} />
         )}
 
         {/* Tab 3: เงินฝาก & PVD */}
