@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import { supabase } from '@/lib/supabase';
+import { createClient } from '@/lib/supabase/client';
 import { ArrowUpDown, ArrowUp, ArrowDown, Pencil, Check, X, RotateCw, Loader2 } from 'lucide-react';
 
 interface Holding {
@@ -37,6 +37,8 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editPriceInput, setEditPriceInput] = useState<string>('');
   const [savingRowId, setSavingRowId] = useState<string | null>(null);
+
+  const supabase = createClient();
 
   // ดึงข้อมูลพอร์ตล่าสุดจาก Supabase
   const fetchHoldings = async () => {
@@ -408,4 +410,4 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
       </div>
     </div>
   );
-}
+}

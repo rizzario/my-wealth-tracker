@@ -1,11 +1,22 @@
 'use client';
+
+import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabase';
+import { createClient } from '@/lib/supabase/client';
 import { Wallet, TrendingUp, PiggyBank, PlusCircle, CalendarClock, Eye, EyeOff } from 'lucide-react';
 import PortfolioTable from '../components/PortfolioTable';
 import CashAndPVDTable from '../components/CashAndPvdSection';
 
-export default function Dashboard() {
+export default function Home() {
+  const router = useRouter();
+  const supabase = createClient();
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+    router.push('/login');
+    router.refresh();
+  };
+
   const [activeTab, setActiveTab] = useState<'overview' | 'holdings' | 'cash_pvd' | 'expenses'>('overview');
   
   // States ข้อมูล
@@ -45,10 +56,6 @@ export default function Dashboard() {
     });
   };
 
-  useEffect(() => {
-    fetchData();
-  }, []);
-
   const fetchData = async () => {
     // 1. ดึงข้อมูลพอร์ตลงทุน
     const { data: hData } = await supabase.from('portfolio_holdings').select('*');
@@ -66,6 +73,10 @@ export default function Dashboard() {
       .limit(15);
     if (tData) setTransactions(tData);
   };
+
+  useEffect(() => {
+    fetchData();
+  }, []);
 
   // คำนวณภาพรวม Net Worth
   const totalHoldingsCostTHB = holdings.reduce((sum, item) => sum + Number(item.total_cost_thb || 0), 0);
@@ -106,19 +117,34 @@ export default function Dashboard() {
             <Wallet className="h-6 w-6 text-emerald-400" />
             <h1 className="text-xl font-bold tracking-tight">Personal Wealth Hub</h1>
           </div>
-          <nav className="flex space-x-1 bg-emerald-900/60 p-1 rounded-lg text-xs font-medium">
-            {(['overview', 'holdings', 'cash_pvd', 'expenses'] as const).map(tab => (
-              <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className={`px-3 py-1.5 rounded-md capitalize transition-all ${
-                  activeTab === tab ? 'bg-emerald-500 text-white shadow' : 'text-emerald-200 hover:text-white'
-                }`}
-              >
-                {tab === 'overview' ? 'ภาพรวม' : tab === 'holdings' ? 'พอร์ตลงทุน' : tab === 'cash_pvd' ? 'เงินฝาก & PVD' : 'รับ-จ่าย'}
-              </button>
-            ))}
-          </nav>
+
+          <div className="flex items-center space-x-3">
+            <nav className="flex space-x-1 bg-emerald-900/60 p-1 rounded-lg text-xs font-medium">
+              {(['overview', 'holdings', 'cash_pvd', 'expenses'] as const).map(tab => (
+                <button
+                  key={tab}
+                  onClick={() => setActiveTab(tab)}
+                  className={`px-3 py-1.5 rounded-md capitalize transition-all ${
+                    activeTab === tab ? 'bg-emerald-500 text-white shadow' : 'text-emerald-200 hover:text-white'
+                  }`}
+                >
+                  {tab === 'overview' ? 'ภาพรวม' : tab === 'holdings' ? 'พอร์ตลงทุน' : tab === 'cash_pvd' ? 'เงินฝาก & PVD' : 'รับ-จ่าย'}
+                </button>
+              ))}
+            </nav>
+
+            {/* เส้นคั่นเล็กๆ */}
+            <div className="h-5 w-[1px] bg-emerald-800" />
+
+            {/* ปุ่ม Logout */}
+            <button
+              onClick={handleSignOut}
+              className="px-2.5 py-1.5 text-xs text-emerald-300 hover:text-red-300 hover:bg-emerald-900/80 rounded-md transition"
+              title="ออกจากระบบ"
+            >
+              ออกจากระบบ
+            </button>
+          </div>
         </div>
       </header>
 

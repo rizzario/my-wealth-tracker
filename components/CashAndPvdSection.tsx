@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { supabase } from '@/lib/supabase';
+import { createClient } from '@/lib/supabase/client';
 import { calculateAccountInterest } from '@/utils/interestCalculator';
 import { Eye, EyeOff } from 'lucide-react';
 
@@ -36,6 +36,8 @@ export default function CashAndPvdSection({ onCashPvdUpdated }: CashAndPvdSectio
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const supabase = createClient();
 
   // State สำหรับการซ่อน/แสดงเลขที่บัญชี
   const [hideAllAccountNumbers, setHideAllAccountNumbers] = useState<boolean>(true);
