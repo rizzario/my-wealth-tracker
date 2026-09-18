@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { createClient } from '@/lib/supabase/server';
+import { createClient as createAdminClient } from '@supabase/supabase-js';
 import YahooFinance from 'yahoo-finance2';
 
 const yahooFinance = new YahooFinance();
@@ -22,15 +23,15 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const targetId = searchParams.get('id');
 
-    let usdThbRate = 35.5;
-    try {
-      const fxRes = await fetch('https://open.er-api.com/v6/latest/USD');
-      if (fxRes.ok) {
-        const fxData = await fxRes.json();
-        if (fxData?.rates?.THB) usdThbRate = Number(fxData.rates.THB);
-      }
-    } catch {
-      console.warn('Fallback FX rate');
+    // เลือกระหว่าง Service Role (สำหรับ Cron/Admin) กับ Server Client (สำหรับ User Session) เพื่อให้ผ่าน RLS
+    let supabase;
+    if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      supabase = createAdminClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.SUPABASE_SERVICE_ROLE_KEY!
+      );
+    } else {
+      supabase = await createClient();
     }
 
     // สร้าง query: ถ้ามี targetId ให้กรองเฉพาะแถวนั้น
@@ -67,10 +68,7 @@ export async function GET(req: NextRequest) {
           try {
             const quote: any = await yahooFinance.quote(querySymbol);
             if (quote?.regularMarketPrice) {
-              const price = Number(quote.regularMarketPrice);
-              latestPrice = (!querySymbol.endsWith('.BK') && quote.currency === 'USD')
-                ? price
-                : price;
+              latestPrice = Number(quote.regularMarketPrice);
             }
           } catch (e) {
             console.error(`Stock fetch failed: ${sym}`, e);
@@ -82,12 +80,18 @@ export async function GET(req: NextRequest) {
         const { error: updateError } = await supabase
           .from('portfolio_holdings')
           .update({
-            present_price: parseFloat(latestPrice.toFixed(2)),
+            present_price: parseFloat(latestPrice.toFixed(4)),
             updated_at: new Date().toISOString(),
           })
           .eq('id', item.id);
 
-        updates.push({ id: item.id, symbol: sym, newPrice: latestPrice, success: !updateError });
+        updates.push({
+          id: item.id,
+          symbol: sym,
+          newPrice: latestPrice,
+          success: !updateError,
+          error: updateError?.message,
+        });
       }
     }
 
