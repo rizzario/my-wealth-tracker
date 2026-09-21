@@ -83,6 +83,23 @@ Daily income/expense logging.
 - `transaction_date` (DATE, default CURRENT_DATE)
 - `created_at` (TIMESTAMPTZ)
 
+### Table: `financial_accounts`
+Operational cash flow & liability tracking accounts.
+- `id` (UUID, PK, default gen_random_uuid())
+- `user_id` (UUID, FK -> auth.users(id) ON DELETE CASCADE)
+- `account_name` (VARCHAR(100)) - Account or card nickname
+- `account_type` (VARCHAR(30)) - 'bank', 'cash', 'credit_card', or 'loan'
+- `bank_name` (VARCHAR(50), nullable) - Institution name (e.g. 'Krungsri', 'KBank', 'KTC')
+- `account_number` (VARCHAR(30), nullable) - Masked number or last 4 digits
+- `is_liability` (BOOLEAN, default false) - false = Asset, true = Short-term debt
+- `current_balance` (NUMERIC(14,2), default 0.00) - Current liquid balance or outstanding balance
+- `credit_limit` (NUMERIC(14,2), default 0.00) - Total credit line for credit card/loan
+- `interest_rate` (NUMERIC(5,2), default 0.00) - Annual interest rate (% p.a.)
+- `billing_cycle_day` (INTEGER, nullable) - Statement closing date (1-31)
+- `payment_due_day` (INTEGER, nullable) - Payment due date (1-31)
+- `created_at` (TIMESTAMPTZ, default NOW())
+- `updated_at` (TIMESTAMPTZ, default NOW())
+
 ---
 
 ## 4. Architecture & Data Flow

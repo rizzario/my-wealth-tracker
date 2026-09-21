@@ -7,6 +7,14 @@ export async function middleware(request: NextRequest) {
     request,
   });
 
+  const url = request.nextUrl.clone();
+  const pathname = url.pathname;
+
+  // 1. สำคัญที่สุด: ถ้าเป็น path /auth (callback) ปล่อยให้ผ่านเลย ห้ามตรวจ session และห้าม redirect เด็ดขาด
+  if (pathname.startsWith('/auth')) {
+    return supabaseResponse;
+  }
+
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
@@ -32,19 +40,14 @@ export async function middleware(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  const isLoginPage = request.nextUrl.pathname.startsWith('/login');
-  const isAuthApi = request.nextUrl.pathname.startsWith('/api/auth');
-
-  // 1. ถ้ายังไม่ล็อกอิน และพยายามเข้าหน้าอื่น (ยกเว้นหน้า login หรือ api auth) -> ส่งไปหน้า login
-  if (!user && !isLoginPage && !isAuthApi) {
-    const url = request.nextUrl.clone();
+  // 2. ถ้ายังไม่ล็อกอิน และพยายามเข้าหน้าที่ไม่ใช่ /login ให้พาไป /login
+  if (!user && pathname !== '/login') {
     url.pathname = '/login';
     return NextResponse.redirect(url);
   }
 
-  // 2. ถ้าล็อกอินอยู่แล้ว และเปิดมาหน้า login -> ส่งไปหน้า Dashboard หลัก (/)
-  if (user && isLoginPage) {
-    const url = request.nextUrl.clone();
+  // 3. ถ้าล็อกอินแล้ว แล้วยังอยู่ที่หน้า /login ให้พาไปหน้าแรก (/)
+  if (user && pathname === '/login') {
     url.pathname = '/';
     return NextResponse.redirect(url);
   }
@@ -54,7 +57,6 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    // ดักจับทุก Path ยกเว้นไฟล์ static, รูปภาพ, favicon
     '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 };

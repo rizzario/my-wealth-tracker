@@ -1,11 +1,14 @@
+// app/page.tsx
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { createClient } from '@/lib/supabase/client';
-import { Wallet, TrendingUp, PiggyBank, PlusCircle, CalendarClock, Eye, EyeOff } from 'lucide-react';
+import { Wallet, TrendingUp, PiggyBank, CalendarClock, Eye, EyeOff } from 'lucide-react';
 import PortfolioTable from '../components/PortfolioTable';
 import CashAndPVDTable from '../components/CashAndPvdSection';
+import ExpenseIncomeSection from '../components/ExpenseIncomeSection';
+import { useIdleTimer } from './hooks/useIdleTimer';
 
 export default function Home() {
   const router = useRouter();
@@ -17,20 +20,15 @@ export default function Home() {
     router.refresh();
   };
 
+  useIdleTimer();
+
   const [activeTab, setActiveTab] = useState<'overview' | 'holdings' | 'cash_pvd' | 'expenses'>('overview');
   
   // States ข้อมูล
   const [holdings, setHoldings] = useState<any[]>([]);
   const [cashPvd, setCashPvd] = useState<any[]>([]);
-  const [transactions, setTransactions] = useState<any[]>([]);
-  
-  // State สำหรับฟอร์มบันทึกค่าใช้จ่าย
-  const [formType, setFormType] = useState<'EXPENSE' | 'INCOME'>('EXPENSE');
-  const [category, setCategory] = useState('อาหาร');
-  const [amount, setAmount] = useState('');
-  const [note, setNote] = useState('');
-
-  // State สำหรับซ่อน/แสดงมูลค่าบน Top Cards (Privacy Mode)
+  const [totalLiquidCash, setTotalLiquidCash] = useState(0);
+  const [recentTransactions, setRecentTransactions] = useState<any[]>([]);
   const [hideValues, setHideValues] = useState<boolean>(false);
 
   useEffect(() => {
@@ -40,7 +38,7 @@ export default function Home() {
         setHideValues(saved === 'true');
       }
     } catch {
-      // ignore in environments without localStorage
+      // ignore
     }
   }, []);
 
@@ -56,7 +54,8 @@ export default function Home() {
     });
   };
 
-  const fetchData = async () => {
+  // ดึงข้อมูลภาพรวมทั้งหมดในฟังก์ชันเดียว
+  const fetchAllOverviewData = useCallback(async () => {
     // 1. ดึงข้อมูลพอร์ตลงทุน
     const { data: hData } = await supabase.from('portfolio_holdings').select('*');
     if (hData) setHoldings(hData);
@@ -65,48 +64,43 @@ export default function Home() {
     const { data: cData } = await supabase.from('cash_and_pvd_assets').select('*');
     if (cData) setCashPvd(cData);
 
-    // 3. ดึงรายการรับ-จ่ายล่าสุด 15 รายการ
+    // 3. ดึงยอดเงินหมุนเวียนจาก financial_accounts
+    const { data: operationalCash } = await supabase
+      .from('financial_accounts')
+      .select('current_balance')
+      .eq('is_liability', false);
+
+    const longTermCashTotal = cData
+      ?.filter((item: any) => item.account_type === 'CASH' || item.asset_type === 'CASH')
+      .reduce((sum: number, item: any) => sum + Number(item.amount || item.current_balance || 0), 0) || 0;
+
+    const opCashTotal = operationalCash?.reduce((sum, item) => sum + Number(item.current_balance || 0), 0) || 0;
+    setTotalLiquidCash(longTermCashTotal + opCashTotal);
+
+    // 4. ดึงธุรกรรมล่าสุดมาแสดงใน Tab Overview
     const { data: tData } = await supabase
       .from('expense_income_transactions')
       .select('*')
       .order('transaction_date', { ascending: false })
-      .limit(15);
-    if (tData) setTransactions(tData);
-  };
+      .limit(5);
+    if (tData) setRecentTransactions(tData);
+  }, [supabase]);
 
   useEffect(() => {
-    fetchData();
-  }, []);
+    fetchAllOverviewData();
+  }, [fetchAllOverviewData]);
 
-  // คำนวณภาพรวม Net Worth
+  // คำนวณตัวเลขสรุป
   const totalHoldingsCostTHB = holdings.reduce((sum, item) => sum + Number(item.total_cost_thb || 0), 0);
   const totalHoldingsValueTHB = holdings.reduce((sum, item) => sum + Number(item.total_present_price_thb || 0), 0);
   const holdingsPL = totalHoldingsValueTHB - totalHoldingsCostTHB;
   const holdingsYield = totalHoldingsCostTHB > 0 ? (holdingsPL / totalHoldingsCostTHB) * 100 : 0;
 
-  const totalLiquidCash = cashPvd.filter(item => item.is_liquid).reduce((sum, item) => sum + Number(item.current_balance || 0), 0);
-  const totalPVD = cashPvd.filter(item => item.account_type === 'PVD').reduce((sum, item) => sum + Number(item.current_balance || 0), 0);
+  const totalPVD = cashPvd
+    .filter(item => item.account_type === 'PVD' || item.asset_type === 'PVD')
+    .reduce((sum, item) => sum + Number(item.current_balance || item.amount || 0), 0);
   
   const totalNetWorth = totalHoldingsValueTHB + totalLiquidCash + totalPVD;
-
-  // บันทึกรายรับ-รายจ่าย
-  const handleSaveTransaction = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!amount) return;
-
-    await supabase.from('expense_income_transactions').insert([
-      {
-        type: formType,
-        category,
-        amount: parseFloat(amount),
-        note
-      }
-    ]);
-
-    setAmount('');
-    setNote('');
-    fetchData();
-  };
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 pb-12">
@@ -133,10 +127,8 @@ export default function Home() {
               ))}
             </nav>
 
-            {/* เส้นคั่นเล็กๆ */}
             <div className="h-5 w-[1px] bg-emerald-800" />
 
-            {/* ปุ่ม Logout */}
             <button
               onClick={handleSignOut}
               className="px-2.5 py-1.5 text-xs text-emerald-300 hover:text-red-300 hover:bg-emerald-900/80 rounded-md transition"
@@ -161,7 +153,6 @@ export default function Home() {
                 onClick={toggleHideValues}
                 title={hideValues ? 'แสดงตัวเลขยอดเงิน' : 'ซ่อนตัวเลขยอดเงิน'}
                 className="text-slate-400 hover:text-emerald-700 p-1 -mr-1 rounded-md hover:bg-emerald-50 transition cursor-pointer"
-                aria-label={hideValues ? 'แสดงตัวเลขยอดเงิน' : 'ซ่อนตัวเลขยอดเงิน'}
               >
                 {hideValues ? <EyeOff className="h-4 w-4 text-emerald-600" /> : <Eye className="h-4 w-4" />}
               </button>
@@ -224,113 +215,57 @@ export default function Home() {
           </div>
         </section>
 
-        {/* Tab 1: Overview & Quick Expense Form */}
+        {/* Tab 1: Overview (หน้าสรุปและรายการล่าสุดแบบกว้าง) */}
         {activeTab === 'overview' && (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* ฝั่งซ้าย: ฟอร์มบันทึกรับ-จ่าย */}
-            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-4">
-              <h2 className="text-base font-bold flex items-center gap-2">
-                <PlusCircle className="h-5 w-5 text-emerald-600" /> บันทึกรายรับ-รายจ่าย
-              </h2>
-              <form onSubmit={handleSaveTransaction} className="space-y-3 text-sm">
-                <div className="grid grid-cols-2 gap-2 bg-slate-100 p-1 rounded-lg">
-                  <button
-                    type="button"
-                    onClick={() => setFormType('EXPENSE')}
-                    className={`py-1.5 rounded-md font-medium text-xs transition-all ${
-                      formType === 'EXPENSE' ? 'bg-rose-600 text-white shadow-sm' : 'text-slate-600'
-                    }`}
-                  >
-                    รายจ่าย
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setFormType('INCOME')}
-                    className={`py-1.5 rounded-md font-medium text-xs transition-all ${
-                      formType === 'INCOME' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-600'
-                    }`}
-                  >
-                    รายรับ
-                  </button>
-                </div>
-
-                <div>
-                  <label className="text-xs text-slate-500 font-medium">หมวดหมู่</label>
-                  <input
-                    type="text"
-                    value={category}
-                    onChange={(e) => setCategory(e.target.value)}
-                    placeholder="เช่น อาหาร, เดินทาง, ช้อปปิ้ง, เงินเดือน"
-                    className="w-full mt-1 border border-slate-300 rounded-lg p-2 text-sm focus:outline-emerald-600"
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label className="text-xs text-slate-500 font-medium">จำนวนเงิน (บาท)</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
-                    placeholder="0.00"
-                    className="w-full mt-1 border border-slate-300 rounded-lg p-2 text-sm focus:outline-emerald-600 font-medium"
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label className="text-xs text-slate-500 font-medium">บันทึกช่วยจำ (Note)</label>
-                  <input
-                    type="text"
-                    value={note}
-                    onChange={(e) => setNote(e.target.value)}
-                    placeholder="รายละเอียดเพิ่มเติม (ถ้ามี)"
-                    className="w-full mt-1 border border-slate-300 rounded-lg p-2 text-sm focus:outline-emerald-600"
-                  />
-                </div>
-
-                <button
-                  type="submit"
-                  className="w-full bg-emerald-700 hover:bg-emerald-800 text-white font-medium py-2.5 rounded-lg transition-all text-sm mt-2 shadow-sm"
-                >
-                  บันทึกรายการ
-                </button>
-              </form>
+          <div className="bg-white rounded-2xl p-6 border border-slate-200/80 shadow-sm space-y-4">
+            <div className="flex justify-between items-center">
+              <h2 className="text-base font-bold text-slate-800">รายการบันทึกล่าสุด</h2>
+              <button
+                onClick={() => setActiveTab('expenses')}
+                className="text-xs font-semibold text-emerald-700 hover:text-emerald-800"
+              >
+                ดูทั้งหมดและบันทึกรายการ →
+              </button>
             </div>
-
-            {/* ฝั่งขวา: รายการธุรกรรมรับ-จ่ายล่าสุด */}
-            <div className="lg:col-span-2 bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
-              <h2 className="text-base font-bold mb-4">รายการบันทึกล่าสุด</h2>
-              <div className="divide-y divide-slate-100 overflow-y-auto max-h-[360px]">
-                {transactions.length === 0 ? (
-                  <p className="text-sm text-slate-400 py-4 text-center">ยังไม่มีรายการบันทึก</p>
-                ) : (
-                  transactions.map((tx) => (
-                    <div key={tx.id} className="py-2.5 flex justify-between items-center text-sm">
+            <div className="divide-y divide-slate-100">
+              {recentTransactions.length === 0 ? (
+                <p className="text-sm text-slate-400 py-6 text-center">ยังไม่มีรายการบันทึก</p>
+              ) : (
+                recentTransactions.map((tx) => {
+                  const typeVal = String(tx.type || tx.transaction_type || '').toUpperCase();
+                  const isIncome = typeVal === 'INCOME';
+                  return (
+                    <div key={tx.id} className="py-3 flex justify-between items-center text-sm">
                       <div>
                         <p className="font-semibold text-slate-800">{tx.category}</p>
-                        <p className="text-xs text-slate-400">{tx.transaction_date} {tx.note && `• ${tx.note}`}</p>
+                        <p className="text-xs text-slate-400 mt-0.5">
+                          {tx.transaction_date} {tx.note && `• ${tx.note}`}
+                        </p>
                       </div>
-                      <span className={`font-bold ${tx.type === 'INCOME' ? 'text-emerald-600' : 'text-slate-800'}`}>
-                        {tx.type === 'INCOME' ? '+' : '-'}฿{Number(tx.amount).toLocaleString('th-TH', { minimumFractionDigits: 2 })}
+                      <span className={`font-bold text-sm ${isIncome ? 'text-emerald-600' : 'text-slate-800'}`}>
+                        {isIncome ? '+' : '-'}฿{Number(tx.amount || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 })}
                       </span>
                     </div>
-                  ))
-                )}
-              </div>
+                  );
+                })
+              )}
             </div>
           </div>
         )}
 
         {/* Tab 2: Asset on Hand */}
         {activeTab === 'holdings' && (
-          <PortfolioTable onHoldingsUpdated={fetchData} />
+          <PortfolioTable onHoldingsUpdated={fetchAllOverviewData} />
         )}
 
         {/* Tab 3: เงินฝาก & PVD */}
         {activeTab === 'cash_pvd' && (
-          <CashAndPVDTable onCashPvdUpdated={fetchData} />
+          <CashAndPVDTable onCashPvdUpdated={fetchAllOverviewData} />
+        )}
+
+        {/* Tab 4: Expense & Income */}
+        {activeTab === 'expenses' && (
+          <ExpenseIncomeSection onCashFlowUpdated={fetchAllOverviewData} />
         )}
       </main>
     </div>

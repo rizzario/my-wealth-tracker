@@ -1,3 +1,4 @@
+// app/auth/callback/route.ts
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 
@@ -14,6 +15,6 @@ export async function GET(request: Request) {
     }
   }
 
-  // หากเกิดข้อผิดพลาด ให้กลับไปหน้า login
-  return NextResponse.redirect(`${origin}/login?error=oauth_failed`);
+  // ถ้าแลกโค้ดไม่ผ่าน ให้กลับไปหน้า login พร้อม error
+  return NextResponse.redirect(`${origin}/login?error=auth_failed`);
 }
