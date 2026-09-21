@@ -8,7 +8,7 @@ import { Eye, EyeOff } from 'lucide-react';
 export interface CashPvdAsset {
   id: number;
   account_name: string;
-  account_type: 'SAVINGS' | 'HIGH_YIELD' | 'FIXED_DEPOSIT' | 'PVD' | string;
+  account_type: 'HIGH_YIELD' | 'FIXED_DEPOSIT' | 'PVD' | string;
   bank_name: string | null;
   account_number: string | null;
   current_balance: number;
@@ -170,7 +170,7 @@ export default function CashAndPvdSection({ onCashPvdUpdated }: CashAndPvdSectio
       maturity_date: formData.maturity_date || null,
       pvd_employee_contrib: isPvd ? (parseFloat(formData.pvd_employee_contrib) || 0) : 0,
       pvd_employer_contrib: isPvd ? (parseFloat(formData.pvd_employer_contrib) || 0) : 0,
-      is_liquid: isPvd ? false : formData.is_liquid,
+      is_liquid: isPvd || formData.account_type === 'FIXED_DEPOSIT' ? false : formData.is_liquid,
       is_tax_exempt: formData.is_tax_exempt,
       interest_payout_frequency: formData.interest_payout_frequency,
       updated_at: new Date().toISOString(),
@@ -267,9 +267,13 @@ export default function CashAndPvdSection({ onCashPvdUpdated }: CashAndPvdSectio
     }
   };
 
-  // คำนวณยอดเงินสด และ PVD
+  // คำนวณยอดเงินสดสภาพคล่อง, เงินฝากประจำ และ PVD ตามกฎการแบ่งประเภทบัญชี (AGENTS.md §3.0 & §3.5)
   const totalLiquidCash = assets
-    .filter((a) => a.account_type !== 'PVD' && a.is_liquid)
+    .filter((a) => a.account_type !== 'PVD' && a.account_type !== 'FIXED_DEPOSIT' && a.is_liquid)
+    .reduce((sum, a) => sum + (Number(a.current_balance) || 0), 0);
+
+  const totalFixedDeposit = assets
+    .filter((a) => a.account_type === 'FIXED_DEPOSIT')
     .reduce((sum, a) => sum + (Number(a.current_balance) || 0), 0);
 
   const totalPvd = assets
@@ -351,14 +355,24 @@ export default function CashAndPvdSection({ onCashPvdUpdated }: CashAndPvdSectio
       )}
 
       {/* 2. Top Summary Metrics Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className={`grid grid-cols-1 ${totalFixedDeposit > 0 ? 'sm:grid-cols-2 lg:grid-cols-4' : 'md:grid-cols-3'} gap-4`}>
         <div className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm">
-          <p className="text-xs text-gray-500 font-medium uppercase">เงินสดสภาพคล่องรวม (Liquid Cash)</p>
+          <p className="text-xs text-gray-500 font-medium uppercase">เงินสดดอกเบี้ยสูง (High-Yield Cash)</p>
           <h3 className="text-2xl font-bold text-gray-900 mt-1">
             ฿{totalLiquidCash.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </h3>
-          <p className="text-xs text-gray-400 mt-1">บัญชีออมทรัพย์และเงินฝากพร้อมใช้</p>
+          <p className="text-xs text-gray-400 mt-1">เงินฝากสภาพคล่องสูงเพื่อผลตอบแทน</p>
         </div>
+
+        {totalFixedDeposit > 0 && (
+          <div className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm">
+            <p className="text-xs text-gray-500 font-medium uppercase">เงินฝากประจำ (Fixed Deposit)</p>
+            <h3 className="text-2xl font-bold text-purple-600 mt-1">
+              ฿{totalFixedDeposit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </h3>
+            <p className="text-xs text-gray-400 mt-1">เงินฝากประจำระยะยาวรอครบกำหนด</p>
+          </div>
+        )}
 
         <div className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm">
           <p className="text-xs text-gray-500 font-medium uppercase">กองทุนสำรองเลี้ยงชีพ (PVD)</p>
@@ -570,9 +584,8 @@ export default function CashAndPvdSection({ onCashPvdUpdated }: CashAndPvdSectio
                     onChange={(e) => setFormData({ ...formData, account_type: e.target.value })}
                     className="w-full border rounded-lg p-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
                   >
-                    <option value="HIGH_YIELD">HIGH_YIELD (ออมทรัพย์ดอกสูง)</option>
-                    <option value="SAVINGS">SAVINGS (ออมทรัพย์ทั่วไป)</option>
-                    <option value="FIXED_DEPOSIT">FIXED_DEPOSIT (ฝากประจำ)</option>
+                    <option value="HIGH_YIELD">HIGH_YIELD (เงินฝากดอกเบี้ยสูง / บัญชีพักเงิน)</option>
+                    <option value="FIXED_DEPOSIT">FIXED_DEPOSIT (เงินฝากประจำ)</option>
                     <option value="PVD">PVD (กองทุนสำรองเลี้ยงชีพ)</option>
                   </select>
                 </div>
@@ -586,6 +599,12 @@ export default function CashAndPvdSection({ onCashPvdUpdated }: CashAndPvdSectio
                     onChange={(e) => setFormData({ ...formData, bank_name: e.target.value })}
                     className="w-full border rounded-lg p-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
                   />
+                </div>
+
+                <div className="col-span-2">
+                  <p className="text-[11px] text-slate-500 bg-slate-50 p-2.5 rounded-xl border border-slate-200/80">
+                    💡 <strong>คำแนะนำการแบ่งหมวดหมู่:</strong> หน้านี้สำหรับสินทรัพย์ล็อก/พักเงินเพื่อผลตอบแทน หากเป็นบัญชีออมทรัพย์ที่ใช้จ่ายในชีวิตประจำวัน/บัตรเครดิต ให้บันทึกในแท็บ <strong>&quot;รับ-จ่าย (Cash Flow)&quot;</strong> เพื่อติดตามกระแสเงินสด
+                  </p>
                 </div>
 
                 <div className="col-span-2">

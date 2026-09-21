@@ -2,13 +2,14 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { Wallet, TrendingUp, PiggyBank, CalendarClock, Eye, EyeOff } from 'lucide-react';
 import PortfolioTable from '../components/PortfolioTable';
 import CashAndPVDTable from '../components/CashAndPvdSection';
 import ExpenseIncomeSection from '../components/ExpenseIncomeSection';
 import { useIdleTimer } from './hooks/useIdleTimer';
+import { calculateNetWorthSummary } from '@/lib/networth';
 
 export default function Home() {
   const router = useRouter();
@@ -27,7 +28,7 @@ export default function Home() {
   // States ข้อมูล
   const [holdings, setHoldings] = useState<any[]>([]);
   const [cashPvd, setCashPvd] = useState<any[]>([]);
-  const [totalLiquidCash, setTotalLiquidCash] = useState(0);
+  const [financialAccounts, setFinancialAccounts] = useState<any[]>([]);
   const [recentTransactions, setRecentTransactions] = useState<any[]>([]);
   const [hideValues, setHideValues] = useState<boolean>(false);
 
@@ -64,18 +65,9 @@ export default function Home() {
     const { data: cData } = await supabase.from('cash_and_pvd_assets').select('*');
     if (cData) setCashPvd(cData);
 
-    // 3. ดึงยอดเงินหมุนเวียนจาก financial_accounts
-    const { data: operationalCash } = await supabase
-      .from('financial_accounts')
-      .select('current_balance')
-      .eq('is_liability', false);
-
-    const longTermCashTotal = cData
-      ?.filter((item: any) => item.account_type === 'CASH' || item.asset_type === 'CASH')
-      .reduce((sum: number, item: any) => sum + Number(item.amount || item.current_balance || 0), 0) || 0;
-
-    const opCashTotal = operationalCash?.reduce((sum, item) => sum + Number(item.current_balance || 0), 0) || 0;
-    setTotalLiquidCash(longTermCashTotal + opCashTotal);
+    // 3. ดึงบัญชีการเงินหมุนเวียนทั้งหมด (รวมทั้งสินทรัพย์และหนี้สิน) จาก financial_accounts
+    const { data: fData } = await supabase.from('financial_accounts').select('*');
+    if (fData) setFinancialAccounts(fData);
 
     // 4. ดึงธุรกรรมล่าสุดมาแสดงใน Tab Overview
     const { data: tData } = await supabase
@@ -90,17 +82,10 @@ export default function Home() {
     fetchAllOverviewData();
   }, [fetchAllOverviewData]);
 
-  // คำนวณตัวเลขสรุป
-  const totalHoldingsCostTHB = holdings.reduce((sum, item) => sum + Number(item.total_cost_thb || 0), 0);
-  const totalHoldingsValueTHB = holdings.reduce((sum, item) => sum + Number(item.total_present_price_thb || 0), 0);
-  const holdingsPL = totalHoldingsValueTHB - totalHoldingsCostTHB;
-  const holdingsYield = totalHoldingsCostTHB > 0 ? (holdingsPL / totalHoldingsCostTHB) * 100 : 0;
-
-  const totalPVD = cashPvd
-    .filter(item => item.account_type === 'PVD' || item.asset_type === 'PVD')
-    .reduce((sum, item) => sum + Number(item.current_balance || item.amount || 0), 0);
-  
-  const totalNetWorth = totalHoldingsValueTHB + totalLiquidCash + totalPVD;
+  // คำนวณตัวเลขสรุปความมั่งคั่งตามสูตร Canonical Formula (AGENTS.md §3.8)
+  const summary = useMemo(() => {
+    return calculateNetWorthSummary(holdings, cashPvd, financialAccounts);
+  }, [holdings, cashPvd, financialAccounts]);
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 pb-12">
@@ -161,9 +146,14 @@ export default function Home() {
               {hideValues ? (
                 <span className="tracking-widest font-mono text-slate-400 select-none">฿••••••••</span>
               ) : (
-                `฿${totalNetWorth.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                `฿${summary.netWorth.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
               )}
             </p>
+            {summary.totalLiabilities > 0 && !hideValues && (
+              <p className="text-[11px] text-slate-400 mt-1">
+                (หักหนี้สินบัตร/สินเชื่อ ฿{summary.totalLiabilities.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
+              </p>
+            )}
           </div>
 
           <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
@@ -174,14 +164,14 @@ export default function Home() {
               {hideValues ? (
                 <span className="tracking-widest font-mono text-slate-400 select-none">฿••••••••</span>
               ) : (
-                `฿${totalHoldingsValueTHB.toLocaleString('th-TH', { maximumFractionDigits: 0 })}`
+                `฿${summary.totalHoldingsValueTHB.toLocaleString('th-TH', { maximumFractionDigits: 0 })}`
               )}
             </p>
-            <p className={`text-xs font-semibold mt-1 ${holdingsPL >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+            <p className={`text-xs font-semibold mt-1 ${summary.holdingsPL >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
               {hideValues ? (
                 <span className="tracking-widest font-mono text-slate-400 select-none">••••••</span>
               ) : (
-                `${holdingsPL >= 0 ? '+' : ''}฿${holdingsPL.toLocaleString('th-TH', { maximumFractionDigits: 0 })} (${holdingsYield.toFixed(2)}%)`
+                `${summary.holdingsPL >= 0 ? '+' : ''}฿${summary.holdingsPL.toLocaleString('th-TH', { maximumFractionDigits: 0 })} (${summary.holdingsYield.toFixed(2)}%)`
               )}
             </p>
           </div>
@@ -194,24 +184,29 @@ export default function Home() {
               {hideValues ? (
                 <span className="tracking-widest font-mono text-slate-400 select-none">฿••••••••</span>
               ) : (
-                `฿${totalLiquidCash.toLocaleString('th-TH', { minimumFractionDigits: 2 })}`
+                `฿${summary.totalLiquidCash.toLocaleString('th-TH', { minimumFractionDigits: 2 })}`
               )}
             </p>
-            <span className="text-xs text-slate-400">เงินฝากออมทรัพย์ทุกธนาคาร</span>
+            <span className="text-xs text-slate-400">เงินฝากออมทรัพย์ & บัญชีหมุนเวียน</span>
           </div>
 
           <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
             <span className="text-xs font-medium text-slate-500 flex items-center gap-1.5">
-              <CalendarClock className="h-4 w-4 text-purple-600" /> กองทุนสำรองเลี้ยงชีพ (PVD)
+              <CalendarClock className="h-4 w-4 text-purple-600" />{' '}
+              {summary.totalFixedDeposit > 0 ? 'เงินฝากประจำ & PVD' : 'กองทุนสำรองเลี้ยงชีพ (PVD)'}
             </span>
             <p className="text-2xl font-bold mt-2 text-slate-900">
               {hideValues ? (
                 <span className="tracking-widest font-mono text-slate-400 select-none">฿••••••••</span>
               ) : (
-                `฿${totalPVD.toLocaleString('th-TH', { minimumFractionDigits: 2 })}`
+                `฿${(summary.totalPVD + summary.totalFixedDeposit).toLocaleString('th-TH', { minimumFractionDigits: 2 })}`
               )}
             </p>
-            <span className="text-xs text-slate-400">สินทรัพย์เพื่อการเกษียณ</span>
+            <span className="text-xs text-slate-400">
+              {summary.totalFixedDeposit > 0
+                ? `PVD: ฿${summary.totalPVD.toLocaleString('th-TH', { maximumFractionDigits: 0 })} • ฝากประจำ: ฿${summary.totalFixedDeposit.toLocaleString('th-TH', { maximumFractionDigits: 0 })}`
+                : 'สินทรัพย์เพื่อการเกษียณ'}
+            </span>
           </div>
         </section>
 

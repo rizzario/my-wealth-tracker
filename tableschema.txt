@@ -1,0 +1,176 @@
+create table public.cash_and_pvd_assets (
+  id bigserial not null,
+  account_name character varying(100) not null,
+  account_type character varying(30) not null,
+  bank_name character varying(50) null,
+  account_number character varying(30) null,
+  current_balance numeric(14, 2) not null default 0.00,
+  pvd_employee_contrib numeric(14, 2) null default 0.00,
+  pvd_employer_contrib numeric(14, 2) null default 0.00,
+  interest_rate numeric(5, 2) null default 0.00,
+  is_liquid boolean null default true,
+  updated_at timestamp with time zone null default now(),
+  interest_payout_frequency character varying(30) null default 'SEMI_ANNUAL'::character varying,
+  promo_interest_rate numeric(5, 2) null,
+  promo_duration_days integer null,
+  deposit_start_date date null,
+  maturity_date date null,
+  base_interest_rate numeric(5, 2) null default 0.25,
+  is_tax_exempt boolean null default false,
+  next_interest_payout_date date null,
+  user_id uuid null default auth.uid (),
+  tax_deductible boolean null default false,
+  cost_basis numeric(14, 2) null default 0.00,
+  holding_period_years integer null,
+  notes text null,
+  constraint cash_and_pvd_assets_pkey primary key (id),
+  constraint cash_and_pvd_assets_user_id_fkey foreign KEY (user_id) references auth.users (id) on delete CASCADE
+) TABLESPACE pg_default;
+
+create table public.expense_income_transactions (
+  id bigserial not null,
+  transaction_date date not null default CURRENT_DATE,
+  type character varying(10) not null,
+  category character varying(50) not null,
+  amount numeric(12, 2) not null,
+  account_id bigint null,
+  note text null,
+  created_at timestamp with time zone null default now(),
+  user_id uuid null default auth.uid (),
+  constraint expense_income_transactions_pkey primary key (id),
+  constraint expense_income_transactions_account_id_fkey foreign KEY (account_id) references cash_and_pvd_assets (id),
+  constraint expense_income_transactions_user_id_fkey foreign KEY (user_id) references auth.users (id) on delete CASCADE,
+  constraint expense_income_transactions_type_check check (
+    (
+      (type)::text = any (
+        (
+          array[
+            'INCOME'::character varying,
+            'EXPENSE'::character varying
+          ]
+        )::text[]
+      )
+    )
+  )
+) TABLESPACE pg_default;
+
+create trigger on_transaction_inserted
+after INSERT on expense_income_transactions for EACH row
+execute FUNCTION update_account_balance ();
+
+create table public.financial_accounts (
+  id uuid not null default gen_random_uuid (),
+  user_id uuid null,
+  account_name text not null,
+  account_type text not null,
+  is_liability boolean null default false,
+  current_balance numeric(14, 2) null default 0,
+  billing_cycle_day integer null,
+  payment_due_day integer null,
+  created_at timestamp with time zone null default now(),
+  bank_name character varying(50) null,
+  account_number character varying(30) null,
+  interest_rate numeric(5, 2) null default 0.00,
+  credit_limit numeric(14, 2) null default 0.00,
+  updated_at timestamp with time zone null,
+  constraint financial_accounts_pkey primary key (id),
+  constraint financial_accounts_user_id_fkey foreign KEY (user_id) references auth.users (id) on delete CASCADE
+) TABLESPACE pg_default;
+
+create table public.portfolio_holdings (
+  id bigserial not null,
+  symbol character varying(50) not null,
+  currency character varying(10) not null default 'THB'::character varying,
+  volume numeric(18, 8) not null default 0,
+  initial_cost numeric(18, 4) not null default 0,
+  present_price numeric(18, 4) not null default 0,
+  exchange_rate numeric(10, 4) not null default 1.0,
+  total_cost numeric GENERATED ALWAYS as ((volume * initial_cost)) STORED (18, 4) null,
+  total_cost_thb numeric GENERATED ALWAYS as (
+    case
+      when ((currency)::text = 'USD'::text) then ((volume * initial_cost) * exchange_rate)
+      else (volume * initial_cost)
+    end
+  ) STORED (18, 4) null,
+  total_present_price numeric GENERATED ALWAYS as ((volume * present_price)) STORED (18, 4) null,
+  total_present_price_thb numeric GENERATED ALWAYS as (
+    case
+      when ((currency)::text = 'USD'::text) then ((volume * present_price) * exchange_rate)
+      else (volume * present_price)
+    end
+  ) STORED (18, 4) null,
+  yield_percent numeric GENERATED ALWAYS as (
+    case
+      when (initial_cost > (0)::numeric) then (
+        ((present_price - initial_cost) / initial_cost) * (100)::numeric
+      )
+      else (0)::numeric
+    end
+  ) STORED (10, 4) null,
+  updated_at timestamp with time zone null default now(),
+  user_id uuid null default auth.uid (),
+  constraint portfolio_holdings_pkey primary key (id),
+  constraint portfolio_holdings_symbol_key unique (symbol),
+  constraint portfolio_holdings_user_id_fkey foreign KEY (user_id) references auth.users (id) on delete CASCADE
+) TABLESPACE pg_default;
+
+create table public.profiles (
+  id uuid not null,
+  full_name text null,
+  avatar_url text null,
+  preferred_currency character varying(3) null default 'THB'::character varying,
+  updated_at timestamp with time zone null default now(),
+  constraint profiles_pkey primary key (id),
+  constraint profiles_id_fkey foreign KEY (id) references auth.users (id) on delete CASCADE
+) TABLESPACE pg_default;
+
+create table public.trade_transactions (
+  id bigserial not null,
+  broker character varying(30) not null,
+  order_id character varying(50) null,
+  trade_date date not null,
+  trade_year integer GENERATED ALWAYS as (
+    EXTRACT(
+      year
+      from
+        trade_date
+    )
+  ) STORED null,
+  side character varying(10) not null,
+  stock_symbol character varying(50) not null,
+  currency character varying(10) not null default 'THB'::character varying,
+  units numeric(18, 8) not null,
+  unit_price numeric(18, 4) not null,
+  exchange_rate numeric(12, 6) null default 1.0,
+  gross_amount numeric(18, 4) null,
+  fee numeric(12, 4) null default 0.00,
+  withholding_tax numeric(12, 4) null default 0.00,
+  net_amount numeric(18, 4) not null,
+  gross_amount_thb numeric(18, 4) null,
+  fee_thb numeric(12, 4) null default 0.00,
+  net_amount_thb numeric(18, 4) not null,
+  reason text null,
+  created_at timestamp with time zone null default now(),
+  user_id uuid null default auth.uid (),
+  constraint trade_transactions_pkey primary key (id),
+  constraint trade_transactions_user_id_fkey foreign KEY (user_id) references auth.users (id) on delete CASCADE,
+  constraint trade_transactions_side_check check (
+    (
+      (side)::text = any (
+        (
+          array[
+            'BUY'::character varying,
+            'SELL'::character varying,
+            'FREE'::character varying
+          ]
+        )::text[]
+      )
+    )
+  )
+) TABLESPACE pg_default;
+
+create index IF not exists idx_trades_broker on public.trade_transactions using btree (broker) TABLESPACE pg_default;
+
+create index IF not exists idx_trades_symbol on public.trade_transactions using btree (stock_symbol) TABLESPACE pg_default;
+
+create index IF not exists idx_trades_date on public.trade_transactions using btree (trade_date desc) TABLESPACE pg_default;
