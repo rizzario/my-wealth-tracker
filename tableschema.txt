@@ -58,34 +58,33 @@ create trigger on_transaction_inserted
 after INSERT on expense_income_transactions for EACH row
 execute FUNCTION update_account_balance ();
 
-create table public.financial_accounts (
-  id uuid not null default gen_random_uuid (),
-  user_id uuid not null default auth.uid (),
-  account_name text not null,
-  account_type text not null,
-  is_liability boolean null default false,
-  current_balance numeric(14, 2) null default 0,
-  billing_cycle_day integer null,
-  payment_due_day integer null,
-  created_at timestamp with time zone null default now(),
-  bank_name character varying(50) null,
-  account_number character varying(30) null,
-  interest_rate numeric(5, 2) null default 0.00,
-  credit_limit numeric(14, 2) null default 0.00,
-  updated_at timestamp with time zone null default now(),
-  currency character varying(10) not null default 'THB'::character varying,
-  constraint financial_accounts_pkey primary key (id),
-  constraint financial_accounts_user_id_fkey foreign KEY (user_id) references auth.users (id) on delete CASCADE,
-  constraint chk_operating_types check (
-    (
-      account_type = any (
-        array[
-          'bank'::text,
-          'cash'::text,
-          'credit_card'::text,
-          'loan'::text
-        ]
-      )
+CREATE TABLE public.financial_accounts (
+  id UUID NOT NULL DEFAULT gen_random_uuid (),
+  user_id UUID NOT NULL DEFAULT auth.uid (),
+  account_name TEXT NOT NULL,
+  account_type TEXT NOT NULL,
+  is_liability BOOLEAN NOT NULL DEFAULT false,
+  current_balance NUMERIC(14, 2) NOT NULL DEFAULT 0.00,
+  currency VARCHAR(10) NOT NULL DEFAULT 'THB',
+  cost_exchange_rate NUMERIC(12, 6) NOT NULL DEFAULT 1.000000, -- เรทตอนแลกเงิน (เช่น 35.20)
+  billing_cycle_day INTEGER NULL,
+  payment_due_day INTEGER NULL,
+  bank_name VARCHAR(50) NULL,
+  account_number VARCHAR(30) NULL,
+  interest_rate NUMERIC(5, 2) NOT NULL DEFAULT 0.00,
+  credit_limit NUMERIC(14, 2) NOT NULL DEFAULT 0.00,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT financial_accounts_pkey PRIMARY KEY (id),
+  CONSTRAINT financial_accounts_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users (id) ON DELETE CASCADE,
+  CONSTRAINT chk_operating_types CHECK (
+    account_type = ANY (
+      ARRAY[
+        'bank'::TEXT,
+        'cash'::TEXT,
+        'credit_card'::TEXT,
+        'loan'::TEXT
+      ]
     )
   )
 ) TABLESPACE pg_default;

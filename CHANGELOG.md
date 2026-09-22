@@ -1,7 +1,3 @@
-The modification confirms that the "ExpenseIncomeSection" component now segregates account creation into distinct tabs. One tab presents options for bank and the other for credit card.
-
-  > I have updated the account creation and editing form in ExpenseIncomeSection.tsx to separate Bank / Cash Accounts (Assets) from Credit Cards & Loans   
-
 ### (Liabilities) using a dedicated Tab Switcher and Bullet Points.
 
 ### Key Improvements Made
@@ -46,8 +42,7 @@ Each tab contains contextual bullet-point options:
 
 ---
 
-The code defines supported currencies and their symbols, indicating how they are represented in the application. An external service is used to fetch...
-We have updated the exchange rate ingestion and portfolio holdings flow according to your requirements and the tableschema.txt:191-196 schema.         
+### Add section separate from cash and credit      
 
 ### What Was Implemented
 
@@ -109,3 +104,71 @@ make the database generated columns multi-currency:
 • Production build verified via npm run build with 0 errors.
 
 ---
+
+### Foreign Currency Deposit (FCD) & Cash Exchange Rate Support in `ExpenseIncomeSection`
+
+Added multi-currency support and initial exchange rate tracking for deposit and cash accounts (`financial_accounts`) to accommodate Foreign Currency Deposit (FCD) accounts and foreign cash holdings.
+
+#### 1. Currency Dropdown & Initial FX Rate Input (`ExpenseIncomeSection.tsx`)
+- **Currency Field**: Added a drop-down selector supporting `THB`, `USD`, `EUR`, `HKD`, `JPY`, and `SGD` (via `CURRENCY_OPTIONS` in `lib/currency.ts`), defaulting to `THB`.
+- **Initial Exchange Rate (`init_exchange_rate` / `cost_exchange_rate`)**:
+  - Numeric input field (4 decimal places, default blank).
+  - Allows users to specify the actual historical conversion rate when depositing foreign currency.
+  - If `currency === 'THB'`, the field is disabled and set to `1.0`.
+  - If left blank for foreign currencies, the system automatically falls back to `rate_to_thb` fetched from the `currency_exchange_rates` table.
+  - Interactive placeholder showing the latest reference rate and live THB equivalent preview while typing the balance.
+
+#### 2. Persistence & Fallback Logic (`handleSaveAccount`)
+- Automatically queries the `currency_exchange_rates` table on component mount (`fetchFxRates`) and during save.
+- When inserting or updating `financial_accounts`:
+  - `currency` is stored in uppercase.
+  - If user provides a custom exchange rate, it is saved into `cost_exchange_rate`.
+  - If blank, `cost_exchange_rate` is populated using `rate_to_thb` from `currency_exchange_rates`.
+- Edit modal (`handleOpenEditForm`) pre-populates existing currency and custom exchange rate.
+
+#### 3. FCD Account Card & Metric Updates
+- **Card Display**: Added an `FCD [CURRENCY]` badge for non-THB accounts. Displays native balance with currency symbol (e.g. `$1,000.00`) alongside estimated THB equivalent and effective rate (e.g. `≈ ฿35,500.00 (@35.5000)`).
+- **Privacy Mode**: Fully respects privacy toggles for both native currency and THB equivalent amounts.
+- **Summary Metrics (`totalAssets`, `netBalance`)**: Multiplies foreign balances by `cost_exchange_rate` to calculate true THB totals, ensuring full alignment with the canonical Net Worth formula in `lib/networth.ts`.
+- **Transaction Dropdown**: Formats account options with currency code and appropriate currency symbol.
+
+#### 4. Schema & System Documentation
+- Updated `tableschema.txt` and `AGENTS.md` to reflect `cost_exchange_rate numeric(10, 4) not null default 1.0` on `financial_accounts` and documented `currency_exchange_rates` RLS policies.
+
+### Verification
+- Production build verified via `npm run build` with 0 errors.
+
+---
+
+### Asset on Hand Management & Buy on Dip / Stop Loss Support (`PortfolioTable.tsx`)
+
+Enhanced `PortfolioTable.tsx` to support complete lifecycle management of assets on hand (`portfolio_holdings`), including adding new holdings, deleting existing holdings, and comprehensive editing of holding volumes, average cost basis, and market price, protected by Supabase Row Level Security (RLS).
+
+#### 1. Add Asset on Hand Modal
+- Added a dedicated `+ เพิ่มสินทรัพย์` button in the section header.
+- Provides a clean modal to record new investment holdings:
+  - **Symbol**: Auto-capitalized ticker input (e.g. `AAPL`, `NVDA`, `BTC`, `PTT`).
+  - **Currency**: Multi-currency selector (`THB`, `USD`, `EUR`, `HKD`, `JPY`, `SGD`).
+  - **Volume & Average Cost**: Required fields with fractional/decimal precision support for crypto and equities.
+  - **Market Price**: Optional field (defaults to average cost if blank, with automated background price sync via `/api/update-prices?id=...`).
+- Explicitly binds `user_id: user.id` on insertion for RLS compliance and multi-user isolation.
+
+#### 2. Remove Asset on Hand (Delete Holding)
+- Added a `Trash2` action button for each asset row.
+- Confirmation dialog prevents accidental deletions.
+- Removes the record from `portfolio_holdings` via Supabase RLS (`.delete().eq('id', item.id)`), automatically updating portfolio valuations and Net Worth.
+
+#### 3. Edit Volume & Average Cost with Buy on Dip / Stop Loss Calculator
+- Upgraded the `Pencil` button from only editing current price to opening a full Asset Editing Modal:
+  - Direct editing of `volume`, `initial_cost` (average cost), and `present_price`.
+  - **Built-in DCA / Buy on Dip Calculator**:
+    - Users enter additional shares bought and buy price (`ซื้อเพิ่มกี่หน่วย ที่ราคาเท่าใด`).
+    - Automatically calculates weighted average cost: `(curVol * curCost + addVol * addPrice) / (curVol + addVol)`.
+    - One-click application updates form fields with real-time preview.
+  - **Built-in Stop Loss / Partial Sell Calculator**:
+    - Users enter units sold to trim positions or cut losses.
+    - Validates against current volume and updates remaining units while keeping the weighted average cost basis intact.
+- Preserved quick inline editing of `present_price` directly on table cells for fast single-price adjustments.
+
+### Verification
+- Production build verified via `npm run build` with 0 errors.

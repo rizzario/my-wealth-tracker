@@ -16,7 +16,9 @@ import {
   Eye,
   EyeOff,
   AlertCircle,
+  Coins,
 } from 'lucide-react';
+import { CURRENCY_OPTIONS, getCurrencySymbol } from '@/lib/currency';
 
 export interface FinancialAccount {
   id: string;
@@ -33,6 +35,8 @@ export interface FinancialAccount {
   payment_due_day?: number | null;
   created_at?: string;
   updated_at?: string;
+  currency?: string;
+  cost_exchange_rate?: number;
 }
 
 interface FinancialTransactionProps {
@@ -50,6 +54,8 @@ interface AccountFormData {
   billing_cycle_day: string;
   payment_due_day: string;
   is_liability: boolean;
+  currency: string;
+  cost_exchange_rate: string;
 }
 
 const initialFormState: AccountFormData = {
@@ -63,6 +69,8 @@ const initialFormState: AccountFormData = {
   billing_cycle_day: '',
   payment_due_day: '',
   is_liability: false,
+  currency: 'THB',
+  cost_exchange_rate: '',
 };
 
 // รายชื่อสถาบันการเงินและธนาคารยอดนิยมในไทย
@@ -103,6 +111,7 @@ export default function CashflowPage({ onCashFlowUpdated }: FinancialTransaction
   const [submittingAccount, setSubmittingAccount] = useState(false);
   const [hideAccountNumbers, setHideAccountNumbers] = useState(true);
   const [hideCashFlow, setHideCashFlow] = useState(false);
+  const [fxRates, setFxRates] = useState<Record<string, number>>({ THB: 1.0 });
 
   useEffect(() => {
     try {
@@ -190,10 +199,35 @@ export default function CashflowPage({ onCashFlowUpdated }: FinancialTransaction
     }
   };
 
+  // ดึงอัตราแลกเปลี่ยนปัจจุบันสำหรับ FCD
+  const fetchFxRates = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('currency_exchange_rates')
+        .select('currency, rate_to_thb');
+
+      if (error) {
+        console.warn('Error fetching currency_exchange_rates:', error.message);
+        return;
+      }
+      if (data && data.length > 0) {
+        const map: Record<string, number> = { THB: 1.0 };
+        for (const item of data) {
+          if (item.currency) {
+            map[item.currency.toUpperCase()] = Number(item.rate_to_thb);
+          }
+        }
+        setFxRates(map);
+      }
+    } catch (err: any) {
+      console.warn('Error in fetchFxRates:', err?.message);
+    }
+  };
+
   useEffect(() => {
     const initLoad = async () => {
       setLoading(true);
-      await Promise.all([fetchAccounts(), fetchTransactions()]);
+      await Promise.all([fetchAccounts(), fetchTransactions(), fetchFxRates()]);
       setLoading(false);
     };
     initLoad();
@@ -216,6 +250,8 @@ export default function CashflowPage({ onCashFlowUpdated }: FinancialTransaction
         ...prev,
         account_type: prev.account_type === 'loan' ? 'loan' : 'credit_card',
         is_liability: true,
+        currency: 'THB',
+        cost_exchange_rate: '',
       }));
     }
   };
@@ -228,6 +264,8 @@ export default function CashflowPage({ onCashFlowUpdated }: FinancialTransaction
       ...prev,
       account_type: newType,
       is_liability: isLiability,
+      currency: isLiability ? 'THB' : prev.currency,
+      cost_exchange_rate: isLiability ? '' : prev.cost_exchange_rate,
     }));
   };
 
@@ -239,6 +277,8 @@ export default function CashflowPage({ onCashFlowUpdated }: FinancialTransaction
       ...initialFormState,
       account_type: initialCategory === 'asset' ? 'bank' : 'credit_card',
       is_liability: initialCategory === 'liability',
+      currency: 'THB',
+      cost_exchange_rate: '',
     });
     setIsFormOpen(true);
   };
@@ -248,6 +288,7 @@ export default function CashflowPage({ onCashFlowUpdated }: FinancialTransaction
     setEditingAccountId(acc.id);
     const isLiability = Boolean(acc.is_liability || acc.account_type === 'credit_card' || acc.account_type === 'loan');
     setFormCategory(isLiability ? 'liability' : 'asset');
+    const accCurrency = (acc.currency || 'THB').toUpperCase();
     setFormData({
       account_name: acc.account_name || '',
       account_type: acc.account_type || (isLiability ? 'credit_card' : 'bank'),
@@ -259,6 +300,8 @@ export default function CashflowPage({ onCashFlowUpdated }: FinancialTransaction
       billing_cycle_day: acc.billing_cycle_day != null ? String(acc.billing_cycle_day) : '',
       payment_due_day: acc.payment_due_day != null ? String(acc.payment_due_day) : '',
       is_liability: isLiability,
+      currency: accCurrency,
+      cost_exchange_rate: acc.cost_exchange_rate != null && accCurrency !== 'THB' ? String(acc.cost_exchange_rate) : '',
     });
     setIsFormOpen(true);
   };
@@ -286,6 +329,31 @@ export default function CashflowPage({ onCashFlowUpdated }: FinancialTransaction
       const billingCycleDay = isLiability && formData.billing_cycle_day ? parseInt(formData.billing_cycle_day, 10) : null;
       const paymentDueDay = isLiability && formData.payment_due_day ? parseInt(formData.payment_due_day, 10) : null;
 
+      const currencyUpper = isLiability ? 'THB' : (formData.currency || 'THB').toUpperCase();
+      let finalCostFxRate = 1.0;
+
+      if (!isLiability && currencyUpper !== 'THB') {
+        const userProvidedRate = parseFloat(formData.cost_exchange_rate);
+        if (!isNaN(userProvidedRate) && userProvidedRate > 0) {
+          finalCostFxRate = userProvidedRate;
+        } else {
+          // If init_exchange_rate is blank or not provided, fetch rate_to_thb from currency_exchange_rates
+          if (fxRates[currencyUpper] && fxRates[currencyUpper] > 0) {
+            finalCostFxRate = fxRates[currencyUpper];
+          } else {
+            const { data: rateRow } = await supabase
+              .from('currency_exchange_rates')
+              .select('rate_to_thb')
+              .eq('currency', currencyUpper)
+              .maybeSingle();
+
+            if (rateRow && Number(rateRow.rate_to_thb) > 0) {
+              finalCostFxRate = Number(rateRow.rate_to_thb);
+            }
+          }
+        }
+      }
+
       const payload = {
         user_id: user.id,
         account_name: formData.account_name.trim(),
@@ -298,6 +366,8 @@ export default function CashflowPage({ onCashFlowUpdated }: FinancialTransaction
         interest_rate: interestRateNum,
         billing_cycle_day: billingCycleDay,
         payment_due_day: paymentDueDay,
+        currency: currencyUpper,
+        cost_exchange_rate: finalCostFxRate,
         updated_at: new Date().toISOString(),
       };
 
@@ -446,14 +516,23 @@ export default function CashflowPage({ onCashFlowUpdated }: FinancialTransaction
     }
   };
 
-  // คำนวณยอดสรุป
+  // Helper แปลงยอดเงินในบัญชีเป็น THB (สำหรับ FCD และบัญชีต่างประเทศ)
+  const getAccountBalanceInThb = (acc: FinancialAccount) => {
+    const raw = Number(acc.current_balance || 0);
+    const curr = (acc.currency || 'THB').toUpperCase();
+    if (curr === 'THB') return raw;
+    const rate = Number(acc.cost_exchange_rate || fxRates[curr] || 1.0);
+    return raw * rate;
+  };
+
+  // คำนวณยอดสรุป (แปลงเป็น THB ตามสูตร Net Worth)
   const totalAssets = accounts
     .filter((a) => !a.is_liability)
-    .reduce((sum, a) => sum + Number(a.current_balance || 0), 0);
+    .reduce((sum, a) => sum + getAccountBalanceInThb(a), 0);
 
   const totalLiabilities = accounts
     .filter((a) => a.is_liability)
-    .reduce((sum, a) => sum + Number(a.current_balance || 0), 0);
+    .reduce((sum, a) => sum + getAccountBalanceInThb(a), 0);
 
   const netBalance = totalAssets - totalLiabilities;
 
@@ -730,7 +809,66 @@ export default function CashflowPage({ onCashFlowUpdated }: FinancialTransaction
 
                     <div>
                       <label className="block text-xs font-semibold text-slate-700 mb-1">
-                        ยอดเงินคงเหลือปัจจุบัน (บาท) <span className="text-rose-500">*</span>
+                        สกุลเงิน (Currency)
+                      </label>
+                      <select
+                        value={formData.currency}
+                        onChange={(e) => {
+                          const nextCurr = e.target.value;
+                          setFormData({
+                            ...formData,
+                            currency: nextCurr,
+                            cost_exchange_rate: nextCurr === 'THB' ? '' : formData.cost_exchange_rate,
+                          });
+                        }}
+                        className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl bg-white outline-none focus:ring-2 focus:ring-emerald-500 font-medium cursor-pointer"
+                      >
+                        {CURRENCY_OPTIONS.map((curr) => (
+                          <option key={curr.code} value={curr.code}>
+                            {curr.code} - {curr.name} ({curr.symbol})
+                          </option>
+                        ))}
+                      </select>
+                      <span className="text-[11px] text-slate-400 mt-0.5 block">
+                        {formData.currency === 'THB' ? 'บัญชีสกุลเงินบาทปกติ' : 'บัญชีเงินฝากเงินตราต่างประเทศ (FCD)'}
+                      </span>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                        อัตราแลกเปลี่ยนเริ่มต้น (เรทต้นทุน)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.0001"
+                        disabled={formData.currency === 'THB'}
+                        placeholder={
+                          formData.currency === 'THB'
+                            ? '1.0000 (บาท)'
+                            : fxRates[formData.currency]
+                            ? `เช่น ${fxRates[formData.currency].toFixed(4)} (ว่าง = ใช้เรทนี้)`
+                            : 'เช่น 35.50 (ว่าง = ใช้เรทอ้างอิง)'
+                        }
+                        value={formData.currency === 'THB' ? '' : formData.cost_exchange_rate}
+                        onChange={(e) => setFormData({ ...formData, cost_exchange_rate: e.target.value })}
+                        className={`w-full px-3 py-2 text-sm border rounded-xl outline-none transition ${
+                          formData.currency === 'THB'
+                            ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed'
+                            : 'bg-white border-slate-300 focus:ring-2 focus:ring-emerald-500'
+                        }`}
+                      />
+                      <span className="text-[11px] text-slate-400 mt-0.5 block">
+                        {formData.currency === 'THB'
+                          ? 'สกุลเงิน THB ใช้เรทคงที่ 1.0'
+                          : fxRates[formData.currency]
+                          ? `เว้นว่างไว้ = ใช้เรทอ้างอิงล่าสุด (${fxRates[formData.currency].toFixed(4)} ฿/${formData.currency})`
+                          : 'เว้นว่างไว้ = ใช้อัตราแลกเปลี่ยนอ้างอิงล่าสุดจากระบบ'}
+                      </span>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                        ยอดเงินคงเหลือปัจจุบัน ({getCurrencySymbol(formData.currency)} {formData.currency}) <span className="text-rose-500">*</span>
                       </label>
                       <input
                         type="number"
@@ -741,7 +879,19 @@ export default function CashflowPage({ onCashFlowUpdated }: FinancialTransaction
                         onChange={(e) => setFormData({ ...formData, current_balance: e.target.value })}
                         className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl bg-white outline-none focus:ring-2 focus:ring-emerald-500 font-semibold"
                       />
-                      <span className="text-[11px] text-slate-400 mt-0.5 block">ยอดยกมาเริ่มต้นสำหรับบันทึกรับ-จ่าย</span>
+                      <span className="text-[11px] text-slate-400 mt-0.5 block">
+                        {formData.currency !== 'THB' && formData.current_balance && !isNaN(parseFloat(formData.current_balance)) ? (
+                          <span className="text-emerald-700 font-medium">
+                            ≈ ฿{(
+                              parseFloat(formData.current_balance) *
+                              (parseFloat(formData.cost_exchange_rate) || fxRates[formData.currency] || 1.0)
+                            ).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}{' '}
+                            บาท
+                          </span>
+                        ) : (
+                          'ยอดยกมาเริ่มต้นสำหรับบันทึกรับ-จ่าย'
+                        )}
+                      </span>
                     </div>
 
                     <div>
@@ -972,6 +1122,10 @@ export default function CashflowPage({ onCashFlowUpdated }: FinancialTransaction
                 const creditLimitNum = Number(acc.credit_limit || 0);
                 const balanceNum = Number(acc.current_balance || 0);
                 const interestRateNum = Number(acc.interest_rate || 0);
+                const accCurrency = (acc.currency || 'THB').toUpperCase();
+                const isForeign = accCurrency !== 'THB';
+                const fxRate = Number(acc.cost_exchange_rate || fxRates[accCurrency] || 1.0);
+                const balanceThb = balanceNum * fxRate;
 
                 // คำนวณ % วงเงินที่ใช้ไป สำหรับบัตร/สินเชื่อ
                 const hasCreditLimit = creditLimitNum > 0;
@@ -1003,6 +1157,11 @@ export default function CashflowPage({ onCashFlowUpdated }: FinancialTransaction
                         </div>
 
                         <div className="flex items-center gap-1">
+                          {isForeign && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                              FCD {accCurrency}
+                            </span>
+                          )}
                           <span
                             className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
                               isDebt ? 'bg-rose-100 text-rose-700' : 'bg-emerald-100 text-emerald-700'
@@ -1045,15 +1204,27 @@ export default function CashflowPage({ onCashFlowUpdated }: FinancialTransaction
                       {/* ยอดเงินคงเหลือ / ค้างชำระ */}
                       <div className="mt-2.5">
                         <span className="text-[11px] text-slate-400 block">
-                          {isDebt ? 'ยอดค้างชำระ / ใช้ไป' : 'ยอดเงินคงเหลือ'}
+                          {isDebt ? 'ยอดค้างชำระ / ใช้ไป' : isForeign ? `ยอดคงเหลือ (${accCurrency})` : 'ยอดเงินคงเหลือ'}
                         </span>
                         <div
                           className={`text-lg font-bold tracking-tight ${
                             isDebt ? 'text-rose-600' : 'text-slate-900'
                           }`}
                         >
-                          {formatMoney(balanceNum)}
+                          {hideCashFlow
+                            ? `${accCurrency === 'THB' ? '฿' : getCurrencySymbol(accCurrency)}••••••••`
+                            : `${getCurrencySymbol(accCurrency)}${balanceNum.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                         </div>
+                        {isForeign && (
+                          <div className="text-xs font-medium text-slate-500 mt-0.5">
+                            {hideCashFlow
+                              ? '≈ ฿••••••'
+                              : `≈ ฿${balanceThb.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                            <span className="text-[10px] text-slate-400 ml-1.5 font-mono">
+                              (@{fxRate.toFixed(4)})
+                            </span>
+                          </div>
+                        )}
                       </div>
                     </div>
 
@@ -1149,11 +1320,15 @@ export default function CashflowPage({ onCashFlowUpdated }: FinancialTransaction
                   className="w-full px-3 py-2 border border-slate-300 rounded-xl text-sm bg-white outline-none focus:ring-2 focus:ring-emerald-500"
                 >
                   <option value="" disabled>-- เลือกบัญชี --</option>
-                  {accounts.map((acc) => (
-                    <option key={acc.id} value={acc.id}>
-                      {acc.bank_name ? `[${acc.bank_name}] ` : ''}{acc.account_name} ({acc.is_liability ? 'หนี้/บัตร' : 'สินทรัพย์'} • {formatMoney(acc.current_balance, { mask: '฿••••••' })})
-                    </option>
-                  ))}
+                  {accounts.map((acc) => {
+                    const accCurr = (acc.currency || 'THB').toUpperCase();
+                    const isFcd = accCurr !== 'THB';
+                    return (
+                      <option key={acc.id} value={acc.id}>
+                        {acc.bank_name ? `[${acc.bank_name}] ` : ''}{acc.account_name} ({isFcd ? `FCD ${accCurr}` : acc.is_liability ? 'หนี้/บัตร' : 'สินทรัพย์'} • {formatMoney(acc.current_balance, { prefix: getCurrencySymbol(accCurr), mask: `${getCurrencySymbol(accCurr)}••••••` })})
+                      </option>
+                    );
+                  })}
                 </select>
               </div>
 

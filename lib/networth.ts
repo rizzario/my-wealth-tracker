@@ -19,6 +19,8 @@ export interface FinancialAccountLike {
   current_balance?: number | string | null;
   is_liability?: boolean | null;
   account_type?: string | null;
+  currency?: string | null;
+  cost_exchange_rate?: number | string | null;
 }
 
 export interface CashPvdAssetLike {
@@ -71,11 +73,15 @@ export function calculateNetWorthSummary(
   let totalLiabilities = 0;
 
   for (const acc of financialAccounts) {
-    const balance = Number(acc.current_balance ?? 0);
+    const rawBalance = Number(acc.current_balance ?? 0);
+    const currency = (acc.currency || 'THB').toUpperCase();
+    const fxRate = Number(acc.cost_exchange_rate ?? 1.0);
+    const balanceTHB = currency !== 'THB' ? rawBalance * (fxRate > 0 ? fxRate : 1.0) : rawBalance;
+
     if (acc.is_liability) {
-      totalLiabilities += balance;
+      totalLiabilities += balanceTHB;
     } else {
-      totalOperatingAssets += balance;
+      totalOperatingAssets += balanceTHB;
     }
   }
 

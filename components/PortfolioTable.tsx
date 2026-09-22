@@ -2,16 +2,35 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { createClient } from '@/lib/supabase/client';
-import { ArrowUpDown, ArrowUp, ArrowDown, Pencil, Check, X, RotateCw, Loader2 } from 'lucide-react';
-import { getCurrencySymbol } from '@/lib/currency';
+import {
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
+  Pencil,
+  Check,
+  X,
+  RotateCw,
+  Loader2,
+  Plus,
+  Trash2,
+  Calculator,
+  AlertCircle,
+} from 'lucide-react';
+import { CURRENCY_OPTIONS, getCurrencySymbol } from '@/lib/currency';
 
-interface Holding {
+export interface Holding {
   id: string;
+  user_id?: string;
   symbol: string;
   volume: number;
   currency: string;
   initial_cost: number;
   present_price: number | null;
+  exchange_rate?: number;
+  cost_exchange_rate?: number;
+  total_cost?: number;
+  total_cost_thb?: number;
+  total_present_price?: number;
   total_present_price_thb?: number;
   yield_percent?: number;
   updated_at?: string;
@@ -24,24 +43,55 @@ interface PortfolioTableProps {
   onHoldingsUpdated?: () => void;
 }
 
+interface HoldingFormData {
+  symbol: string;
+  currency: string;
+  volume: string;
+  initial_cost: string;
+  present_price: string;
+}
+
+const initialHoldingForm: HoldingFormData = {
+  symbol: '',
+  currency: 'THB',
+  volume: '',
+  initial_cost: '',
+  present_price: '',
+};
+
 export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProps) {
   const [holdings, setHoldings] = useState<Holding[]>([]);
   const [loadingData, setLoadingData] = useState(true);
   const [isBulkUpdating, setIsBulkUpdating] = useState(false);
   const [updatingRowId, setUpdatingRowId] = useState<string | null>(null);
+  const [fxRates, setFxRates] = useState<Record<string, number>>({ THB: 1.0 });
 
   // Sorting state
   const [sortField, setSortField] = useState<SortField>('symbol');
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
 
-  // Manual price editing state
+  // Inline present_price editing state
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editPriceInput, setEditPriceInput] = useState<string>('');
   const [savingRowId, setSavingRowId] = useState<string | null>(null);
 
+  // Add / Edit Modal state
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [modalMode, setModalMode] = useState<'add' | 'edit'>('add');
+  const [selectedHolding, setSelectedHolding] = useState<Holding | null>(null);
+  const [formData, setFormData] = useState<HoldingFormData>(initialHoldingForm);
+  const [submittingHolding, setSubmittingHolding] = useState(false);
+
+  // Buy on Dip & Stop Loss calculator helper states
+  const [calcMode, setCalcMode] = useState<'dip' | 'sell'>('dip');
+  const [dipAddUnits, setDipAddUnits] = useState('');
+  const [dipAddPrice, setDipAddPrice] = useState('');
+  const [sellUnits, setSellUnits] = useState('');
+  const [calcNotice, setCalcNotice] = useState<string | null>(null);
+
   const supabase = createClient();
 
-  // ดึงข้อมูลพอร์ตล่าสุดจาก Supabase
+  // ดึงข้อมูลพอร์ตล่าสุดจาก Supabase (มี RLS กรองตาม user_id อัตโนมัติ)
   const fetchHoldings = async () => {
     try {
       const { data, error } = await supabase
@@ -58,8 +108,25 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
     }
   };
 
+  // ดึงอัตราแลกเปลี่ยนล่าสุดสำหรับใช้เป็นค่าตั้งต้น
+  const fetchFxRates = async () => {
+    try {
+      const { data } = await supabase.from('currency_exchange_rates').select('currency, rate_to_thb');
+      if (data && data.length > 0) {
+        const map: Record<string, number> = { THB: 1.0 };
+        for (const item of data) {
+          if (item.currency) map[item.currency.toUpperCase()] = Number(item.rate_to_thb);
+        }
+        setFxRates(map);
+      }
+    } catch {
+      // ignore
+    }
+  };
+
   useEffect(() => {
     fetchHoldings();
+    fetchFxRates();
   }, []);
 
   // อัปเดตราคาเฉพาะตัว (Row-level ผ่าน API)
@@ -100,7 +167,6 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
       setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
     } else {
       setSortField(field);
-      // เริ่มต้น: symbol เป็น asc (A-Z), ส่วนตัวเลขเป็น desc (มากไปน้อย)
       setSortDirection(field === 'symbol' ? 'asc' : 'desc');
     }
   };
@@ -130,20 +196,18 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
     });
   }, [holdings, sortField, sortDirection]);
 
-  // เริ่มแก้ไขราคา
-  const startEditing = (item: Holding) => {
+  // --- Inline Price Editing Handlers ---
+  const startInlineEditing = (item: Holding) => {
     setEditingId(item.id);
     setEditPriceInput(item.present_price != null ? String(item.present_price) : '');
   };
 
-  // ยกเลิกการแก้ไขราคา
-  const cancelEditing = () => {
+  const cancelInlineEditing = () => {
     setEditingId(null);
     setEditPriceInput('');
   };
 
-  // บันทึกราคาตลาดด้วยตนเองไปยัง Supabase
-  const handleSavePrice = async (id: string) => {
+  const handleSaveInlinePrice = async (id: string) => {
     const trimmed = editPriceInput.trim();
     if (trimmed === '') {
       alert('กรุณาระบุราคาตลาด');
@@ -180,6 +244,232 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
     }
   };
 
+  // --- Add / Edit Modal Handlers ---
+  const handleOpenAddModal = () => {
+    setModalMode('add');
+    setSelectedHolding(null);
+    setFormData(initialHoldingForm);
+    setCalcMode('dip');
+    setDipAddUnits('');
+    setDipAddPrice('');
+    setSellUnits('');
+    setCalcNotice(null);
+    setIsModalOpen(true);
+  };
+
+  const handleOpenEditModal = (holding: Holding) => {
+    setModalMode('edit');
+    setSelectedHolding(holding);
+    setFormData({
+      symbol: holding.symbol,
+      currency: (holding.currency || 'THB').toUpperCase(),
+      volume: holding.volume != null ? String(holding.volume) : '',
+      initial_cost: holding.initial_cost != null ? String(holding.initial_cost) : '',
+      present_price: holding.present_price != null ? String(holding.present_price) : '',
+    });
+    setCalcMode('dip');
+    setDipAddUnits('');
+    setDipAddPrice('');
+    setSellUnits('');
+    setCalcNotice(null);
+    setIsModalOpen(true);
+  };
+
+  const handleCloseModal = () => {
+    setIsModalOpen(false);
+    setSelectedHolding(null);
+    setFormData(initialHoldingForm);
+    setCalcNotice(null);
+  };
+
+  // คำนวณซื้อถัวเฉลี่ย (Buy on Dip Calculator)
+  const handleApplyDipCalc = () => {
+    const curVol = parseFloat(formData.volume) || 0;
+    const curCost = parseFloat(formData.initial_cost) || 0;
+    const addVol = parseFloat(dipAddUnits);
+    const addPrice = parseFloat(dipAddPrice);
+
+    if (isNaN(addVol) || addVol <= 0) {
+      alert('กรุณาระบุจำนวนหน่วยที่ซื้อเพิ่มที่ถูกต้อง (> 0)');
+      return;
+    }
+    if (isNaN(addPrice) || addPrice < 0) {
+      alert('กรุณาระบุราคาที่ซื้อเพิ่มที่ถูกต้อง (>= 0)');
+      return;
+    }
+
+    const newVol = curVol + addVol;
+    const newCost = (curVol * curCost + addVol * addPrice) / newVol;
+
+    setFormData((prev) => ({
+      ...prev,
+      volume: String(newVol),
+      initial_cost: String(parseFloat(newCost.toFixed(4))),
+    }));
+
+    setCalcNotice(
+      `คำนวณสำเร็จ: ปรับจำนวนเป็น ${newVol.toLocaleString()} หน่วย, ต้นทุนเฉลี่ยใหม่ ${newCost.toFixed(4)}`
+    );
+    setDipAddUnits('');
+    setDipAddPrice('');
+  };
+
+  // คำนวณลดจำนวนหุ้น (Stop Loss / Partial Sell Calculator)
+  const handleApplySellCalc = () => {
+    const curVol = parseFloat(formData.volume) || 0;
+    const sold = parseFloat(sellUnits);
+
+    if (isNaN(sold) || sold <= 0) {
+      alert('กรุณาระบุจำนวนหน่วยที่ขายออกที่ถูกต้อง (> 0)');
+      return;
+    }
+    if (sold > curVol) {
+      alert(`จำนวนที่ขาย (${sold}) มากกว่าจำนวนที่ถือครองอยู่ (${curVol})`);
+      return;
+    }
+
+    const newVol = Math.max(0, curVol - sold);
+
+    setFormData((prev) => ({
+      ...prev,
+      volume: String(newVol),
+    }));
+
+    setCalcNotice(
+      `คำนวณสำเร็จ: ปรับลดจำนวนคงเหลือเป็น ${newVol.toLocaleString()} หน่วย (ต้นทุนเฉลี่ยต่อหน่วยคงเดิม)`
+    );
+    setSellUnits('');
+  };
+
+  // บันทึกเพิ่ม หรือแก้ไขข้อมูลสินทรัพย์ลง Supabase
+  const handleSaveHolding = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    const sym = formData.symbol.trim().toUpperCase();
+    if (!sym) {
+      alert('กรุณาระบุสัญลักษณ์สินทรัพย์');
+      return;
+    }
+
+    const vol = parseFloat(formData.volume);
+    if (isNaN(vol) || vol < 0) {
+      alert('กรุณาระบุจำนวนหน่วยที่ถูกต้อง (>= 0)');
+      return;
+    }
+
+    const cost = parseFloat(formData.initial_cost);
+    if (isNaN(cost) || cost < 0) {
+      alert('กรุณาระบุต้นทุนเฉลี่ยที่ถูกต้อง (>= 0)');
+      return;
+    }
+
+    const price = formData.present_price !== '' ? parseFloat(formData.present_price) : cost;
+    if (isNaN(price) || price < 0) {
+      alert('กรุณาระบุราคาตลาดที่ถูกต้อง (>= 0)');
+      return;
+    }
+
+    const curr = (formData.currency || 'THB').toUpperCase();
+    const rateToThb = fxRates[curr] || 1.0;
+
+    try {
+      setSubmittingHolding(true);
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) throw new Error('ไม่พบข้อมูลผู้ใช้');
+
+      if (modalMode === 'add') {
+        const payload: Record<string, any> = {
+          user_id: user.id,
+          symbol: sym,
+          currency: curr,
+          volume: vol,
+          initial_cost: cost,
+          present_price: price,
+          exchange_rate: rateToThb,
+          updated_at: new Date().toISOString(),
+        };
+
+        const { data: inserted, error } = await supabase
+          .from('portfolio_holdings')
+          .insert(payload)
+          .select()
+          .single();
+
+        if (error) {
+          if (error.code === '23505') {
+            throw new Error(`สินทรัพย์ "${sym}" มีอยู่ในพอร์ตแล้ว หากต้องการซื้อถัวเฉลี่ย กรุณากดแก้ไขที่รายการเดิม`);
+          }
+          throw error;
+        }
+
+        handleCloseModal();
+        await fetchHoldings();
+        onHoldingsUpdated?.();
+
+        // ลองซิงค์ราคาตลาดจาก API อัตโนมัติหลังเพิ่มสินทรัพย์
+        if (inserted?.id) {
+          fetch(`/api/update-prices?id=${inserted.id}`)
+            .then(() => {
+              fetchHoldings();
+              onHoldingsUpdated?.();
+            })
+            .catch(() => {});
+        }
+      } else {
+        if (!selectedHolding) return;
+
+        const updatePayload: Record<string, any> = {
+          currency: curr,
+          volume: vol,
+          initial_cost: cost,
+          present_price: price,
+          exchange_rate: rateToThb,
+          updated_at: new Date().toISOString(),
+        };
+
+        const { error } = await supabase
+          .from('portfolio_holdings')
+          .update(updatePayload)
+          .eq('id', selectedHolding.id);
+
+        if (error) throw error;
+
+        handleCloseModal();
+        await fetchHoldings();
+        onHoldingsUpdated?.();
+      }
+    } catch (err: any) {
+      console.error('Save holding error:', err);
+      alert(`ไม่สามารถบันทึกข้อมูลสินทรัพย์ได้: ${err?.message || 'เกิดข้อผิดพลาด'}`);
+    } finally {
+      setSubmittingHolding(false);
+    }
+  };
+
+  // ลบสินทรัพย์ออกจากพอร์ต
+  const handleDeleteHolding = async (item: Holding) => {
+    if (!window.confirm(`คุณแน่ใจหรือไม่ว่าต้องการลบสินทรัพย์ "${item.symbol}" ออกจากพอร์ต?`)) {
+      return;
+    }
+
+    try {
+      const { error } = await supabase
+        .from('portfolio_holdings')
+        .delete()
+        .eq('id', item.id);
+
+      if (error) throw error;
+
+      await fetchHoldings();
+      onHoldingsUpdated?.();
+    } catch (err: any) {
+      console.error('Delete holding error:', err);
+      alert(`ไม่สามารถลบสินทรัพย์ได้: ${err?.message || 'เกิดข้อผิดพลาด'}`);
+    }
+  };
+
   const renderSortHeader = (label: string, field: SortField, align: 'left' | 'right' | 'center' = 'left') => {
     const isActive = sortField === field;
     return (
@@ -213,6 +503,15 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
     );
   };
 
+  // Live Calculations for the Modal Form Preview
+  const previewVol = parseFloat(formData.volume) || 0;
+  const previewCost = parseFloat(formData.initial_cost) || 0;
+  const previewPrice = formData.present_price !== '' ? parseFloat(formData.present_price) || 0 : previewCost;
+  const previewTotalCost = previewVol * previewCost;
+  const previewTotalPrice = previewVol * previewPrice;
+  const previewPnl = previewTotalCost > 0 ? ((previewTotalPrice - previewTotalCost) / previewTotalCost) * 100 : 0;
+  const previewCurrencySymbol = getCurrencySymbol(formData.currency);
+
   if (loadingData) {
     return (
       <div className="p-6 bg-white rounded-xl shadow-sm border border-gray-100 text-center text-gray-500 flex items-center justify-center gap-2">
@@ -223,24 +522,38 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
   }
 
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+    <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden space-y-0">
       {/* Header */}
       <div className="p-5 border-b border-gray-100 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 bg-gray-50/50">
         <div>
           <h2 className="text-lg font-bold text-gray-800">Asset on Hand</h2>
           <p className="text-xs text-gray-500 mt-0.5">
-            พอร์ตหุ้น คริปโต และสินทรัพย์ลงทุน • คลิกหัวตารางเพื่อเรียงข้อมูล หรือคลิกที่ราคาเพื่อแก้ไข
+            พอร์ตหุ้น คริปโต และสินทรัพย์ลงทุน • เพิ่ม/ลบสินทรัพย์ ปรับต้นทุนเฉลี่ย (Buy on dip) หรือตัดขาดทุน (Stop loss)
           </p>
         </div>
 
-        <button
-          onClick={handleUpdateAll}
-          disabled={isBulkUpdating || updatingRowId !== null || savingRowId !== null}
-          className="inline-flex items-center gap-2 px-3.5 py-1.5 text-xs font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 transition cursor-pointer self-start sm:self-auto"
-        >
-          <RotateCw className={`w-3.5 h-3.5 ${isBulkUpdating ? 'animate-spin' : ''}`} />
-          {isBulkUpdating ? 'กำลังซิงค์ราคาตลาด...' : 'อัปเดตราคาตลาดทั้งหมด'}
-        </button>
+        <div className="flex items-center gap-2 flex-wrap self-start sm:self-auto">
+          {/* ปุ่มเพิ่มสินทรัพย์ */}
+          <button
+            type="button"
+            onClick={handleOpenAddModal}
+            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-white bg-emerald-600 rounded-lg hover:bg-emerald-700 transition shadow-xs cursor-pointer"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>เพิ่มสินทรัพย์</span>
+          </button>
+
+          {/* ปุ่มอัปเดตราคาตลาดทั้งหมด */}
+          <button
+            type="button"
+            onClick={handleUpdateAll}
+            disabled={isBulkUpdating || updatingRowId !== null || savingRowId !== null}
+            className="inline-flex items-center gap-2 px-3.5 py-1.5 text-xs font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 transition cursor-pointer"
+          >
+            <RotateCw className={`w-3.5 h-3.5 ${isBulkUpdating ? 'animate-spin' : ''}`} />
+            {isBulkUpdating ? 'กำลังซิงค์ราคาตลาด...' : 'อัปเดตราคาตลาดทั้งหมด'}
+          </button>
+        </div>
       </div>
 
       {/* Table Content */}
@@ -257,158 +570,477 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
-            {sortedHoldings.map((item) => {
-              const isRowLoading = updatingRowId === item.id;
-              const isSavingThisRow = savingRowId === item.id;
-              const isEditing = editingId === item.id;
-              const currencyPrefix = getCurrencySymbol(item.currency);
+            {sortedHoldings.length === 0 ? (
+              <tr>
+                <td colSpan={6} className="py-12 text-center text-gray-400">
+                  <div className="space-y-2">
+                    <AlertCircle className="w-8 h-8 mx-auto text-gray-300" />
+                    <p className="text-sm font-medium">ยังไม่มีสินทรัพย์ในพอร์ต</p>
+                    <p className="text-xs text-gray-400">
+                      กดปุ่ม "+ เพิ่มสินทรัพย์" เพื่อเริ่มต้นบันทึกหุ้น คริปโต หรือสินทรัพย์ที่ถือครอง
+                    </p>
+                  </div>
+                </td>
+              </tr>
+            ) : (
+              sortedHoldings.map((item) => {
+                const isRowLoading = updatingRowId === item.id;
+                const isSavingThisRow = savingRowId === item.id;
+                const isEditing = editingId === item.id;
+                const currencyPrefix = getCurrencySymbol(item.currency);
 
-              return (
-                <tr key={item.id} className="hover:bg-blue-50/30 transition">
-                  {/* Symbol */}
-                  <td className="py-3 px-4 font-semibold text-gray-800">{item.symbol}</td>
-
-                  {/* Volume: ถ้าไม่มีค่าให้ fallback เป็น 0 */}
-                  <td className="py-3 px-4 text-right text-gray-600">
-                    {(item.volume ?? 0).toLocaleString(undefined, { maximumFractionDigits: 4 })}
-                  </td>
-
-                  {/* Initial Cost */}
-                  <td className="py-3 px-4 text-right text-gray-600">
-                    {item.initial_cost != null
-                      ? `${currencyPrefix}${Number(item.initial_cost).toLocaleString(
-                          undefined,
-                          {
-                            minimumFractionDigits: 2,
-                            maximumFractionDigits: 2,
-                          }
-                        )}`
-                      : '-'}
-                  </td>
-
-                  {/* Present Price (Editable) */}
-                  <td className="py-3 px-4 text-right font-semibold text-gray-600">
-                    {isEditing ? (
-                      <div
-                        className="inline-flex items-center justify-end gap-1.5"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <div className="relative flex items-center">
-                          <span className="text-xs text-gray-400 font-semibold mr-1">
-                            {currencyPrefix}
+                return (
+                  <tr key={item.id} className="hover:bg-blue-50/30 transition">
+                    {/* Symbol */}
+                    <td className="py-3 px-4">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-semibold text-gray-800">{item.symbol}</span>
+                        {item.currency && item.currency !== 'THB' && (
+                          <span className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-slate-100 text-slate-600 border border-slate-200">
+                            {item.currency}
                           </span>
-                          <input
-                            type="number"
-                            step="any"
-                            autoFocus
-                            onFocus={(e) => e.target.select()}
-                            value={editPriceInput}
-                            onChange={(e) => setEditPriceInput(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') handleSavePrice(item.id);
-                              if (e.key === 'Escape') cancelEditing();
-                            }}
+                        )}
+                      </div>
+                    </td>
+
+                    {/* Volume: ถ้าไม่มีค่าให้ fallback เป็น 0 */}
+                    <td className="py-3 px-4 text-right text-gray-600 font-mono">
+                      {(item.volume ?? 0).toLocaleString(undefined, { maximumFractionDigits: 6 })}
+                    </td>
+
+                    {/* Initial Cost */}
+                    <td className="py-3 px-4 text-right text-gray-600 font-mono">
+                      {item.initial_cost != null
+                        ? `${currencyPrefix}${Number(item.initial_cost).toLocaleString(undefined, {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 4,
+                          })}`
+                        : '-'}
+                    </td>
+
+                    {/* Present Price (Editable Inline หรือคลิกเปิด modal) */}
+                    <td className="py-3 px-4 text-right font-semibold text-gray-600">
+                      {isEditing ? (
+                        <div
+                          className="inline-flex items-center justify-end gap-1.5"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <div className="relative flex items-center">
+                            <span className="text-xs text-gray-400 font-semibold mr-1">
+                              {currencyPrefix}
+                            </span>
+                            <input
+                              type="number"
+                              step="any"
+                              autoFocus
+                              onFocus={(e) => e.target.select()}
+                              value={editPriceInput}
+                              onChange={(e) => setEditPriceInput(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') handleSaveInlinePrice(item.id);
+                                if (e.key === 'Escape') cancelInlineEditing();
+                              }}
+                              disabled={isSavingThisRow}
+                              placeholder="0.00"
+                              className="w-24 px-2 py-1 text-right text-xs font-semibold border border-blue-400 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white shadow-inner"
+                            />
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleSaveInlinePrice(item.id)}
                             disabled={isSavingThisRow}
-                            placeholder="0.00"
-                            className="w-24 px-2 py-1 text-right text-xs font-semibold border border-blue-400 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white shadow-inner"
-                          />
+                            title="บันทึกราคา (Enter)"
+                            className="p-1.5 text-white bg-emerald-600 hover:bg-emerald-700 rounded transition shadow-xs disabled:opacity-50 cursor-pointer"
+                          >
+                            {isSavingThisRow ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <Check className="w-3.5 h-3.5" />
+                            )}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={cancelInlineEditing}
+                            disabled={isSavingThisRow}
+                            title="ยกเลิก (Esc)"
+                            className="p-1.5 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded transition cursor-pointer"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
                         </div>
+                      ) : (
                         <button
                           type="button"
-                          onClick={() => handleSavePrice(item.id)}
-                          disabled={isSavingThisRow}
-                          title="บันทึกราคา (Enter)"
-                          className="p-1.5 text-white bg-emerald-600 hover:bg-emerald-700 rounded transition shadow-xs disabled:opacity-50 cursor-pointer"
+                          onClick={() => startInlineEditing(item)}
+                          title="คลิกเพื่อแก้ไขราคาตลาดอย่างรวดเร็ว"
+                          className="inline-flex items-center justify-end gap-1.5 font-semibold text-gray-700 hover:text-blue-600 cursor-pointer group py-0.5 px-1.5 -mr-1.5 rounded hover:bg-blue-50/60 transition"
                         >
-                          {isSavingThisRow ? (
-                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          ) : (
-                            <Check className="w-3.5 h-3.5" />
-                          )}
+                          <span className="font-mono">
+                            {item.present_price != null
+                              ? `${currencyPrefix}${Number(item.present_price).toLocaleString(undefined, {
+                                  minimumFractionDigits: 2,
+                                  maximumFractionDigits: 4,
+                                })}`
+                              : '-'}
+                          </span>
+                          <Pencil className="w-3 h-3 text-gray-300 group-hover:text-blue-600 opacity-0 group-hover:opacity-100 transition" />
                         </button>
+                      )}
+                    </td>
+
+                    {/* Yield % */}
+                    <td
+                      className={`py-3 px-4 text-right font-medium font-mono ${
+                        (item.yield_percent ?? 0) >= 0 ? 'text-emerald-600' : 'text-red-600'
+                      }`}
+                    >
+                      {(item.yield_percent ?? 0).toLocaleString(undefined, {
+                        maximumFractionDigits: 2,
+                      })}
+                      %
+                    </td>
+
+                    {/* Actions: Edit Modal (Volume/Cost/Price), Sync, Delete */}
+                    <td className="py-3 px-4 text-center">
+                      <div className="inline-flex items-center justify-center gap-1">
+                        {/* Edit Holding Details (Modal) */}
                         <button
                           type="button"
-                          onClick={cancelEditing}
-                          disabled={isSavingThisRow}
-                          title="ยกเลิก (Esc)"
-                          className="p-1.5 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded transition cursor-pointer"
+                          onClick={() => handleOpenEditModal(item)}
+                          disabled={isRowLoading || isBulkUpdating || isSavingThisRow}
+                          title="แก้ไขข้อมูลสินทรัพย์ (จำนวน, ต้นทุนเฉลี่ย, ซื้อถัวเฉลี่ย)"
+                          className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-md transition disabled:opacity-30 cursor-pointer"
                         >
-                          <X className="w-3.5 h-3.5" />
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
+
+                        {/* Sync Single Price from API */}
+                        <button
+                          type="button"
+                          onClick={() => handleUpdateSingle(item.id)}
+                          disabled={isRowLoading || isBulkUpdating || isSavingThisRow}
+                          title="กดเพื่อดึงราคาล่าสุดจากตลาด (API)"
+                          className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-md transition disabled:opacity-30 cursor-pointer"
+                        >
+                          <RotateCw
+                            className={`w-3.5 h-3.5 ${isRowLoading ? 'animate-spin text-blue-600' : ''}`}
+                          />
+                        </button>
+
+                        {/* Delete Holding */}
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteHolding(item)}
+                          disabled={isRowLoading || isBulkUpdating || isSavingThisRow}
+                          title="ลบสินทรัพย์ออกจากพอร์ต"
+                          className="p-1.5 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-md transition disabled:opacity-30 cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       </div>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => startEditing(item)}
-                        title="คลิกเพื่อแก้ไขราคาตลาดด้วยตนเอง"
-                        className="inline-flex items-center justify-end gap-1.5 font-semibold text-gray-700 hover:text-blue-600 cursor-pointer group py-0.5 px-1.5 -mr-1.5 rounded hover:bg-blue-50/60 transition"
-                      >
-                        <span>
-                          {item.present_price != null
-                            ? `${currencyPrefix}${Number(item.present_price).toLocaleString(
-                                undefined,
-                                {
-                                  minimumFractionDigits: 2,
-                                  maximumFractionDigits: 2,
-                                }
-                              )}`
-                            : '-'}
-                        </span>
-                        <Pencil className="w-3 h-3 text-gray-300 group-hover:text-blue-600 opacity-0 group-hover:opacity-100 transition" />
-                      </button>
-                    )}
-                  </td>
-
-                  {/* Yield % */}
-                  <td
-                    className={`py-3 px-4 text-right font-medium ${
-                      (item.yield_percent ?? 0) >= 0 ? 'text-emerald-600' : 'text-red-600'
-                    }`}
-                  >
-                    {(item.yield_percent ?? 0).toLocaleString(undefined, {
-                      maximumFractionDigits: 2,
-                    })}
-                    %
-                  </td>
-
-                  {/* Actions */}
-                  <td className="py-3 px-4 text-center">
-                    <div className="inline-flex items-center justify-center gap-1">
-                      {/* Manual Edit Button */}
-                      <button
-                        type="button"
-                        onClick={() => (isEditing ? cancelEditing() : startEditing(item))}
-                        disabled={isRowLoading || isBulkUpdating || isSavingThisRow}
-                        title={isEditing ? 'ยกเลิกการแก้ไข' : 'แก้ไขราคาปัจจุบันด้วยตนเอง'}
-                        className={`p-1.5 rounded-md transition disabled:opacity-30 cursor-pointer ${
-                          isEditing
-                            ? 'text-rose-600 bg-rose-50 hover:bg-rose-100'
-                            : 'text-gray-400 hover:text-blue-600 hover:bg-blue-50'
-                        }`}
-                      >
-                        <Pencil className="w-3.5 h-3.5" />
-                      </button>
-
-                      {/* Sync Single Price from API */}
-                      <button
-                        type="button"
-                        onClick={() => handleUpdateSingle(item.id)}
-                        disabled={isRowLoading || isBulkUpdating || isSavingThisRow}
-                        title="กดเพื่อดึงราคาล่าสุดจากตลาด (API)"
-                        className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-md transition disabled:opacity-30 cursor-pointer"
-                      >
-                        <RotateCw
-                          className={`w-3.5 h-3.5 ${isRowLoading ? 'animate-spin text-blue-600' : ''}`}
-                        />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
+                    </td>
+                  </tr>
+                );
+              })
+            )}
           </tbody>
         </table>
       </div>
+
+      {/* Add / Edit Holding Modal */}
+      {isModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white w-full max-w-lg rounded-2xl shadow-xl border border-slate-200 overflow-hidden animate-in zoom-in-95 duration-150 flex flex-col max-h-[90vh]">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 bg-slate-50/70">
+              <div>
+                <h3 className="text-base font-bold text-slate-800">
+                  {modalMode === 'add' ? 'เพิ่มสินทรัพย์ในพอร์ต' : `แก้ไขสินทรัพย์: ${selectedHolding?.symbol}`}
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  {modalMode === 'add'
+                    ? 'บันทึกหุ้น, คริปโต หรือกองทุนที่ถือครองเพื่อติดตามพอร์ต'
+                    : 'ปรับปรุงจำนวน, ต้นทุนเฉลี่ย (Buy on dip), หรือลดจำนวนหุ้น (Stop loss)'}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleCloseModal}
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <form onSubmit={handleSaveHolding} className="p-5 overflow-y-auto space-y-4">
+              {/* สัญลักษณ์ และ สกุลเงิน */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    สัญลักษณ์สินทรัพย์ (Symbol) <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    disabled={modalMode === 'edit'}
+                    placeholder="เช่น AAPL, NVDA, BTC, PTT"
+                    value={formData.symbol}
+                    onChange={(e) => setFormData({ ...formData, symbol: e.target.value.toUpperCase() })}
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl bg-white outline-none focus:ring-2 focus:ring-blue-500 font-semibold uppercase disabled:bg-slate-100 disabled:text-slate-500"
+                  />
+                  <span className="text-[11px] text-slate-400 mt-0.5 block">
+                    {modalMode === 'add' ? 'ใส่ชื่อย่อหุ้น หรือเหรียญคริปโต' : 'สัญลักษณ์อ้างอิงของสินทรัพย์'}
+                  </span>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    สกุลเงิน (Currency)
+                  </label>
+                  <select
+                    value={formData.currency}
+                    onChange={(e) => setFormData({ ...formData, currency: e.target.value })}
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl bg-white outline-none focus:ring-2 focus:ring-blue-500 font-medium cursor-pointer"
+                  >
+                    {CURRENCY_OPTIONS.map((curr) => (
+                      <option key={curr.code} value={curr.code}>
+                        {curr.code} - {curr.name} ({curr.symbol})
+                      </option>
+                    ))}
+                  </select>
+                  <span className="text-[11px] text-slate-400 mt-0.5 block">
+                    สกุลเงินที่ใช้ซื้อขายสินทรัพย์นี้
+                  </span>
+                </div>
+              </div>
+
+              {/* จำนวนที่ถือครอง, ต้นทุนเฉลี่ย, ราคาตลาด */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    จำนวนหน่วย (Volume) <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    step="any"
+                    required
+                    placeholder="0.00"
+                    value={formData.volume}
+                    onChange={(e) => setFormData({ ...formData, volume: e.target.value })}
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl bg-white outline-none focus:ring-2 focus:ring-blue-500 font-semibold"
+                  />
+                  <span className="text-[11px] text-slate-400 mt-0.5 block">หุ้น / เหรียญ</span>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    ต้นทุนเฉลี่ยต่อหน่วย ({previewCurrencySymbol}) <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    step="any"
+                    required
+                    placeholder="0.00"
+                    value={formData.initial_cost}
+                    onChange={(e) => setFormData({ ...formData, initial_cost: e.target.value })}
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl bg-white outline-none focus:ring-2 focus:ring-blue-500 font-semibold"
+                  />
+                  <span className="text-[11px] text-slate-400 mt-0.5 block">ราคาซื้อเฉลี่ย</span>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    ราคาตลาดล่าสุด ({previewCurrencySymbol})
+                  </label>
+                  <input
+                    type="number"
+                    step="any"
+                    placeholder="0.00"
+                    value={formData.present_price}
+                    onChange={(e) => setFormData({ ...formData, present_price: e.target.value })}
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl bg-white outline-none focus:ring-2 focus:ring-blue-500 font-semibold"
+                  />
+                  <span className="text-[11px] text-slate-400 mt-0.5 block">
+                    {modalMode === 'add' ? 'เว้นว่าง = เท่ากับต้นทุน' : 'ราคาตลาดปัจจุบัน'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Buy on Dip & Stop Loss Helper Widget (แสดงเฉพาะโหมด Edit) */}
+              {modalMode === 'edit' && (
+                <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200/90 space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                      <Calculator className="w-3.5 h-3.5 text-blue-600" />
+                      เครื่องมือช่วยคำนวณ (DCA / Buy on Dip / Stop Loss)
+                    </span>
+
+                    <div className="flex rounded-lg bg-slate-200/70 p-0.5 text-[11px] font-semibold self-start sm:self-auto">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCalcMode('dip');
+                          setCalcNotice(null);
+                        }}
+                        className={`px-2.5 py-1 rounded-md transition cursor-pointer ${
+                          calcMode === 'dip' ? 'bg-white text-blue-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        ซื้อถัวเฉลี่ย (Buy on Dip)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCalcMode('sell');
+                          setCalcNotice(null);
+                        }}
+                        className={`px-2.5 py-1 rounded-md transition cursor-pointer ${
+                          calcMode === 'sell' ? 'bg-white text-rose-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        ลดจำนวน (Stop Loss / ขาย)
+                      </button>
+                    </div>
+                  </div>
+
+                  {calcMode === 'dip' ? (
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 items-end">
+                      <div>
+                        <label className="block text-[11px] font-medium text-slate-600 mb-0.5">
+                          ซื้อเพิ่มกี่หน่วย (Units)
+                        </label>
+                        <input
+                          type="number"
+                          step="any"
+                          placeholder="เช่น 50"
+                          value={dipAddUnits}
+                          onChange={(e) => setDipAddUnits(e.target.value)}
+                          className="w-full px-2.5 py-1.5 text-xs border border-slate-300 rounded-lg bg-white outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-medium text-slate-600 mb-0.5">
+                          ราคาที่ซื้อเพิ่ม ({previewCurrencySymbol})
+                        </label>
+                        <input
+                          type="number"
+                          step="any"
+                          placeholder="เช่น 120.00"
+                          value={dipAddPrice}
+                          onChange={(e) => setDipAddPrice(e.target.value)}
+                          className="w-full px-2.5 py-1.5 text-xs border border-slate-300 rounded-lg bg-white outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleApplyDipCalc}
+                        disabled={!dipAddUnits || !dipAddPrice}
+                        className="w-full px-3 py-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition disabled:opacity-50 cursor-pointer shadow-xs"
+                      >
+                        คำนวณ & ใส่ค่าให้อัตโนมัติ
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 items-end">
+                      <div>
+                        <label className="block text-[11px] font-medium text-slate-600 mb-0.5">
+                          จำนวนหน่วยที่ขายออก / Stop loss (Units)
+                        </label>
+                        <input
+                          type="number"
+                          step="any"
+                          placeholder="เช่น 30"
+                          value={sellUnits}
+                          onChange={(e) => setSellUnits(e.target.value)}
+                          className="w-full px-2.5 py-1.5 text-xs border border-slate-300 rounded-lg bg-white outline-none focus:ring-2 focus:ring-rose-500"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleApplySellCalc}
+                        disabled={!sellUnits}
+                        className="w-full px-3 py-1.5 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 rounded-lg transition disabled:opacity-50 cursor-pointer shadow-xs"
+                      >
+                        ลดจำนวน & ใส่ค่าให้อัตโนมัติ
+                      </button>
+                    </div>
+                  )}
+
+                  {calcNotice && (
+                    <div className="text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 p-2 rounded-lg flex items-center gap-1.5">
+                      <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                      <span>{calcNotice}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Live Preview Box */}
+              <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200/80 grid grid-cols-3 gap-2 text-center">
+                <div>
+                  <span className="text-[11px] text-slate-500 block">มูลค่าต้นทุนรวม</span>
+                  <span className="text-xs sm:text-sm font-bold text-slate-800">
+                    {previewCurrencySymbol}
+                    {previewTotalCost.toLocaleString(undefined, {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[11px] text-slate-500 block">มูลค่าตลาดรวม</span>
+                  <span className="text-xs sm:text-sm font-bold text-slate-800">
+                    {previewCurrencySymbol}
+                    {previewTotalPrice.toLocaleString(undefined, {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[11px] text-slate-500 block">ผลตอบแทนคาดการณ์</span>
+                  <span
+                    className={`text-xs sm:text-sm font-bold ${
+                      previewPnl >= 0 ? 'text-emerald-600' : 'text-rose-600'
+                    }`}
+                  >
+                    {previewPnl >= 0 ? '+' : ''}
+                    {previewPnl.toFixed(2)}%
+                  </span>
+                </div>
+              </div>
+
+              {/* Modal Footer Buttons */}
+              <div className="flex justify-end items-center gap-2.5 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={handleCloseModal}
+                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 bg-white hover:bg-slate-100 border border-slate-200 rounded-xl transition cursor-pointer"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  type="submit"
+                  disabled={submittingHolding}
+                  className="px-5 py-2 text-white bg-blue-600 hover:bg-blue-700 rounded-xl text-xs font-semibold transition disabled:opacity-50 shadow-xs cursor-pointer flex items-center gap-1.5"
+                >
+                  {submittingHolding ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>กำลังบันทึก...</span>
+                    </>
+                  ) : modalMode === 'add' ? (
+                    'บันทึกสินทรัพย์'
+                  ) : (
+                    'บันทึกการแก้ไข'
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

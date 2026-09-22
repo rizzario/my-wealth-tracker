@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase/client';
-import { calculateAccountInterest } from '@/utils/interestCalculator';
+import { calculateAccountInterest } from '@/lib/interestCalculator';
 import { Eye, EyeOff } from 'lucide-react';
 
 export interface CashPvdAsset {
