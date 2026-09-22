@@ -71,6 +71,7 @@ const THAI_BANKS = [
   'SCB (ไทยพาณิชย์)',
   'BBL (กรุงเทพ)',
   'Krungsri (กรุงศรีอยุธยา)',
+  'LH Bank (แลนด์ แอนด์ เฮ้าส์)',
   'KTB (กรุงไทย)',
   'TTB (ทหารไทยธนชาต)',
   'KKP (เกียรตินาคินภัทร)',
@@ -97,6 +98,7 @@ export default function CashflowPage({ onCashFlowUpdated }: FinancialTransaction
   // Form States บัญชี/บัตร (Add & Edit)
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingAccountId, setEditingAccountId] = useState<string | null>(null);
+  const [formCategory, setFormCategory] = useState<'asset' | 'liability'>('asset');
   const [formData, setFormData] = useState<AccountFormData>(initialFormState);
   const [submittingAccount, setSubmittingAccount] = useState(false);
   const [hideAccountNumbers, setHideAccountNumbers] = useState(true);
@@ -197,9 +199,31 @@ export default function CashflowPage({ onCashFlowUpdated }: FinancialTransaction
     initLoad();
   }, []);
 
-  // เมื่อเปลี่ยนประเภทบัญชีในฟอร์ม ปรับสถานะ is_liability อัตโนมัติ
+  // สลับแท็บประเภทบัญชี (สินทรัพย์เงินฝาก vs หนี้สินบัตรเครดิต)
+  const handleSwitchFormCategory = (category: 'asset' | 'liability') => {
+    setFormCategory(category);
+    if (category === 'asset') {
+      setFormData((prev) => ({
+        ...prev,
+        account_type: prev.account_type === 'cash' ? 'cash' : 'bank',
+        is_liability: false,
+        credit_limit: '',
+        billing_cycle_day: '',
+        payment_due_day: '',
+      }));
+    } else {
+      setFormData((prev) => ({
+        ...prev,
+        account_type: prev.account_type === 'loan' ? 'loan' : 'credit_card',
+        is_liability: true,
+      }));
+    }
+  };
+
+  // เมื่อเปลี่ยนประเภทย่อยในแท็บ
   const handleAccountTypeChange = (newType: string) => {
     const isLiability = newType === 'credit_card' || newType === 'loan';
+    setFormCategory(isLiability ? 'liability' : 'asset');
     setFormData((prev) => ({
       ...prev,
       account_type: newType,
@@ -208,18 +232,25 @@ export default function CashflowPage({ onCashFlowUpdated }: FinancialTransaction
   };
 
   // เปิดฟอร์มสำหรับเพิ่มบัญชีใหม่
-  const handleOpenAddForm = () => {
+  const handleOpenAddForm = (initialCategory: 'asset' | 'liability' = 'asset') => {
     setEditingAccountId(null);
-    setFormData(initialFormState);
+    setFormCategory(initialCategory);
+    setFormData({
+      ...initialFormState,
+      account_type: initialCategory === 'asset' ? 'bank' : 'credit_card',
+      is_liability: initialCategory === 'liability',
+    });
     setIsFormOpen(true);
   };
 
   // เปิดฟอร์มสำหรับแก้ไขบัญชี
   const handleOpenEditForm = (acc: FinancialAccount) => {
     setEditingAccountId(acc.id);
+    const isLiability = Boolean(acc.is_liability || acc.account_type === 'credit_card' || acc.account_type === 'loan');
+    setFormCategory(isLiability ? 'liability' : 'asset');
     setFormData({
       account_name: acc.account_name || '',
-      account_type: acc.account_type || 'bank',
+      account_type: acc.account_type || (isLiability ? 'credit_card' : 'bank'),
       bank_name: acc.bank_name || '',
       account_number: acc.account_number || '',
       current_balance: acc.current_balance != null ? String(acc.current_balance) : '',
@@ -227,7 +258,7 @@ export default function CashflowPage({ onCashFlowUpdated }: FinancialTransaction
       interest_rate: acc.interest_rate != null && acc.interest_rate > 0 ? String(acc.interest_rate) : '',
       billing_cycle_day: acc.billing_cycle_day != null ? String(acc.billing_cycle_day) : '',
       payment_due_day: acc.payment_due_day != null ? String(acc.payment_due_day) : '',
-      is_liability: acc.is_liability ?? false,
+      is_liability: isLiability,
     });
     setIsFormOpen(true);
   };
@@ -237,6 +268,7 @@ export default function CashflowPage({ onCashFlowUpdated }: FinancialTransaction
     setIsFormOpen(false);
     setEditingAccountId(null);
     setFormData(initialFormState);
+    setFormCategory('asset');
   };
 
   // บันทึกสร้าง / แก้ไขบัญชี
@@ -247,11 +279,12 @@ export default function CashflowPage({ onCashFlowUpdated }: FinancialTransaction
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('ไม่พบข้อมูลผู้ใช้');
 
+      const isLiability = formCategory === 'liability';
       const balanceNum = parseFloat(formData.current_balance) || 0;
-      const creditLimitNum = formData.credit_limit ? parseFloat(formData.credit_limit) : 0;
+      const creditLimitNum = isLiability && formData.credit_limit ? parseFloat(formData.credit_limit) : 0;
       const interestRateNum = formData.interest_rate ? parseFloat(formData.interest_rate) : 0;
-      const billingCycleDay = formData.billing_cycle_day ? parseInt(formData.billing_cycle_day, 10) : null;
-      const paymentDueDay = formData.payment_due_day ? parseInt(formData.payment_due_day, 10) : null;
+      const billingCycleDay = isLiability && formData.billing_cycle_day ? parseInt(formData.billing_cycle_day, 10) : null;
+      const paymentDueDay = isLiability && formData.payment_due_day ? parseInt(formData.payment_due_day, 10) : null;
 
       const payload = {
         user_id: user.id,
@@ -259,7 +292,7 @@ export default function CashflowPage({ onCashFlowUpdated }: FinancialTransaction
         account_type: formData.account_type,
         bank_name: formData.bank_name.trim() || null,
         account_number: formData.account_number.trim() || null,
-        is_liability: formData.is_liability,
+        is_liability: isLiability,
         current_balance: balanceNum,
         credit_limit: creditLimitNum,
         interest_rate: interestRateNum,
@@ -475,24 +508,35 @@ export default function CashflowPage({ onCashFlowUpdated }: FinancialTransaction
               </span>
             </div>
 
-            <button
-              type="button"
-              onClick={() => {
-                if (isFormOpen) {
-                  handleCloseForm();
-                } else {
-                  handleOpenAddForm();
-                }
-              }}
-              className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold rounded-xl transition shadow-xs ${
-                isFormOpen
-                  ? 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                  : 'bg-emerald-600 text-white hover:bg-emerald-700'
-              }`}
-            >
-              {isFormOpen ? <X className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
-              <span>{isFormOpen ? 'ยกเลิก' : 'เพิ่มบัญชี/บัตร'}</span>
-            </button>
+            {isFormOpen ? (
+              <button
+                type="button"
+                onClick={handleCloseForm}
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold rounded-xl transition shadow-xs bg-slate-100 text-slate-700 hover:bg-slate-200 cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+                <span>ปิดฟอร์ม</span>
+              </button>
+            ) : (
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => handleOpenAddForm('asset')}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-xl transition shadow-xs bg-emerald-600 text-white hover:bg-emerald-700 cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>เพิ่มบัญชีเงินฝาก</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleOpenAddForm('liability')}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-xl transition shadow-xs bg-purple-600 text-white hover:bg-purple-700 cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>เพิ่มบัตร/สินเชื่อ</span>
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Quick Summary Metrics Cards */}
@@ -528,236 +572,382 @@ export default function CashflowPage({ onCashFlowUpdated }: FinancialTransaction
             </div>
           </div>
 
-          {/* ฟอร์ม เพิ่ม/แก้ไข บัญชี (Expandable) */}
+          {/* ฟอร์ม เพิ่ม/แก้ไข บัญชี (Tab-separated: บัญชีเงินฝาก vs บัตรเครดิต/สินเชื่อ) */}
           {isFormOpen && (
             <form
               onSubmit={handleSaveAccount}
-              className="p-5 bg-linear-to-b from-slate-50 to-white rounded-2xl border border-slate-300/80 shadow-xs space-y-4 animate-in fade-in duration-200"
+              className="p-5 bg-gradient-to-b from-slate-50 to-white rounded-2xl border border-slate-300/80 shadow-xs space-y-4 animate-in fade-in duration-200"
             >
+              {/* ส่วนหัวของฟอร์ม */}
               <div className="flex items-center justify-between border-b border-slate-200 pb-3">
                 <div>
                   <h3 className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
                     {editingAccountId ? (
                       <>
                         <Pencil className="w-4 h-4 text-sky-600" />
-                        <span>แก้ไขข้อมูลบัญชี / บัตร</span>
+                        <span>แก้ไขข้อมูล{formCategory === 'asset' ? 'บัญชีเงินฝาก / เงินสด' : 'บัตรเครดิต / สินเชื่อ'}</span>
                       </>
                     ) : (
                       <>
                         <Plus className="w-4 h-4 text-emerald-600" />
-                        <span>เพิ่มบัญชี / บัตรใหม่</span>
+                        <span>เพิ่ม{formCategory === 'asset' ? 'บัญชีเงินฝาก / เงินสดใหม่' : 'บัตรเครดิต / สินเชื่อใหม่'}</span>
                       </>
                     )}
                   </h3>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    กรอกข้อมูลรายละเอียดของบัญชี ธนาคาร วงเงิน และอัตราดอกเบี้ย
+                    {formCategory === 'asset'
+                      ? 'บันทึกบัญชีเงินฝากออมทรัพย์ บัญชีเงินเดือน หรือเงินสด (นับเป็นสภาพคล่องใน Net Worth)'
+                      : 'บันทึกบัตรเครดิต บัตรกดเงินสด หรือสินเชื่อ (ยอดค้างชำระจะถูกหักออกจาก Net Worth)'}
                   </p>
                 </div>
                 <button
                   type="button"
                   onClick={handleCloseForm}
-                  className="text-slate-400 hover:text-slate-600 p-1"
+                  className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition cursor-pointer"
+                  title="ปิดฟอร์ม"
                 >
                   <X className="w-4 h-4" />
                 </button>
               </div>
 
-              {/* หมวด 1: ข้อมูลพื้นฐาน */}
-              <div>
-                <p className="text-xs font-bold text-slate-700 mb-2">1. ข้อมูลทั่วไปของบัญชี</p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
-                  <div>
-                    <label className="block text-xs font-medium text-slate-600 mb-1">
-                      ชื่อบัญชี / ชื่อบัตร <span className="text-rose-500">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="เช่น KBank ออมทรัพย์, บัตร KTC Visa"
-                      value={formData.account_name}
-                      onChange={(e) => setFormData({ ...formData, account_name: e.target.value })}
-                      className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl bg-white outline-none focus:ring-2 focus:ring-emerald-500"
-                    />
-                  </div>
+              {/* ตัวสลับแท็บหลัก: บัญชีเงินฝาก/เงินสด (สินทรัพย์) VS บัตรเครดิต/สินเชื่อ (หนี้สิน) */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 bg-slate-100/90 p-1.5 rounded-xl">
+                <div className="flex items-center gap-1.5 w-full sm:w-auto">
+                  <button
+                    type="button"
+                    onClick={() => handleSwitchFormCategory('asset')}
+                    className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                      formCategory === 'asset'
+                        ? 'bg-white text-emerald-800 shadow-xs border border-emerald-200 ring-1 ring-emerald-500/20'
+                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/70'
+                    }`}
+                  >
+                    <Landmark className={`w-4 h-4 ${formCategory === 'asset' ? 'text-emerald-600' : 'text-slate-400'}`} />
+                    <span>🏦 บัญชีเงินฝาก & เงินสด (สินทรัพย์)</span>
+                  </button>
 
-                  <div>
-                    <label className="block text-xs font-medium text-slate-600 mb-1">
-                      ประเภทบัญชี <span className="text-rose-500">*</span>
-                    </label>
-                    <select
-                      value={formData.account_type}
-                      onChange={(e) => handleAccountTypeChange(e.target.value)}
-                      className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl bg-white outline-none focus:ring-2 focus:ring-emerald-500"
-                    >
-                      <option value="bank">🏦 บัญชีธนาคาร (Bank Asset)</option>
-                      <option value="cash">💵 เงินสด / กระเป๋าเงิน (Cash Asset)</option>
-                      <option value="credit_card">💳 บัตรเครดิต (Credit Card Liability)</option>
-                      <option value="loan">📄 สินเชื่อ / บัตรกดเงินสด (Loan Liability)</option>
-                    </select>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleSwitchFormCategory('liability')}
+                    className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                      formCategory === 'liability'
+                        ? 'bg-white text-purple-800 shadow-xs border border-purple-200 ring-1 ring-purple-500/20'
+                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/70'
+                    }`}
+                  >
+                    <CreditCard className={`w-4 h-4 ${formCategory === 'liability' ? 'text-purple-600' : 'text-slate-400'}`} />
+                    <span>💳 บัตรเครดิต & สินเชื่อ (หนี้สิน)</span>
+                  </button>
+                </div>
 
-                  <div>
-                    <label className="block text-xs font-medium text-slate-600 mb-1">
-                      ธนาคาร / สถาบันการเงิน
-                    </label>
-                    <input
-                      type="text"
-                      list="thai-banks-list"
-                      placeholder="เช่น KBank, SCB, KTC"
-                      value={formData.bank_name}
-                      onChange={(e) => setFormData({ ...formData, bank_name: e.target.value })}
-                      className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl bg-white outline-none focus:ring-2 focus:ring-emerald-500"
-                    />
-                    <datalist id="thai-banks-list">
-                      {THAI_BANKS.map((b) => (
-                        <option key={b} value={b.split(' ')[0]} label={b} />
-                      ))}
-                    </datalist>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-medium text-slate-600 mb-1">
-                      เลขที่บัญชี / เลขบัตร 4 หลัก
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="เช่น 123-4-56789-0 หรือ 4589"
-                      value={formData.account_number}
-                      onChange={(e) => setFormData({ ...formData, account_number: e.target.value })}
-                      className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl bg-white outline-none focus:ring-2 focus:ring-emerald-500"
-                    />
-                  </div>
+                <div className="text-[11px] text-slate-500 px-2 flex items-center gap-1.5">
+                  <span className={`w-2 h-2 rounded-full ${formCategory === 'asset' ? 'bg-emerald-500' : 'bg-purple-500'}`} />
+                  <span>
+                    {formCategory === 'asset'
+                      ? 'สินทรัพย์หมุนเวียน (สภาพคล่องพร้อมใช้)'
+                      : 'ภาระหนี้สินระยะสั้น (หักจากความมั่งคั่งสุทธิ)'}
+                  </span>
                 </div>
               </div>
 
-              {/* หมวด 2: ยอดเงิน, วงเงิน, ดอกเบี้ย */}
-              <div>
-                <p className="text-xs font-bold text-slate-700 mb-2">2. ยอดเงินและอัตราดอกเบี้ย</p>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div>
-                    <label className="block text-xs font-medium text-slate-600 mb-1">
-                      {formData.is_liability ? 'ยอดค้างชำระ / ยอดใช้ไป (บาท)' : 'ยอดยกมา / เงินคงเหลือ (บาท)'}{' '}
-                      <span className="text-rose-500">*</span>
-                    </label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      required
-                      placeholder="0.00"
-                      value={formData.current_balance}
-                      onChange={(e) => setFormData({ ...formData, current_balance: e.target.value })}
-                      className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl bg-white outline-none focus:ring-2 focus:ring-emerald-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-medium text-slate-600 mb-1">
-                      วงเงินอนุมัติ / วงเงินบัตร (บาท)
-                    </label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      placeholder="0.00 (เฉพาะบัตร/สินเชื่อ)"
-                      value={formData.credit_limit}
-                      onChange={(e) => setFormData({ ...formData, credit_limit: e.target.value })}
-                      className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl bg-white outline-none focus:ring-2 focus:ring-emerald-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-medium text-slate-600 mb-1">
-                      อัตราดอกเบี้ย (% ต่อปี)
-                    </label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      placeholder={formData.is_liability ? 'เช่น 16.00 หรือ 25.00' : 'เช่น 1.50'}
-                      value={formData.interest_rate}
-                      onChange={(e) => setFormData({ ...formData, interest_rate: e.target.value })}
-                      className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl bg-white outline-none focus:ring-2 focus:ring-emerald-500"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* หมวด 3: วันตัดรอบบิล & สถานะหนี้สิน (สำหรับบัตรเครดิต & สินเชื่อ) */}
-              <div className="p-3.5 bg-slate-100/70 rounded-xl border border-slate-200 space-y-2.5">
-                <p className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
-                  <Calendar className="w-3.5 h-3.5 text-slate-600" />
-                  <span>รอบบิลและการจัดประเภทบัญชี</span>
-                </p>
-
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-center">
-                  <div>
-                    <label className="block text-xs font-medium text-slate-600 mb-1">
-                      วันตัดรอบบัญชี (วันที่ 1 - 31)
-                    </label>
-                    <input
-                      type="number"
-                      min="1"
-                      max="31"
-                      placeholder="เช่น 15"
-                      value={formData.billing_cycle_day}
-                      onChange={(e) => setFormData({ ...formData, billing_cycle_day: e.target.value })}
-                      className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl bg-white outline-none focus:ring-2 focus:ring-emerald-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-medium text-slate-600 mb-1">
-                      วันครบกำหนดชำระ (วันที่ 1 - 31)
-                    </label>
-                    <input
-                      type="number"
-                      min="1"
-                      max="31"
-                      placeholder="เช่น 5"
-                      value={formData.payment_due_day}
-                      onChange={(e) => setFormData({ ...formData, payment_due_day: e.target.value })}
-                      className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl bg-white outline-none focus:ring-2 focus:ring-emerald-500"
-                    />
-                  </div>
-
-                  <div className="pt-2 sm:pt-4">
-                    <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+              {/* แท็บที่ 1: บัญชีเงินฝาก & เงินสด */}
+              {formCategory === 'asset' && (
+                <div className="space-y-4 pt-1">
+                  {/* ตัวเลือกประเภทย่อยแบบ Bullet / Radio */}
+                  <div className="p-3 bg-emerald-50/50 rounded-xl border border-emerald-100/80 flex flex-wrap items-center gap-4 text-xs">
+                    <span className="font-bold text-emerald-950">เลือกประเภทบัญชี:</span>
+                    <label className="inline-flex items-center gap-1.5 cursor-pointer font-medium text-slate-700 hover:text-emerald-800">
                       <input
-                        type="checkbox"
-                        checked={formData.is_liability}
-                        onChange={(e) => setFormData({ ...formData, is_liability: e.target.checked })}
-                        className="w-4 h-4 text-rose-600 rounded border-slate-300 focus:ring-rose-500"
+                        type="radio"
+                        name="asset_account_subtype"
+                        value="bank"
+                        checked={formData.account_type === 'bank'}
+                        onChange={() => setFormData({ ...formData, account_type: 'bank' })}
+                        className="text-emerald-600 focus:ring-emerald-500 cursor-pointer"
                       />
-                      <span className="text-xs font-semibold text-slate-700">
-                        นับเป็นหนี้สิน (Liability)
-                      </span>
+                      <span>🏦 บัญชีธนาคาร (ออมทรัพย์ / กระแสรายวัน)</span>
                     </label>
-                    <p className="text-[11px] text-slate-400 mt-0.5">
-                      {formData.is_liability
-                        ? 'ยอดเงินจะถูกคำนวณเป็นภาระหนี้ระยะสั้น'
-                        : 'ยอดเงินจะถูกคำนวณเป็นเงินสดคล่องมือ'}
-                    </p>
+                    <label className="inline-flex items-center gap-1.5 cursor-pointer font-medium text-slate-700 hover:text-emerald-800">
+                      <input
+                        type="radio"
+                        name="asset_account_subtype"
+                        value="cash"
+                        checked={formData.account_type === 'cash'}
+                        onChange={() => setFormData({ ...formData, account_type: 'cash', bank_name: formData.bank_name || 'เงินสด' })}
+                        className="text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                      />
+                      <span>💵 เงินสด / กระเป๋าเงิน (Cash Wallet)</span>
+                    </label>
+                  </div>
+
+                  {/* ฟิลด์กรอกข้อมูลบัญชีเงินฝาก / เงินสด */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3.5">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                        ชื่อบัญชี <span className="text-rose-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        placeholder={formData.account_type === 'cash' ? 'เช่น เงินสดติดกระเป๋า, ลิ้นชักเงินสด' : 'เช่น KBank ออมทรัพย์, SCB บัญชีเงินเดือน'}
+                        value={formData.account_name}
+                        onChange={(e) => setFormData({ ...formData, account_name: e.target.value })}
+                        className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl bg-white outline-none focus:ring-2 focus:ring-emerald-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                        ธนาคาร / สถาบันการเงิน {formData.account_type === 'cash' && '(ไม่บังคับ)'}
+                      </label>
+                      <input
+                        type="text"
+                        list="thai-banks-list"
+                        placeholder={formData.account_type === 'cash' ? 'เช่น เงินสด' : 'เช่น KBank, SCB, TTB, Krungsri'}
+                        value={formData.bank_name}
+                        onChange={(e) => setFormData({ ...formData, bank_name: e.target.value })}
+                        className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl bg-white outline-none focus:ring-2 focus:ring-emerald-500"
+                      />
+                      <datalist id="thai-banks-list">
+                        {THAI_BANKS.map((b) => (
+                          <option key={b} value={b.split(' ')[0]} label={b} />
+                        ))}
+                      </datalist>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                        เลขที่บัญชี {formData.account_type === 'cash' && '(ไม่บังคับ)'}
+                      </label>
+                      <input
+                        type="text"
+                        placeholder={formData.account_type === 'cash' ? '-' : 'เช่น 123-4-56789-0 หรือ 4 หลักท้าย'}
+                        value={formData.account_number}
+                        onChange={(e) => setFormData({ ...formData, account_number: e.target.value })}
+                        className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl bg-white outline-none focus:ring-2 focus:ring-emerald-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                        ยอดเงินคงเหลือปัจจุบัน (บาท) <span className="text-rose-500">*</span>
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        required
+                        placeholder="0.00"
+                        value={formData.current_balance}
+                        onChange={(e) => setFormData({ ...formData, current_balance: e.target.value })}
+                        className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl bg-white outline-none focus:ring-2 focus:ring-emerald-500 font-semibold"
+                      />
+                      <span className="text-[11px] text-slate-400 mt-0.5 block">ยอดยกมาเริ่มต้นสำหรับบันทึกรับ-จ่าย</span>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                        อัตราดอกเบี้ยเงินฝาก (% ต่อปี)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        placeholder="เช่น 0.25 หรือ 1.50 (ถ้ามี)"
+                        value={formData.interest_rate}
+                        onChange={(e) => setFormData({ ...formData, interest_rate: e.target.value })}
+                        className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl bg-white outline-none focus:ring-2 focus:ring-emerald-500"
+                      />
+                      <span className="text-[11px] text-slate-400 mt-0.5 block">อัตราดอกเบี้ยออมทรัพย์</span>
+                    </div>
                   </div>
                 </div>
-              </div>
+              )}
+
+              {/* แท็บที่ 2: บัตรเครดิต & สินเชื่อ */}
+              {formCategory === 'liability' && (
+                <div className="space-y-4 pt-1">
+                  {/* ตัวเลือกประเภทย่อยแบบ Bullet / Radio */}
+                  <div className="p-3 bg-purple-50/50 rounded-xl border border-purple-100/80 flex flex-wrap items-center gap-4 text-xs">
+                    <span className="font-bold text-purple-950">เลือกประเภทภาระผูกพัน:</span>
+                    <label className="inline-flex items-center gap-1.5 cursor-pointer font-medium text-slate-700 hover:text-purple-800">
+                      <input
+                        type="radio"
+                        name="liability_account_subtype"
+                        value="credit_card"
+                        checked={formData.account_type === 'credit_card'}
+                        onChange={() => setFormData({ ...formData, account_type: 'credit_card' })}
+                        className="text-purple-600 focus:ring-purple-500 cursor-pointer"
+                      />
+                      <span>💳 บัตรเครดิต (Credit Card)</span>
+                    </label>
+                    <label className="inline-flex items-center gap-1.5 cursor-pointer font-medium text-slate-700 hover:text-purple-800">
+                      <input
+                        type="radio"
+                        name="liability_account_subtype"
+                        value="loan"
+                        checked={formData.account_type === 'loan'}
+                        onChange={() => setFormData({ ...formData, account_type: 'loan' })}
+                        className="text-purple-600 focus:ring-purple-500 cursor-pointer"
+                      />
+                      <span>📄 สินเชื่อ / บัตรกดเงินสด / ยอดผ่อนชำระ (Loan)</span>
+                    </label>
+                  </div>
+
+                  {/* ฟิลด์กรอกข้อมูลบัตรเครดิต & สินเชื่อ */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3.5">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                        ชื่อบัตร / ชื่อสินเชื่อ <span className="text-rose-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        placeholder={formData.account_type === 'credit_card' ? 'เช่น KTC Visa Platinum, CardX Beyond' : 'เช่น สินเชื่อบุคคล, ยอดผ่อนสินค้า'}
+                        value={formData.account_name}
+                        onChange={(e) => setFormData({ ...formData, account_name: e.target.value })}
+                        className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl bg-white outline-none focus:ring-2 focus:ring-purple-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                        สถาบันการเงินผู้ออกบัตร <span className="text-rose-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        list="thai-banks-list"
+                        required
+                        placeholder="เช่น KTC, CardX, KBank, AEON"
+                        value={formData.bank_name}
+                        onChange={(e) => setFormData({ ...formData, bank_name: e.target.value })}
+                        className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl bg-white outline-none focus:ring-2 focus:ring-purple-500"
+                      />
+                      <datalist id="thai-banks-list">
+                        {THAI_BANKS.map((b) => (
+                          <option key={b} value={b.split(' ')[0]} label={b} />
+                        ))}
+                      </datalist>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                        เลขบัตร 4 หลักท้าย / เลขสัญญา
+                      </label>
+                      <input
+                        type="text"
+                        maxLength={20}
+                        placeholder="เช่น 4589 หรือ 1234"
+                        value={formData.account_number}
+                        onChange={(e) => setFormData({ ...formData, account_number: e.target.value })}
+                        className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl bg-white outline-none focus:ring-2 focus:ring-purple-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                        ยอดค้างชำระ / ยอดใช้ไปปัจจุบัน (บาท) <span className="text-rose-500">*</span>
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        required
+                        placeholder="0.00"
+                        value={formData.current_balance}
+                        onChange={(e) => setFormData({ ...formData, current_balance: e.target.value })}
+                        className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl bg-white outline-none focus:ring-2 focus:ring-purple-500 font-semibold text-rose-600"
+                      />
+                      <span className="text-[11px] text-slate-400 mt-0.5 block">ยอดที่ต้องจ่าย (จะหักออกจากความมั่งคั่งสุทธิ)</span>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                        วงเงินบัตร / วงเงินอนุมัติ (บาท)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        placeholder="เช่น 50000.00"
+                        value={formData.credit_limit}
+                        onChange={(e) => setFormData({ ...formData, credit_limit: e.target.value })}
+                        className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl bg-white outline-none focus:ring-2 focus:ring-purple-500"
+                      />
+                      <span className="text-[11px] text-slate-400 mt-0.5 block">สำหรับคำนวณ % วงเงินคงเหลือ</span>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                        อัตราดอกเบี้ย (% ต่อปี)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        placeholder="เช่น 16.00 (บัตรเครดิต) หรือ 25.00"
+                        value={formData.interest_rate}
+                        onChange={(e) => setFormData({ ...formData, interest_rate: e.target.value })}
+                        className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl bg-white outline-none focus:ring-2 focus:ring-purple-500"
+                      />
+                      <span className="text-[11px] text-slate-400 mt-0.5 block">ดอกเบี้ยกรณีค้างชำระ / กดเงินสด</span>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                        วันตัดรอบบัญชี (วันที่ 1 - 31)
+                      </label>
+                      <input
+                        type="number"
+                        min="1"
+                        max="31"
+                        placeholder="เช่น 15 (ตัดรอบทุกวันที่ 15)"
+                        value={formData.billing_cycle_day}
+                        onChange={(e) => setFormData({ ...formData, billing_cycle_day: e.target.value })}
+                        className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl bg-white outline-none focus:ring-2 focus:ring-purple-500"
+                      />
+                      <span className="text-[11px] text-slate-400 mt-0.5 block">วันสรุปยอดใบแจ้งหนี้</span>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                        วันครบกำหนดชำระ (วันที่ 1 - 31)
+                      </label>
+                      <input
+                        type="number"
+                        min="1"
+                        max="31"
+                        placeholder="เช่น 5 (ชำระภายในวันที่ 5)"
+                        value={formData.payment_due_day}
+                        onChange={(e) => setFormData({ ...formData, payment_due_day: e.target.value })}
+                        className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl bg-white outline-none focus:ring-2 focus:ring-purple-500"
+                      />
+                      <span className="text-[11px] text-slate-400 mt-0.5 block">Due Date วันจ่ายเงิน</span>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* ปุ่มบันทึก & ยกเลิก */}
-              <div className="flex justify-end items-center gap-2 pt-2">
+              <div className="flex justify-end items-center gap-2.5 pt-3 border-t border-slate-200">
                 <button
                   type="button"
                   onClick={handleCloseForm}
-                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 bg-white hover:bg-slate-100 border border-slate-200 rounded-xl transition"
+                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 bg-white hover:bg-slate-100 border border-slate-200 rounded-xl transition cursor-pointer"
                 >
                   ยกเลิก
                 </button>
                 <button
                   type="submit"
                   disabled={submittingAccount}
-                  className="px-5 py-2 bg-emerald-600 text-white rounded-xl text-xs font-semibold hover:bg-emerald-700 transition disabled:opacity-50 shadow-xs"
+                  className={`px-5 py-2 text-white rounded-xl text-xs font-semibold transition disabled:opacity-50 shadow-xs cursor-pointer ${
+                    formCategory === 'asset'
+                      ? 'bg-emerald-600 hover:bg-emerald-700'
+                      : 'bg-purple-600 hover:bg-purple-700'
+                  }`}
                 >
                   {submittingAccount
                     ? 'กำลังบันทึก...'
                     : editingAccountId
                     ? 'บันทึกการแก้ไข'
-                    : 'บันทึกบัญชี'}
+                    : formCategory === 'asset'
+                    ? 'บันทึกบัญชีเงินฝาก'
+                    : 'บันทึกบัตร/สินเชื่อ'}
                 </button>
               </div>
             </form>

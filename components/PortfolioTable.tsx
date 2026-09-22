@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { ArrowUpDown, ArrowUp, ArrowDown, Pencil, Check, X, RotateCw, Loader2 } from 'lucide-react';
+import { getCurrencySymbol } from '@/lib/currency';
 
 interface Holding {
   id: string;
@@ -260,7 +261,7 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
               const isRowLoading = updatingRowId === item.id;
               const isSavingThisRow = savingRowId === item.id;
               const isEditing = editingId === item.id;
-              const currencyPrefix = item.currency === 'USD' ? '$' : '฿';
+              const currencyPrefix = getCurrencySymbol(item.currency);
 
               return (
                 <tr key={item.id} className="hover:bg-blue-50/30 transition">

@@ -60,7 +60,7 @@ execute FUNCTION update_account_balance ();
 
 create table public.financial_accounts (
   id uuid not null default gen_random_uuid (),
-  user_id uuid null,
+  user_id uuid not null default auth.uid (),
   account_name text not null,
   account_type text not null,
   is_liability boolean null default false,
@@ -72,9 +72,22 @@ create table public.financial_accounts (
   account_number character varying(30) null,
   interest_rate numeric(5, 2) null default 0.00,
   credit_limit numeric(14, 2) null default 0.00,
-  updated_at timestamp with time zone null,
+  updated_at timestamp with time zone null default now(),
+  currency character varying(10) not null default 'THB'::character varying,
   constraint financial_accounts_pkey primary key (id),
-  constraint financial_accounts_user_id_fkey foreign KEY (user_id) references auth.users (id) on delete CASCADE
+  constraint financial_accounts_user_id_fkey foreign KEY (user_id) references auth.users (id) on delete CASCADE,
+  constraint chk_operating_types check (
+    (
+      account_type = any (
+        array[
+          'bank'::text,
+          'cash'::text,
+          'credit_card'::text,
+          'loan'::text
+        ]
+      )
+    )
+  )
 ) TABLESPACE pg_default;
 
 create table public.portfolio_holdings (
@@ -174,3 +187,10 @@ create index IF not exists idx_trades_broker on public.trade_transactions using 
 create index IF not exists idx_trades_symbol on public.trade_transactions using btree (stock_symbol) TABLESPACE pg_default;
 
 create index IF not exists idx_trades_date on public.trade_transactions using btree (trade_date desc) TABLESPACE pg_default;
+
+create table public.currency_exchange_rates (
+  currency character varying(10) not null,
+  rate_to_thb numeric(12, 6) not null,
+  updated_at timestamp with time zone not null default now(),
+  constraint currency_exchange_rates_pkey primary key (currency)
+) TABLESPACE pg_default;

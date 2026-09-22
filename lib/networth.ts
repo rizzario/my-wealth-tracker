@@ -33,6 +33,7 @@ export interface PortfolioHoldingLike {
   total_present_price_thb?: number | string | null;
   total_cost_thb?: number | string | null;
   present_price?: number | string | null;
+  initial_cost?: number | string | null;
   volume?: number | string | null;
   exchange_rate?: number | string | null;
   currency?: string | null;
@@ -105,8 +106,23 @@ export function calculateNetWorthSummary(
   let totalHoldingsValueTHB = 0;
 
   for (const h of holdings) {
-    totalHoldingsCostTHB += Number(h.total_cost_thb ?? 0);
-    totalHoldingsValueTHB += Number(h.total_present_price_thb ?? 0);
+    const currency = (h.currency || 'THB').toUpperCase();
+    const fxRate = Number(h.exchange_rate ?? 1.0);
+
+    let costThb = Number(h.total_cost_thb ?? 0);
+    let valThb = Number(h.total_present_price_thb ?? 0);
+
+    // If currency is non-THB and non-USD (e.g. EUR, HKD, JPY, SGD),
+    // ensure exchange_rate is applied in case database column still uses 'CASE WHEN currency = USD'
+    if (currency !== 'THB' && currency !== 'USD') {
+      const computedVal = Number(h.volume ?? 0) * Number(h.present_price ?? 0) * (fxRate > 0 ? fxRate : 1.0);
+      const computedCost = Number(h.volume ?? 0) * Number(h.initial_cost ?? 0) * (fxRate > 0 ? fxRate : 1.0);
+      if (computedVal > 0) valThb = computedVal;
+      if (computedCost > 0) costThb = computedCost;
+    }
+
+    totalHoldingsCostTHB += costThb;
+    totalHoldingsValueTHB += valThb;
   }
 
   const holdingsPL = totalHoldingsValueTHB - totalHoldingsCostTHB;

@@ -217,6 +217,7 @@ Operating cash and short-term liabilities. See §3.0.
 | `payment_due_day` | INTEGER, nullable | 1–31 |
 | `created_at` | TIMESTAMPTZ, default `now()` | |
 | `updated_at` | TIMESTAMPTZ, nullable, **no default** | stays NULL unless the app sets it |
+| `currency` |  VARCHAR(10) NOT NULL default `THB` | for other currency need to multiply exchange rate |
 
 ### 3.7 `expense_income_transactions`
 
@@ -257,6 +258,23 @@ Once §3.0 holds, the three asset terms are disjoint. Neither transaction table 
 behind `portfolio_holdings`. Adding either one would double-count.
 
 ---
+
+### 3.9 `currency_exchange_rates`
+
+Global exchange rates lookup table (shared by all users, no `user_id` column).
+
+| Column | Type | Notes |
+|---|---|---|
+| `currency` | VARCHAR(10) NOT NULL, PK default `'THB'` | base currencies: EUR, HKD, JPY, SGD, USD, THB |
+| `rate_to_thb` | NUMERIC(12,6) NOT NULL | exchange rate to multiply to get THB |
+| `updated_at` | TIMESTAMPTZ, NOT NULL, default `now()` | |
+
+**RLS Policies:**
+Because this table is a global market reference table without a `user_id` column:
+- `SELECT`: Allowed for `authenticated` and `anon` (`USING (true)`).
+- `INSERT` / `UPDATE`: Allowed for `authenticated` (and service role) so user-triggered syncs succeed (`WITH CHECK (true)`).
+- Alternatively, RLS can be disabled on this table (`ALTER TABLE currency_exchange_rates DISABLE ROW LEVEL SECURITY;`) as it contains no personal user data.
+
 
 ## 4. Architecture & Data Flow
 

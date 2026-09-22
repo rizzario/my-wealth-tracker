@@ -2,30 +2,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createAdminClient } from '@supabase/supabase-js';
 import YahooFinance from 'yahoo-finance2';
+import {
+  getCurrencyExchangeRates,
+  syncCurrencyExchangeRates,
+  type ExchangeRateMap,
+} from '@/lib/exchangeRates';
 
-const yahooFinance = new YahooFinance();
-
-/**
- * Fetch the latest USD/THB exchange rate from Open Exchange API.
- * Reference: AGENTS.md §2
- */
-async function getUsdThbRate(): Promise<number | null> {
-  try {
-    const res = await fetch('https://open.er-api.com/v6/latest/USD', {
-      headers: { 'User-Agent': 'my-wealth-tracker/1.0' },
-      cache: 'no-store',
-    });
-    if (res.ok) {
-      const data = await res.json();
-      if (data?.rates?.THB) {
-        return parseFloat(Number(data.rates.THB).toFixed(4));
-      }
-    }
-  } catch (err) {
-    console.error('Failed to fetch USD/THB exchange rate:', err);
-  }
-  return null;
-}
+const yahooFinance = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
 
 /**
  * Check if the symbol is manually tracked or not supported by Yahoo/Binance.
@@ -43,13 +26,15 @@ function isExcludedSymbol(rawSymbol: string): boolean {
 
 /**
  * Map raw symbol to appropriate Yahoo Finance ticker.
+ * Supports Thai (.BK), US tickers, and international tickers (.HK, .SI, .T, .PA, etc.)
  */
 function mapSymbolForYahoo(rawSymbol: string): string | null {
   const sym = rawSymbol.toUpperCase().trim();
   if (isExcludedSymbol(sym)) {
     return null;
   }
-  if (sym.endsWith('.BK')) return sym;
+  // If the symbol already includes a market suffix (.BK, .HK, .SI, .T, .PA, .DE, etc.)
+  if (sym.includes('.')) return sym;
 
   const usTickers = [
     'AAPL', 'NVDA', 'TSLA', 'AMD', 'VOO', 'VZ', 'QQQI', 'GOOG', 'MSFT', 'AMZN', 'META', 'SPY', 'QQQ'
@@ -64,11 +49,10 @@ export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const targetId = searchParams.get('id');
+    const currencyOnly = searchParams.get('currency_only') === 'true';
+    const forceSyncFx = searchParams.get('sync_fx') === 'true';
 
-    // 1. Fetch live USD/THB exchange rate
-    const usdThbRate = await getUsdThbRate();
-
-    // 2. Select between Service Role (for Cron/Admin) and Server Client (for User Session) to satisfy RLS
+    // 1. Select between Service Role (for Cron/Admin) and Server Client (for User Session) to satisfy RLS
     let supabase;
     if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
       supabase = createAdminClient(
@@ -77,6 +61,27 @@ export async function GET(req: NextRequest) {
       );
     } else {
       supabase = await createClient();
+    }
+
+    // 2. Manage exchange rates:
+    // If currency_only mode: sync and return immediately
+    if (currencyOnly) {
+      const rates = await syncCurrencyExchangeRates(supabase);
+      return NextResponse.json({
+        status: 'success',
+        message: 'Currency exchange rates synced successfully',
+        rates,
+      });
+    }
+
+    // For batch updates (no targetId) or when forceSyncFx is set:
+    // sync currency_exchange_rates table first so all rates are up-to-date.
+    // For single-stock updates (?id=...), read the cached rates from currency_exchange_rates table.
+    let ratesMap: ExchangeRateMap;
+    if (!targetId || forceSyncFx) {
+      ratesMap = await syncCurrencyExchangeRates(supabase);
+    } else {
+      ratesMap = await getCurrencyExchangeRates(supabase);
     }
 
     // 3. Query target holdings (include currency and exchange_rate)
@@ -96,6 +101,7 @@ export async function GET(req: NextRequest) {
 
     for (const item of holdings) {
       const sym = item.symbol.toUpperCase().trim();
+      const holdingCurrency = (item.currency || 'THB').toUpperCase();
 
       // Check if this is an excluded symbol (Manual / mutual funds without automated coverage)
       if (isExcludedSymbol(sym)) {
@@ -132,7 +138,7 @@ export async function GET(req: NextRequest) {
             const quote: any = await yahooFinance.quote(querySymbol);
             if (quote?.regularMarketPrice != null) {
               rawPrice = Number(quote.regularMarketPrice);
-              priceSource = querySymbol.endsWith('.BK') ? 'yahoo_thb' : 'yahoo_usd';
+              priceSource = querySymbol.endsWith('.BK') ? 'yahoo_thb' : 'yahoo_native';
             }
           } catch (e) {
             console.error(`Stock fetch failed: ${sym}`, e);
@@ -141,34 +147,33 @@ export async function GET(req: NextRequest) {
       }
 
       if (rawPrice !== null && rawPrice > 0) {
-        const isHoldingUsd = (item.currency || '').toUpperCase() === 'USD';
+        // Look up the rate_to_thb from our currency_exchange_rates table
+        const rateToThb = ratesMap[holdingCurrency] ?? (holdingCurrency === 'THB' ? 1.0 : Number(item.exchange_rate) || 1.0);
         let finalPresentPrice = rawPrice;
 
-        // Currency alignment (AGENTS.md §4.4):
-        // 1. If price was fetched in USD (Binance or US Equities) but holding currency is THB:
-        //    Convert USD to THB so present_price matches the THB holding currency.
-        if (priceSource === 'binance_usd' && !isHoldingUsd) {
-          const fx = usdThbRate ?? Number(item.exchange_rate) ?? 34.0;
-          finalPresentPrice = rawPrice * fx;
-        } else if (priceSource === 'yahoo_usd' && !isHoldingUsd) {
-          const fx = usdThbRate ?? Number(item.exchange_rate) ?? 34.0;
-          finalPresentPrice = rawPrice * fx;
+        // Currency alignment for present_price:
+        // 1. If Crypto was fetched in USD (Binance):
+        if (priceSource === 'binance_usd') {
+          if (holdingCurrency === 'THB') {
+            finalPresentPrice = rawPrice * (ratesMap['USD'] ?? 33.5);
+          } else if (holdingCurrency !== 'USD') {
+            // e.g. holding in EUR, convert Binance USD to EUR
+            const eurRate = ratesMap[holdingCurrency] ?? 1.0;
+            finalPresentPrice = (rawPrice * (ratesMap['USD'] ?? 33.5)) / eurRate;
+          }
         }
-        // 2. If price was fetched in THB (.BK) but holding currency is USD:
-        else if (priceSource === 'yahoo_thb' && isHoldingUsd) {
-          const fx = usdThbRate ?? Number(item.exchange_rate) ?? 34.0;
-          finalPresentPrice = rawPrice / fx;
+        // 2. If Yahoo was quoted in THB (.BK) but holding currency is USD:
+        else if (priceSource === 'yahoo_thb' && holdingCurrency === 'USD') {
+          finalPresentPrice = rawPrice / (ratesMap['USD'] ?? 33.5);
         }
 
+        // Update portfolio_holdings:
+        // Assign present_price in native currency and set exchange_rate to rate_to_thb from currency_exchange_rates
         const updatePayload: Record<string, any> = {
           present_price: parseFloat(finalPresentPrice.toFixed(4)),
+          exchange_rate: parseFloat(rateToThb.toFixed(6)),
           updated_at: new Date().toISOString(),
         };
-
-        // For USD holdings, update current exchange_rate to reflect live valuation (§4.4 & §7.2)
-        if (isHoldingUsd && usdThbRate) {
-          updatePayload.exchange_rate = usdThbRate;
-        }
 
         const { error: updateError } = await supabase
           .from('portfolio_holdings')
@@ -179,8 +184,8 @@ export async function GET(req: NextRequest) {
           id: item.id,
           symbol: sym,
           newPrice: finalPresentPrice,
-          currency: item.currency || 'THB',
-          exchangeRateUsed: isHoldingUsd ? usdThbRate : undefined,
+          currency: holdingCurrency,
+          exchangeRateUsed: rateToThb,
           success: !updateError,
           error: updateError?.message,
         });
@@ -189,7 +194,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       status: 'success',
-      usdThbRate,
+      rates: ratesMap,
       updatedCount: updates.length,
       updates,
     });
