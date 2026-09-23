@@ -171,4 +171,71 @@ Enhanced `PortfolioTable.tsx` to support complete lifecycle management of assets
 - Preserved quick inline editing of `present_price` directly on table cells for fast single-price adjustments.
 
 ### Verification
-- Production build verified via `npm run build` with 0 errors.
+- Production build verified via `npm run build` with 0 errors.
+
+---
+
+### Layout Optimization & Pop-up Modal Form for High Account Density (`ExpenseIncomeSection.tsx`)
+
+Redesigned the account management user experience on the Cash Flow tab (`ExpenseIncomeSection.tsx`) to support users with large numbers of accounts (15+ bank/cash accounts and 20+ credit cards/loans), eliminating long page scrolling and providing a centered Pop-up Modal Form.
+
+#### 1. Add / Edit Pop-up Modal Form Dialog
+- **Centered Modal Dialog**: Replaced the previous in-page form with an accessible, high-focus pop-up modal (`fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs`).
+- **Zero Scroll Frustration**: Clicking "+ เพิ่มบัญชีเงินฝาก", "+ เพิ่มบัตร/สินเชื่อ", or the "Edit (Pencil)" button on any account card or table row now instantly opens the modal dialog centered on the screen without displacing the user's scroll position.
+- **Escape Key & Backdrop Dismissal**: Form can be easily dismissed via `Esc` key, modal backdrop click, or the `X` button.
+- **Full Feature Parity**: Retains all previous capabilities including asset vs. liability switching, FCD currency selection (`THB`, `USD`, `EUR`, `HKD`, `JPY`, `SGD`), initial exchange rate fallback to `currency_exchange_rates`, Thai bank auto-complete datalist, credit limit usage tracking, and billing/due date inputs.
+
+#### 2. Account Category Filter Tabs & Real-time Search Bar
+- **Category Filter Tabs**: Added filter tabs at the top of the accounts container:
+  - `ทั้งหมด (All)`
+  - `🏦 เงินฝาก & เงินสด (Bank & Cash)` with badge count
+  - `💳 บัตร & สินเชื่อ (Credit Cards & Loans)` with badge count
+- **Real-time Search Bar**: Instant searching across account names, bank names, account numbers, and currency symbols with a quick-clear (`X`) button.
+- **No-Match Empty State**: Clean empty state when search filters yield zero matches, with a one-click button to reset search and filters.
+
+#### 3. Dual View Mode: Grid Cards vs. Compact Table View
+- **View Switcher (`Grid` vs `Table`)**: Users can toggle between card view and a high-density compact table view, with preferences automatically remembered in `localStorage` (`cashflow_account_view_mode`).
+- **Compact Table View**:
+  - Displays 35+ accounts in a clean, space-efficient table requiring ~75% less vertical space.
+  - Formats accounts with bank badge, masked account numbers, asset/liability badges, native & THB converted balances, credit utilization bar, interest rate, and billing cycle days.
+  - Includes quick Action buttons (`Edit` and `Delete`) directly within table rows.
+
+### Verification
+---
+
+### Separation of `CashFlow` and `ExpenseAndIncome` with Comprehensive Financial Reports
+
+Refactored the architecture to separate Account & Liquidity Management (`CashFlowSection.tsx`) from Daily Income/Expense Tracking & Financial Reports (`ExpenseIncomeSection.tsx`) into two dedicated main tabs in `app/page.tsx`.
+
+#### 1. Dedicated `CashFlow` Tab (`components/CashFlowSection.tsx`)
+- Focused purely on bank accounts, liquid cash, Foreign Currency Deposit (FCD) accounts, credit cards, and revolving credit liabilities.
+- Includes liquid asset, liability, and net liquid balance summary cards.
+- Multi-currency FCD support with initial FX rates and real-time live reference rates.
+- Filter tabs (`ทั้งหมด`, `🏦 เงินฝาก & เงินสด`, `💳 บัตร & สินเชื่อ`), real-time search bar, and dual view modes (`Grid View` vs `Compact Table View`).
+- Accessible centered pop-up modal dialog for adding and editing financial accounts.
+
+#### 2. Dedicated `ExpenseAndIncome` Tab with Financial Reports (`components/ExpenseIncomeSection.tsx`)
+- **Period Filter Bar**: Filter transactions by `เดือนนี้ (This Month)`, `เดือนที่แล้ว (Last Month)`, `ปีนี้ (This Year)`, `ทั้งหมด (All Time)`, or custom month picker (`YYYY-MM`).
+- **Summary Metrics**:
+  - 🟢 รวมรายรับ (Total Income)
+  - 🔴 รวมรายจ่าย (Total Expense)
+  - 🔵 กระแสเงินสดสุทธิ (Net Savings / Cash Flow)
+  - 🟣 อัตราการออม (Savings Rate % of income)
+- **Interactive Transaction Form**:
+  - Quick toggle between `รายจ่าย (Expense)` and `รายรับ (Income)`.
+  - Date picker defaulting to current date.
+  - Account selector linked to `financial_accounts`.
+  - Quick Category tag chips for fast 1-click selection across common Thai spending and income categories.
+- **Spending Breakdown & Visual Analysis**:
+  - Breakdown of expenses by category with amounts, percentage shares, and colored progress bars.
+- **Transaction Ledger & Report Table**:
+  - Searchable by category, note, or amount.
+  - Sub-filters for transaction type (`ทั้งหมด`, `รายรับ`, `รายจ่าย`) and specific accounts.
+  - Full CRUD: In-table action buttons for editing (modal dialog) and deleting transactions.
+
+#### 3. Main Navigation Updates (`app/page.tsx`)
+- Added `กระแสเงินสด (Cash Flow)` tab and updated `รับ-จ่าย & รายงาน (Expense & Income)` tab in the navigation bar.
+- Overview tab links directly to the dedicated reports tab and synchronizes state seamlessly.
+
+### Verification
+- Production build verified via `npm run build` with 0 errors.

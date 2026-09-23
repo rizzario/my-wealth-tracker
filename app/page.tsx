@@ -7,6 +7,7 @@ import { createClient } from '@/lib/supabase/client';
 import { Wallet, TrendingUp, PiggyBank, CalendarClock, Eye, EyeOff } from 'lucide-react';
 import PortfolioTable from '../components/PortfolioTable';
 import CashAndPVDTable from '../components/CashAndPvdSection';
+import CashFlowSection from '../components/CashFlowSection';
 import ExpenseIncomeSection from '../components/ExpenseIncomeSection';
 import { useIdleTimer } from './hooks/useIdleTimer';
 import { calculateNetWorthSummary } from '@/lib/networth';
@@ -23,7 +24,7 @@ export default function Home() {
 
   useIdleTimer();
 
-  const [activeTab, setActiveTab] = useState<'overview' | 'holdings' | 'cash_pvd' | 'expenses'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'holdings' | 'cash_pvd' | 'cashflow' | 'expenses'>('overview');
   
   // States ข้อมูล
   const [holdings, setHoldings] = useState<any[]>([]);
@@ -99,15 +100,23 @@ export default function Home() {
 
           <div className="flex items-center space-x-3">
             <nav className="flex space-x-1 bg-emerald-900/60 p-1 rounded-lg text-xs font-medium">
-              {(['overview', 'holdings', 'cash_pvd', 'expenses'] as const).map(tab => (
+              {(['overview', 'holdings', 'cash_pvd', 'cashflow', 'expenses'] as const).map(tab => (
                 <button
                   key={tab}
                   onClick={() => setActiveTab(tab)}
-                  className={`px-3 py-1.5 rounded-md capitalize transition-all ${
+                  className={`px-3 py-1.5 rounded-md transition-all ${
                     activeTab === tab ? 'bg-emerald-500 text-white shadow' : 'text-emerald-200 hover:text-white'
                   }`}
                 >
-                  {tab === 'overview' ? 'ภาพรวม' : tab === 'holdings' ? 'พอร์ตลงทุน' : tab === 'cash_pvd' ? 'เงินฝาก & PVD' : 'รับ-จ่าย'}
+                  {tab === 'overview'
+                    ? 'ภาพรวม'
+                    : tab === 'holdings'
+                    ? 'พอร์ตลงทุน'
+                    : tab === 'cash_pvd'
+                    ? 'เงินฝาก & PVD'
+                    : tab === 'cashflow'
+                    ? 'กระแสเงินสด'
+                    : 'รับ-จ่าย & รายงาน'}
                 </button>
               ))}
             </nav>
@@ -258,9 +267,17 @@ export default function Home() {
           <CashAndPVDTable onCashPvdUpdated={fetchAllOverviewData} />
         )}
 
-        {/* Tab 4: Expense & Income */}
+        {/* Tab 4: กระแสเงินสด & บัญชี (Cash Flow) */}
+        {activeTab === 'cashflow' && (
+          <CashFlowSection onCashFlowUpdated={fetchAllOverviewData} />
+        )}
+
+        {/* Tab 5: บันทึกรับ-จ่าย & รายงาน (Expense & Income) */}
         {activeTab === 'expenses' && (
-          <ExpenseIncomeSection onCashFlowUpdated={fetchAllOverviewData} />
+          <ExpenseIncomeSection
+            onTransactionsUpdated={fetchAllOverviewData}
+            onCashFlowUpdated={fetchAllOverviewData}
+          />
         )}
       </main>
     </div>
