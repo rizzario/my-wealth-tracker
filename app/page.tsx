@@ -4,7 +4,7 @@
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { createClient } from '@/lib/supabase/client';
-import { Wallet, TrendingUp, PiggyBank, CalendarClock, Eye, EyeOff } from 'lucide-react';
+import { Wallet, TrendingUp, PiggyBank, CalendarClock, Eye, EyeOff, Clock } from 'lucide-react';
 import PortfolioTable from '../components/PortfolioTable';
 import CashAndPVDTable from '../components/CashAndPvdSection';
 import CashFlowSection from '../components/CashFlowSection';
@@ -87,6 +87,36 @@ export default function Home() {
   const summary = useMemo(() => {
     return calculateNetWorthSummary(holdings, cashPvd, financialAccounts);
   }, [holdings, cashPvd, financialAccounts]);
+
+  const formatTxDateTime = (dateStr?: string | null) => {
+    if (!dateStr) return '-';
+    try {
+      const d = new Date(dateStr);
+      if (isNaN(d.getTime())) return dateStr;
+
+      const day = String(d.getDate()).padStart(2, '0');
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const y = d.getFullYear();
+
+      const hasTime = dateStr.includes('T') || dateStr.includes(' ') || dateStr.includes(':');
+      const hh = String(d.getHours()).padStart(2, '0');
+      const mm = String(d.getMinutes()).padStart(2, '0');
+
+      return (
+        <span className="inline-flex items-center gap-1.5">
+          <span>{`${day}/${m}/${y}`}</span>
+          {hasTime && (
+            <span className="inline-flex items-center gap-0.5 text-slate-400 font-mono text-[11px]">
+              <Clock className="w-2.5 h-2.5" />
+              <span>{`${hh}:${mm} น.`}</span>
+            </span>
+          )}
+        </span>
+      );
+    } catch {
+      return dateStr;
+    }
+  };
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 pb-12">
@@ -242,9 +272,10 @@ export default function Home() {
                     <div key={tx.id} className="py-3 flex justify-between items-center text-sm">
                       <div>
                         <p className="font-semibold text-slate-800">{tx.category}</p>
-                        <p className="text-xs text-slate-400 mt-0.5">
-                          {tx.transaction_date} {tx.note && `• ${tx.note}`}
-                        </p>
+                        <div className="text-xs text-slate-400 mt-0.5 flex items-center flex-wrap gap-x-1.5">
+                          {formatTxDateTime(tx.transaction_date)}
+                          {tx.note && <span>• {tx.note}</span>}
+                        </div>
                       </div>
                       <span className={`font-bold text-sm ${isIncome ? 'text-emerald-600' : 'text-slate-800'}`}>
                         {isIncome ? '+' : '-'}฿{Number(tx.amount || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 })}

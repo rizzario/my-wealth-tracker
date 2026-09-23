@@ -33,12 +33,12 @@ create table public.expense_income_transactions (
   type character varying(10) not null,
   category character varying(50) not null,
   amount numeric(12, 2) not null,
-  account_id bigint null,
+  account_id uuid null,
   note text null,
   created_at timestamp with time zone null default now(),
   user_id uuid null default auth.uid (),
   constraint expense_income_transactions_pkey primary key (id),
-  constraint expense_income_transactions_account_id_fkey foreign KEY (account_id) references cash_and_pvd_assets (id),
+  constraint expense_income_transactions_account_id_fkey foreign KEY (account_id) references financial_accounts (id) on delete set null,
   constraint expense_income_transactions_user_id_fkey foreign KEY (user_id) references auth.users (id) on delete CASCADE,
   constraint expense_income_transactions_type_check check (
     (
@@ -54,40 +54,48 @@ create table public.expense_income_transactions (
   )
 ) TABLESPACE pg_default;
 
-create trigger on_transaction_inserted
-after INSERT on expense_income_transactions for EACH row
-execute FUNCTION update_account_balance ();
+create trigger on_transaction_changed
+after insert or update or delete on expense_income_transactions for each row
+execute function apply_txn_to_balance ();
 
-CREATE TABLE public.financial_accounts (
-  id UUID NOT NULL DEFAULT gen_random_uuid (),
-  user_id UUID NOT NULL DEFAULT auth.uid (),
-  account_name TEXT NOT NULL,
-  account_type TEXT NOT NULL,
-  is_liability BOOLEAN NOT NULL DEFAULT false,
-  current_balance NUMERIC(14, 2) NOT NULL DEFAULT 0.00,
-  currency VARCHAR(10) NOT NULL DEFAULT 'THB',
-  cost_exchange_rate NUMERIC(12, 6) NOT NULL DEFAULT 1.000000, -- เรทตอนแลกเงิน (เช่น 35.20)
-  billing_cycle_day INTEGER NULL,
-  payment_due_day INTEGER NULL,
-  bank_name VARCHAR(50) NULL,
-  account_number VARCHAR(30) NULL,
-  interest_rate NUMERIC(5, 2) NOT NULL DEFAULT 0.00,
-  credit_limit NUMERIC(14, 2) NOT NULL DEFAULT 0.00,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  CONSTRAINT financial_accounts_pkey PRIMARY KEY (id),
-  CONSTRAINT financial_accounts_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users (id) ON DELETE CASCADE,
-  CONSTRAINT chk_operating_types CHECK (
-    account_type = ANY (
-      ARRAY[
-        'bank'::TEXT,
-        'cash'::TEXT,
-        'credit_card'::TEXT,
-        'loan'::TEXT
-      ]
+create table public.expense_income_transactions (
+  id bigserial not null,
+  transaction_date date not null default CURRENT_DATE,
+  type character varying(10) not null,
+  category character varying(50) not null,
+  amount numeric(12, 2) not null,
+  note text null,
+  created_at timestamp with time zone null default now(),
+  user_id uuid null default auth.uid (),
+  transaction_type character varying null,
+  account_id uuid null,
+  constraint expense_income_transactions_pkey primary key (id),
+  constraint expense_income_transactions_account_id_fkey foreign KEY (account_id) references financial_accounts (id) on delete set null,
+  constraint expense_income_transactions_user_id_fkey foreign KEY (user_id) references auth.users (id) on delete CASCADE,
+  constraint chk_amount_positive check ((amount > (0)::numeric)),
+  constraint expense_income_transactions_transaction_type_check check ((length((transaction_type)::text) <= 10)),
+  constraint expense_income_transactions_type_check check (
+    (
+      (type)::text = any (
+        (
+          array[
+            'INCOME'::character varying,
+            'EXPENSE'::character varying
+          ]
+        )::text[]
+      )
     )
   )
 ) TABLESPACE pg_default;
+
+create index IF not exists idx_transactions_account_id on public.expense_income_transactions using btree (account_id) TABLESPACE pg_default;
+
+create trigger on_transaction_changed
+after INSERT
+or DELETE
+or
+update on expense_income_transactions for EACH row
+execute FUNCTION apply_txn_to_balance ();
 
 create table public.portfolio_holdings (
   id bigserial not null,

@@ -1,3 +1,25 @@
+# Changelog
+
+## [Unreleased] - 2026-09-23
+
+### Expense & Income Time Tracking & UUID Foreign Key Migration
+
+#### 1. Timestamp Support for Transactions
+- **Field updated to timestamptz**: Updated `expense_income_transactions.transaction_date` from plain `date` to `timestamp with time zone` (`timestamptz`) defaulting to `now()`.
+- **Date & Time Input UI**: Added a dedicated time picker (`HH:mm`) alongside the date input with a quick 1-click **"ตอนนี้ (Now)"** button in both the new transaction form and the edit transaction modal.
+- **Micro-chronological Sorting**: Transactions entered on the same date now sort accurately down to the minute/second (`DESC`) instead of indeterminate ordering.
+- **Clock Display**: Rendered formatted date and time (`DD/MM/YYYY • HH:mm น.`) with a Lucide clock icon across both the transaction ledger and the Overview dashboard tab.
+
+#### 2. Account Binding Migration (Bigint to UUID)
+- **Resolved type mismatch**: Replaced legacy `bigint` FK referencing `cash_and_pvd_assets(id)` with a `uuid` FK pointing to `financial_accounts(id)`.
+- **Defensive Error Interception**: Added graceful UI handling if legacy schema throws `invalid input syntax for type bigint`, allowing users to optionally proceed or view migration instructions.
+
+#### 3. Automatic Account Balance Adjustment Trigger
+- Replaced the insert-only trigger with `apply_txn_to_balance()`, which fires on `INSERT`, `UPDATE`, and `DELETE`.
+- Automatically keeps cash/bank balances and credit card/loan liabilities synchronized whenever transactions are added, edited, or deleted.
+
+---
+
 ### (Liabilities) using a dedicated Tab Switcher and Bullet Points.
 
 ### Key Improvements Made
@@ -239,3 +261,5 @@ Refactored the architecture to separate Account & Liquidity Management (`CashFlo
 
 ### Verification
 - Production build verified via `npm run build` with 0 errors.
+
+---

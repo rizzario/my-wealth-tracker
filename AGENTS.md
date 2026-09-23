@@ -231,6 +231,7 @@ Daily income / expense log.
 | `user_id` | UUID, nullable, default `auth.uid()`, FK CASCADE | |
 | `transaction_date` | DATE, NOT NULL, default `CURRENT_DATE` | |
 | `type` | VARCHAR(10), NOT NULL, CHECK `INCOME` \| `EXPENSE` | |
+| `transaction_type` | VARCHAR(10), NOT NULL, CHECK `INCOME` \| `EXPENSE` | |
 | `category` | VARCHAR(50), NOT NULL | no CHECK — free text |
 | `amount` | NUMERIC(12,2), NOT NULL | **no `> 0` constraint** — a negative EXPENSE silently credits the account |
 | `account_id` | BIGINT, nullable, FK → **`cash_and_pvd_assets(id)`** | ⚠️ wrong target — §7.2 |

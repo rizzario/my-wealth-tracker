@@ -22,6 +22,7 @@ import {
   AlertCircle,
   Tag,
   Check,
+  Clock,
 } from 'lucide-react';
 import { getCurrencySymbol } from '@/lib/currency';
 
@@ -110,6 +111,12 @@ export default function ExpenseIncomeSection({
   const [isFormExpanded, setIsFormExpanded] = useState(true);
   const [txType, setTxType] = useState<'EXPENSE' | 'INCOME'>('EXPENSE');
   const [txDate, setTxDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [txTime, setTxTime] = useState(() => {
+    const now = new Date();
+    const hh = String(now.getHours()).padStart(2, '0');
+    const mm = String(now.getMinutes()).padStart(2, '0');
+    return `${hh}:${mm}`;
+  });
   const [selectedAccountId, setSelectedAccountId] = useState('');
   const [category, setCategory] = useState('อาหาร & เครื่องดื่ม');
   const [amount, setAmount] = useState('');
@@ -121,6 +128,7 @@ export default function ExpenseIncomeSection({
   const [editingTx, setEditingTx] = useState<FinancialTransaction | null>(null);
   const [editType, setEditType] = useState<'EXPENSE' | 'INCOME'>('EXPENSE');
   const [editDate, setEditDate] = useState('');
+  const [editTime, setEditTime] = useState('12:00');
   const [editAccountId, setEditAccountId] = useState('');
   const [editCategory, setEditCategory] = useState('');
   const [editAmount, setEditAmount] = useState('');
@@ -219,6 +227,7 @@ export default function ExpenseIncomeSection({
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('ไม่พบข้อมูลผู้ใช้');
 
+      const fullDateTime = txTime ? `${txDate}T${txTime}:00` : txDate;
       const payload: any = {
         user_id: user.id,
         account_id: selectedAccountId || null,
@@ -227,7 +236,7 @@ export default function ExpenseIncomeSection({
         category: category.trim(),
         amount: parseFloat(amount) || 0,
         note: note.trim() || null,
-        transaction_date: txDate,
+        transaction_date: fullDateTime,
       };
 
       const { error } = await supabase.from('expense_income_transactions').insert(payload);
@@ -240,7 +249,41 @@ export default function ExpenseIncomeSection({
       onTransactionsUpdated?.();
       onCashFlowUpdated?.();
     } catch (err: any) {
-      alert('เกิดข้อผิดพลาดในการบันทึกรายการ: ' + err.message);
+      if (err.message?.includes('invalid input syntax for type bigint')) {
+        const retryWithoutAccount = confirm(
+          '⚠️ เกิดข้อผิดพลาดจากฐานข้อมูล:\n' +
+          'คอลัมน์ account_id ในตาราง expense_income_transactions ของ Supabase ยังคงเป็นชนิด bigint (เดิมผูกกับ cash_and_pvd_assets) จึงยังไม่สามารถผูกกับ UUID ของ financial_accounts ได้\n\n' +
+          '👉 วิธีแก้ไขถาวร: กรุณารันคำสั่ง SQL Migration ใน Supabase SQL Editor เพื่อเปลี่ยน account_id ให้เป็น UUID\n\n' +
+          'คุณต้องการบันทึกรายการนี้โดย "ไม่ระบุบัญชี" ชั่วคราวก่อนหรือไม่?'
+        );
+        if (retryWithoutAccount) {
+          try {
+            const fullDateTime = txTime ? `${txDate}T${txTime}:00` : txDate;
+            const retryPayload = {
+              user_id: (await supabase.auth.getUser()).data.user?.id,
+              account_id: null,
+              type: txType,
+              transaction_type: txType.toLowerCase(),
+              category: category.trim(),
+              amount: parseFloat(amount) || 0,
+              note: note.trim() || null,
+              transaction_date: fullDateTime,
+            };
+            const { error: retryError } = await supabase.from('expense_income_transactions').insert(retryPayload);
+            if (retryError) throw retryError;
+            setAmount('');
+            setNote('');
+            await fetchTransactions();
+            onTransactionsUpdated?.();
+            onCashFlowUpdated?.();
+            return;
+          } catch (rErr: any) {
+            alert('เกิดข้อผิดพลาด: ' + rErr.message);
+          }
+        }
+      } else {
+        alert('เกิดข้อผิดพลาดในการบันทึกรายการ: ' + err.message);
+      }
     } finally {
       setSubmittingTx(false);
     }
@@ -251,7 +294,34 @@ export default function ExpenseIncomeSection({
     setEditingTx(tx);
     const typeUpper = String(tx.type || tx.transaction_type || 'EXPENSE').toUpperCase();
     setEditType(typeUpper === 'INCOME' ? 'INCOME' : 'EXPENSE');
-    setEditDate(tx.transaction_date || new Date().toISOString().split('T')[0]);
+
+    // แยกวันและเวลา
+    const dateStr = tx.transaction_date || '';
+    if (dateStr.includes('T') || dateStr.includes(' ')) {
+      const parts = dateStr.replace(' ', 'T').split('T');
+      setEditDate(parts[0]);
+      if (parts[1]) {
+        const timeParts = parts[1].split(':');
+        if (timeParts.length >= 2) {
+          setEditTime(`${timeParts[0].padStart(2, '0')}:${timeParts[1].padStart(2, '0')}`);
+        } else {
+          setEditTime('12:00');
+        }
+      } else {
+        setEditTime('12:00');
+      }
+    } else {
+      setEditDate(dateStr || new Date().toISOString().split('T')[0]);
+      if (tx.created_at) {
+        const cd = new Date(tx.created_at);
+        const hh = String(cd.getHours()).padStart(2, '0');
+        const mm = String(cd.getMinutes()).padStart(2, '0');
+        setEditTime(`${hh}:${mm}`);
+      } else {
+        setEditTime('12:00');
+      }
+    }
+
     setEditAccountId(tx.account_id ? String(tx.account_id) : '');
     setEditCategory(tx.category || '');
     setEditAmount(tx.amount != null ? String(tx.amount) : '');
@@ -270,6 +340,7 @@ export default function ExpenseIncomeSection({
 
     try {
       setSubmittingEdit(true);
+      const fullDateTime = editTime ? `${editDate}T${editTime}:00` : editDate;
       const payload: any = {
         account_id: editAccountId || null,
         type: editType,
@@ -277,7 +348,7 @@ export default function ExpenseIncomeSection({
         category: editCategory.trim(),
         amount: parseFloat(editAmount) || 0,
         note: editNote.trim() || null,
-        transaction_date: editDate,
+        transaction_date: fullDateTime,
       };
 
       const { error } = await supabase
@@ -293,7 +364,43 @@ export default function ExpenseIncomeSection({
       onTransactionsUpdated?.();
       onCashFlowUpdated?.();
     } catch (err: any) {
-      alert('เกิดข้อผิดพลาดในการแก้ไขรายการ: ' + err.message);
+      if (err.message?.includes('invalid input syntax for type bigint')) {
+        const retryWithoutAccount = confirm(
+          '⚠️ เกิดข้อผิดพลาดจากฐานข้อมูล:\n' +
+          'คอลัมน์ account_id ในตาราง expense_income_transactions ของ Supabase ยังคงเป็นชนิด bigint (เดิมผูกกับ cash_and_pvd_assets) จึงยังไม่สามารถผูกกับ UUID ของ financial_accounts ได้\n\n' +
+          '👉 วิธีแก้ไขถาวร: กรุณารันคำสั่ง SQL Migration ใน Supabase SQL Editor เพื่อเปลี่ยน account_id ให้เป็น UUID\n\n' +
+          'คุณต้องการบันทึกการแก้ไขนี้โดย "ไม่ระบุบัญชี" ชั่วคราวก่อนหรือไม่?'
+        );
+        if (retryWithoutAccount) {
+          try {
+            const fullDateTime = editTime ? `${editDate}T${editTime}:00` : editDate;
+            const retryPayload = {
+              account_id: null,
+              type: editType,
+              transaction_type: editType.toLowerCase(),
+              category: editCategory.trim(),
+              amount: parseFloat(editAmount) || 0,
+              note: editNote.trim() || null,
+              transaction_date: fullDateTime,
+            };
+            const { error: retryError } = await supabase
+              .from('expense_income_transactions')
+              .update(retryPayload)
+              .eq('id', editingTx.id);
+            if (retryError) throw retryError;
+            setIsEditModalOpen(false);
+            setEditingTx(null);
+            await fetchTransactions();
+            onTransactionsUpdated?.();
+            onCashFlowUpdated?.();
+            return;
+          } catch (rErr: any) {
+            alert('เกิดข้อผิดพลาด: ' + rErr.message);
+          }
+        }
+      } else {
+        alert('เกิดข้อผิดพลาดในการแก้ไขรายการ: ' + err.message);
+      }
     } finally {
       setSubmittingEdit(false);
     }
@@ -423,8 +530,41 @@ export default function ExpenseIncomeSection({
       });
     }
 
-    return list;
+    return [...list].sort(
+      (a, b) => new Date(b.transaction_date).getTime() - new Date(a.transaction_date).getTime()
+    );
   }, [periodFilteredTransactions, typeFilter, selectedAccountFilter, searchQuery]);
+
+  // Helper สำหรับจัดรูปแบบวัน-เวลา
+  const formatTxDateTime = (dateStr?: string | null) => {
+    if (!dateStr) return '-';
+    try {
+      const d = new Date(dateStr);
+      if (isNaN(d.getTime())) return dateStr;
+
+      const day = String(d.getDate()).padStart(2, '0');
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const y = d.getFullYear();
+
+      const hasTime = dateStr.includes('T') || dateStr.includes(' ') || dateStr.includes(':');
+      const hh = String(d.getHours()).padStart(2, '0');
+      const mm = String(d.getMinutes()).padStart(2, '0');
+
+      return (
+        <div className="flex flex-col">
+          <span className="font-semibold text-slate-800">{`${day}/${m}/${y}`}</span>
+          {hasTime && (
+            <span className="text-[11px] text-slate-400 font-mono flex items-center gap-0.5 mt-0.5">
+              <Clock className="w-2.5 h-2.5 text-slate-400" />
+              <span>{`${hh}:${mm} น.`}</span>
+            </span>
+          )}
+        </div>
+      );
+    } catch {
+      return dateStr;
+    }
+  };
 
   // Helper สำหรับจัดรูปแบบยอดเงิน
   const formatMoney = (val: number | null | undefined, options?: { prefix?: string }) => {
@@ -658,14 +798,42 @@ export default function ExpenseIncomeSection({
                 {/* วันที่ และ บัญชี */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">วันที่ทำรายการ</label>
-                    <input
-                      type="date"
-                      required
-                      value={txDate}
-                      onChange={(e) => setTxDate(e.target.value)}
-                      className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 bg-white"
-                    />
+                    <label className="block text-xs font-semibold text-slate-700 mb-1 flex items-center justify-between">
+                      <span className="flex items-center gap-1">
+                        <Calendar className="w-3.5 h-3.5 text-slate-500" />
+                        วันที่ & เวลาทำรายการ
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const now = new Date();
+                          setTxDate(now.toISOString().split('T')[0]);
+                          const hh = String(now.getHours()).padStart(2, '0');
+                          const mm = String(now.getMinutes()).padStart(2, '0');
+                          setTxTime(`${hh}:${mm}`);
+                        }}
+                        className="text-[10px] text-emerald-600 hover:text-emerald-700 font-semibold cursor-pointer"
+                        title="ตั้งเป็นวันและเวลาปัจจุบัน"
+                      >
+                        ตอนนี้
+                      </button>
+                    </label>
+                    <div className="grid grid-cols-12 gap-1.5">
+                      <input
+                        type="date"
+                        required
+                        value={txDate}
+                        onChange={(e) => setTxDate(e.target.value)}
+                        className="col-span-7 px-2.5 py-2 text-xs border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 bg-white"
+                      />
+                      <input
+                        type="time"
+                        required
+                        value={txTime}
+                        onChange={(e) => setTxTime(e.target.value)}
+                        className="col-span-5 px-2 py-2 text-xs border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 bg-white font-mono"
+                      />
+                    </div>
                   </div>
 
                   <div>
@@ -706,7 +874,7 @@ export default function ExpenseIncomeSection({
 
                   {/* Quick Tags Chips */}
                   <div className="flex flex-wrap gap-1 mt-2">
-                    {(txType === 'EXPENSE' ? POPULAR_EXPENSE_CATEGORIES : POPULAR_INCOME_CATEGORIES).slice(0, 8).map((catName) => (
+                    {(txType === 'EXPENSE' ? POPULAR_EXPENSE_CATEGORIES : POPULAR_INCOME_CATEGORIES).slice(0, txType === 'EXPENSE' ? POPULAR_EXPENSE_CATEGORIES.length : POPULAR_INCOME_CATEGORIES.length).map((catName) => (
                       <button
                         key={catName}
                         type="button"
@@ -936,8 +1104,8 @@ export default function ExpenseIncomeSection({
 
                     return (
                       <tr key={tx.id} className="hover:bg-slate-50/80 transition group">
-                        <td className="py-2.5 px-3.5 whitespace-nowrap text-slate-600 font-medium">
-                          {tx.transaction_date}
+                        <td className="py-2.5 px-3.5 whitespace-nowrap text-slate-600">
+                          {formatTxDateTime(tx.transaction_date)}
                         </td>
 
                         <td className="py-2.5 px-3 whitespace-nowrap">
@@ -1054,14 +1222,42 @@ export default function ExpenseIncomeSection({
               {/* วันที่ และ บัญชี */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">วันที่ทำรายการ</label>
-                  <input
-                    type="date"
-                    required
-                    value={editDate}
-                    onChange={(e) => setEditDate(e.target.value)}
-                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 bg-white"
-                  />
+                  <label className="block text-xs font-semibold text-slate-700 mb-1 flex items-center justify-between">
+                    <span className="flex items-center gap-1">
+                      <Calendar className="w-3.5 h-3.5 text-slate-500" />
+                      วันที่ & เวลาทำรายการ
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const now = new Date();
+                        setEditDate(now.toISOString().split('T')[0]);
+                        const hh = String(now.getHours()).padStart(2, '0');
+                        const mm = String(now.getMinutes()).padStart(2, '0');
+                        setEditTime(`${hh}:${mm}`);
+                      }}
+                      className="text-[10px] text-emerald-600 hover:text-emerald-700 font-semibold cursor-pointer"
+                      title="ตั้งเป็นวันและเวลาปัจจุบัน"
+                    >
+                      ตอนนี้
+                    </button>
+                  </label>
+                  <div className="grid grid-cols-12 gap-1.5">
+                    <input
+                      type="date"
+                      required
+                      value={editDate}
+                      onChange={(e) => setEditDate(e.target.value)}
+                      className="col-span-7 px-2.5 py-2 text-xs border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 bg-white"
+                    />
+                    <input
+                      type="time"
+                      required
+                      value={editTime}
+                      onChange={(e) => setEditTime(e.target.value)}
+                      className="col-span-5 px-2 py-2 text-xs border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 bg-white font-mono"
+                    />
+                  </div>
                 </div>
 
                 <div>
