@@ -118,20 +118,20 @@ export async function GET(req: NextRequest) {
       const isCrypto = ['BTC', 'ETH', 'SOL', 'BNB', 'DOGE', 'XRP'].includes(sym);
       let priceSource = '';
 
-if (isCrypto) {
-  try {
-    // ใช้ CoinGecko Simple Price API แทน (ไม่บล็อก Vercel Serverless)
-    const cryptoMap: Record<string, string> = {
-      BTC: 'bitcoin',
-      ETH: 'ethereum',
-      SOL: 'solana',
-      BNB: 'binancecoin',
-      DOGE: 'dogecoin',
-      XRP: 'ripple',
-    };
-    const coinId = cryptoMap[sym];
+      if (isCrypto) {
+        try {
+          // ใช้ CoinGecko Simple Price API แทน (ไม่บล็อก Vercel Serverless)
+          const cryptoMap: Record<string, string> = {
+            BTC: 'bitcoin',
+            ETH: 'ethereum',
+            SOL: 'solana',
+            BNB: 'binancecoin',
+            DOGE: 'dogecoin',
+            XRP: 'ripple',
+          };
+          const coinId = cryptoMap[sym];
 
-    if (coinId) {
+          if (coinId) {
             const res = await fetch(
               `https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=usd`,
               { cache: 'no-store' }
