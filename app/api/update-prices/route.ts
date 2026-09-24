@@ -118,14 +118,30 @@ export async function GET(req: NextRequest) {
       const isCrypto = ['BTC', 'ETH', 'SOL', 'BNB', 'DOGE', 'XRP'].includes(sym);
       let priceSource = '';
 
-      if (isCrypto) {
-        try {
-          const res = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${sym}USDT`);
-          if (res.ok) {
-            const data = await res.json();
-            if (data?.price) {
-              rawPrice = parseFloat(data.price);
-              priceSource = 'binance_usd';
+if (isCrypto) {
+  try {
+    // ใช้ CoinGecko Simple Price API แทน (ไม่บล็อก Vercel Serverless)
+    const cryptoMap: Record<string, string> = {
+      BTC: 'bitcoin',
+      ETH: 'ethereum',
+      SOL: 'solana',
+      BNB: 'binancecoin',
+      DOGE: 'dogecoin',
+      XRP: 'ripple',
+    };
+    const coinId = cryptoMap[sym];
+
+    if (coinId) {
+            const res = await fetch(
+              `https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=usd`,
+              { cache: 'no-store' }
+            );
+            if (res.ok) {
+              const data = await res.json();
+              if (data[coinId]?.usd) {
+                rawPrice = Number(data[coinId].usd);
+                priceSource = 'binance_usd'; // รักษา logic เดิมไว้
+              }
             }
           }
         } catch (e) {

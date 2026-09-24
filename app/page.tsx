@@ -268,17 +268,25 @@ export default function Home() {
                 recentTransactions.map((tx) => {
                   const typeVal = String(tx.type || tx.transaction_type || '').toUpperCase();
                   const isIncome = typeVal === 'INCOME';
+                  const isTransfer = typeVal === 'TRANSFER';
                   return (
                     <div key={tx.id} className="py-3 flex justify-between items-center text-sm">
                       <div>
-                        <p className="font-semibold text-slate-800">{tx.category}</p>
+                        <div className="flex items-center gap-1.5">
+                          <p className="font-semibold text-slate-800">{tx.category}</p>
+                          {isTransfer && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200 font-semibold">
+                              โอน/ชำระ
+                            </span>
+                          )}
+                        </div>
                         <div className="text-xs text-slate-400 mt-0.5 flex items-center flex-wrap gap-x-1.5">
                           {formatTxDateTime(tx.transaction_date)}
                           {tx.note && <span>• {tx.note}</span>}
                         </div>
                       </div>
-                      <span className={`font-bold text-sm ${isIncome ? 'text-emerald-600' : 'text-slate-800'}`}>
-                        {isIncome ? '+' : '-'}฿{Number(tx.amount || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 })}
+                      <span className={`font-bold text-sm ${isTransfer ? 'text-indigo-600' : isIncome ? 'text-emerald-600' : 'text-slate-800'}`}>
+                        {isTransfer ? '⇄ ' : isIncome ? '+' : '-'}฿{Number(tx.amount || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 })}
                       </span>
                     </div>
                   );

@@ -223,25 +223,23 @@ Operating cash and short-term liabilities. See §3.0.
 
 ### 3.7 `expense_income_transactions`
 
-Daily income / expense log.
+Daily income, expense, and internal transfer / bill payment log.
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | BIGSERIAL, PK | |
 | `user_id` | UUID, nullable, default `auth.uid()`, FK CASCADE | |
-| `transaction_date` | DATE, NOT NULL, default `CURRENT_DATE` | |
-| `type` | VARCHAR(10), NOT NULL, CHECK `INCOME` \| `EXPENSE` | |
-| `transaction_type` | VARCHAR(10), NOT NULL, CHECK `INCOME` \| `EXPENSE` | |
-| `category` | VARCHAR(50), NOT NULL | no CHECK — free text |
-| `amount` | NUMERIC(12,2), NOT NULL | **no `> 0` constraint** — a negative EXPENSE silently credits the account |
-| `account_id` | BIGINT, nullable, FK → **`cash_and_pvd_assets(id)`** | ⚠️ wrong target — §7.2 |
+| `transaction_date` | TIMESTAMPTZ, NOT NULL, default `now()` | Supports micro-chronological sorting |
+| `type` | VARCHAR(10), NOT NULL, CHECK `INCOME` \| `EXPENSE` \| `TRANSFER` | `TRANSFER` does not count toward expense/income totals |
+| `transaction_type` | VARCHAR(10), nullable | |
+| `category` | VARCHAR(50), NOT NULL | e.g. "ชำระค่าบัตรเครดิต", "โอนเงินระหว่างบัญชี" |
+| `amount` | NUMERIC(12,2), NOT NULL, CHECK `> 0` | Positive value |
+| `account_id` | UUID, nullable, FK → `financial_accounts(id)` | Source account (outflow for expense & transfer) |
+| `to_account_id` | UUID, nullable, FK → `financial_accounts(id)` | Destination account (inflow for transfer / debt deduction for credit card) |
 | `note` | TEXT, nullable | |
 | `created_at` | TIMESTAMPTZ, default `now()` | |
 
-**Trigger:** `on_transaction_inserted` — `AFTER INSERT FOR EACH ROW EXECUTE update_account_balance()`.
-
-> ⚠️ **INSERT only.** There is no UPDATE or DELETE trigger, so editing the amount of a transaction,
-> or deleting one, leaves the account balance permanently wrong with no error. See §7.4.
+**Trigger:** `on_transaction_changed` — `AFTER INSERT OR UPDATE OR DELETE FOR EACH ROW EXECUTE apply_txn_to_balance()`. Automatically keeps both source and destination accounts accurately synchronized without double-counting debt payments as expenses.
 
 ### 3.8 Net worth — canonical formula
 

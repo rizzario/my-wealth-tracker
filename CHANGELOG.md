@@ -2,6 +2,145 @@
 
 ## [Unreleased] - 2026-09-23
 
+### Category Combobox with Popular Categories (ระบบเลือกและพิมพ์ค้นหาหมวดหมู่อัจฉริยะ)
+
+#### 1. Dropdown Typing Field (`CategoryCombobox`)
+- **Seamless Typing & Dropdown**: Converted the Category input in both the **Create Transaction Form** and **Edit Transaction Modal** into an interactive Combobox. Users can freely type custom category names or click the dropdown arrow to browse and select from popular categories.
+- **Dynamic Type-Aware Category Filtering**:
+  - Automatically loads presets based on transaction type: `POPULAR_EXPENSE_CATEGORIES` (รายจ่าย), `POPULAR_INCOME_CATEGORIES` (รายรับ), and `POPULAR_TRANSFER_CATEGORIES` (โอน/ชำระบัตร).
+  - Also dynamically merges distinct historical categories previously recorded by the user for that transaction type.
+- **Real-Time Live Search**: Filters suggestions on-the-fly as the user types, with a matching count indicator.
+- **Custom Category Prompt**: When typing a category not present in the list, displays an intuitive `+ ใช้หมวดหมู่: "{typed_text}"` option.
+- **Interactive UX Features**:
+  - Chevron toggle button with rotation animation.
+  - Active selection checkmark (`Check`) and highlighted badge.
+  - Quick "ล้าง" (Clear) action in dropdown header.
+  - Automatic click-outside detection and `Escape` key listener to dismiss dropdown.
+  - Non-clipping modal dialog overlay (`relative` modal container).
+
+---
+
+### Transaction Ledger Pagination & Drag-and-Drop Resizable Columns (ระบบแบ่งหน้าและปรับความกว้างคอลัมน์)
+
+#### 1. Configurable Pagination & Smooth Navigation
+- **Page Size Selection**: Added dropdown supporting `10`, `20`, `50`, and `100` items per page (defaulting to 20, persisted in `localStorage: tx_table_page_size`).
+- **Dynamic Status Display**: Displays `แสดง {startIndex} - {endIndex} จาก {total} รายการ` for clear record visibility.
+- **Smart Navigation Controls**: Built pagination bar featuring First (`<<`), Previous (`<`), numbered page buttons with automatic ellipsis (`...`) for large record sets, Next (`>`), and Last (`>>`).
+- **Filter-Aware Auto-Reset**: Changing search keywords, month selectors, or transaction type filters automatically resets page index to 1.
+
+#### 2. Drag-to-Resize Column Headers
+- **Live Drag-and-Drop Handles**: Hovering and dragging column borders allows real-time width adjustment with an intuitive resize cursor (`col-resize`) and blue border accent.
+- **Fixed Table Layout Architecture**: Implemented `table-fixed` with `<colgroup>` and explicit pixel widths for all table columns (`date`, `category`, `note`, `account`, `amount`, `actions`).
+- **Minimum Width Enforcement**: Prevents accidental column collapse with safe minimum width thresholds (60px to 140px).
+- **Persistent Layouts**: Column widths are automatically remembered across page reloads via `localStorage: tx_table_col_widths`.
+- **Reset Layout Button**: Added "รีเซ็ตคอลัมน์" button (`RotateCcw`) in table header toolbar to easily restore default balanced widths.
+
+#### 3. Expanded Text Visibility
+- **Removed Hardcoded Width Limits**: Removed restrictive `max-w-[200px]` constraints on `note` (บันทึกช่วยจำ) and `account` (บัญชี / ต้นทาง ➔ ปลายทาง), allowing cells to cleanly expand to any dragged width without premature truncation.
+- **Accessible Tooltips**: Maintained full-text `title` attributes on truncated items for quick hover previews.
+
+---
+
+### Transfer & Credit Card Bill Payment Support (การโอนเงินระหว่างบัญชี & ชำระบัตรเครดิต)
+
+#### 1. Internal Transfers & Debt Deduction Architecture
+- **Eliminated Double-Counting of Expenses**: Paying credit card bills or transferring between own bank accounts is now tracked as `TRANSFER` rather than `EXPENSE`.
+  - **Credit Card Bill Payment**: When paying off a credit card from a bank account, it decreases bank balance and decreases credit card outstanding balance simultaneously. Expenses were already accounted for when the purchases were initially made; classifying the payment as an expense would double-count expenses and artificially distort monthly savings rate.
+  - **Internal Bank Transfer**: Moving funds between accounts (e.g. SCB to KBank) is net-neutral to personal wealth. Classifying as expense/income would inflate both.
+- **Added `to_account_id`**: Added destination account FK (`to_account_id uuid`) referencing `financial_accounts(id)`.
+- **Allowed `type = 'TRANSFER'`**: Updated check constraint on `expense_income_transactions.type` to support `INCOME`, `EXPENSE`, and `TRANSFER`.
+
+#### 2. Dual-Account Trigger Balance Synchronization (`apply_txn_to_balance()`)
+- **Automated Dual-Account Balance Adjustment**:
+  - `account_id` (Source Account): Balance decreases (outflow for bank asset, increases debt if cash advance).
+  - `to_account_id` (Destination Account): Balance increases if bank asset, or reduces credit card/loan debt if liability (`is_liability = true`).
+- **Complete Reversal Support**: When a transfer is edited or deleted, both source and destination accounts are restored cleanly.
+
+#### 3. UI/UX Enhancements in `ExpenseIncomeSection` & `app/page.tsx`
+- **3-Way Type Selector**: Added `[ รายจ่าย ] [ รายรับ ] [ โอน/ชำระบัตร ]` with `ArrowRightLeft` icon.
+- **Dynamic Transfer Form**: Displays two dropdowns (จากบัญชีต้นทาง ➔ ไปยังบัญชีปลายทาง) with contextual helper banners explaining debt deduction or net-neutral asset movement.
+- **Transfer Categories**: Added presets: `ชำระค่าบัตรเครดิต`, `โอนเงินระหว่างบัญชี`, `ชำระสินเชื่อ / ค่างวด`, `ถอนเงินสด / เติมกระเป๋าเงิน`, `โอนเงินเพื่อลงทุน`.
+- **5th Metric Card**: Added dedicated "โอน & ชำระบัตร (Transfer)" card showing internal flow volume without impacting Net Savings (`Income - Expense`) or Savings Rate calculations.
+- **Table Ledger Display**: Renders transfer badge with `ArrowRightLeft`, visual flow (`[ต้นทาง] ➔ [ปลายทาง]`), and neutral `⇄ ฿...` styling.
+- **Edit Modal**: Fully supports editing and re-assigning transfer source and destination accounts.
+- **Overview Tab Integration (`app/page.tsx`)**: Recent transactions list now detects `type = 'TRANSFER'`, displaying an "โอน/ชำระ" badge and neutral `⇄ ฿...` formatting.
+
+#### 4. Required SQL Migration Reference
+```sql
+ALTER TABLE public.expense_income_transactions
+  ADD COLUMN IF NOT EXISTS to_account_id uuid REFERENCES public.financial_accounts(id) ON DELETE SET NULL;
+
+CREATE INDEX IF NOT EXISTS idx_transactions_to_account_id 
+  ON public.expense_income_transactions(to_account_id);
+
+ALTER TABLE public.expense_income_transactions
+  DROP CONSTRAINT IF EXISTS expense_income_transactions_type_check;
+
+ALTER TABLE public.expense_income_transactions
+  ADD CONSTRAINT expense_income_transactions_type_check
+  CHECK (type IN ('INCOME', 'EXPENSE', 'TRANSFER'));
+
+-- Trigger Function supporting dual-account balance adjustments on INSERT, UPDATE, DELETE
+CREATE OR REPLACE FUNCTION public.apply_txn_to_balance()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  src_liab boolean; dst_liab boolean; delta numeric(14,2);
+BEGIN
+  IF TG_OP IN ('UPDATE', 'DELETE') THEN
+    IF OLD.type = 'TRANSFER' THEN
+      IF OLD.account_id IS NOT NULL THEN
+        SELECT is_liability INTO src_liab FROM public.financial_accounts WHERE id = OLD.account_id;
+        delta := OLD.amount; IF src_liab THEN delta := -delta; END IF;
+        UPDATE public.financial_accounts SET current_balance = current_balance + delta, updated_at = now() WHERE id = OLD.account_id;
+      END IF;
+      IF OLD.to_account_id IS NOT NULL THEN
+        SELECT is_liability INTO dst_liab FROM public.financial_accounts WHERE id = OLD.to_account_id;
+        delta := -OLD.amount; IF dst_liab THEN delta := -delta; END IF;
+        UPDATE public.financial_accounts SET current_balance = current_balance + delta, updated_at = now() WHERE id = OLD.to_account_id;
+      END IF;
+    ELSE
+      IF OLD.account_id IS NOT NULL THEN
+        SELECT is_liability INTO src_liab FROM public.financial_accounts WHERE id = OLD.account_id;
+        delta := CASE WHEN OLD.type = 'INCOME' THEN -OLD.amount ELSE OLD.amount END;
+        IF src_liab THEN delta := -delta; END IF;
+        UPDATE public.financial_accounts SET current_balance = current_balance + delta, updated_at = now() WHERE id = OLD.account_id;
+      END IF;
+    END IF;
+  END IF;
+
+  IF TG_OP IN ('INSERT', 'UPDATE') THEN
+    IF NEW.type = 'TRANSFER' THEN
+      IF NEW.account_id IS NOT NULL THEN
+        SELECT is_liability INTO src_liab FROM public.financial_accounts WHERE id = NEW.account_id;
+        delta := -NEW.amount; IF src_liab THEN delta := -delta; END IF;
+        UPDATE public.financial_accounts SET current_balance = current_balance + delta, updated_at = now() WHERE id = NEW.account_id;
+      END IF;
+      IF NEW.to_account_id IS NOT NULL THEN
+        SELECT is_liability INTO dst_liab FROM public.financial_accounts WHERE id = NEW.to_account_id;
+        delta := NEW.amount; IF dst_liab THEN delta := -delta; END IF;
+        UPDATE public.financial_accounts SET current_balance = current_balance + delta, updated_at = now() WHERE id = NEW.to_account_id;
+      END IF;
+    ELSE
+      IF NEW.account_id IS NOT NULL THEN
+        SELECT is_liability INTO src_liab FROM public.financial_accounts WHERE id = NEW.account_id;
+        delta := CASE WHEN NEW.type = 'INCOME' THEN NEW.amount ELSE -NEW.amount END;
+        IF src_liab THEN delta := -delta; END IF;
+        UPDATE public.financial_accounts SET current_balance = current_balance + delta, updated_at = now() WHERE id = NEW.account_id;
+      END IF;
+    END IF;
+  END IF;
+  RETURN COALESCE(NEW, OLD);
+END;
+$$;
+
+DROP TRIGGER IF EXISTS on_transaction_changed ON public.expense_income_transactions;
+CREATE TRIGGER on_transaction_changed
+AFTER INSERT OR UPDATE OR DELETE ON public.expense_income_transactions
+FOR EACH ROW EXECUTE FUNCTION public.apply_txn_to_balance();
+```
+
+---
+
 ### Expense & Income Time Tracking & UUID Foreign Key Migration
 
 #### 1. Timestamp Support for Transactions
@@ -20,7 +159,7 @@
 
 ---
 
-### (Liabilities) using a dedicated Tab Switcher and Bullet Points.
+### Separation of Operating Assets (Bank/Cash) and Liabilities (Credit Card/Loan) in CashFlow Form
 
 ### Key Improvements Made
 
