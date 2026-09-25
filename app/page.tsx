@@ -9,6 +9,7 @@ import PortfolioTable from '../components/PortfolioTable';
 import CashAndPVDTable from '../components/CashAndPvdSection';
 import CashFlowSection from '../components/CashFlowSection';
 import ExpenseIncomeSection from '../components/ExpenseIncomeSection';
+import TradeTransactionsSection from '../components/TradeTransactionsSection';
 import { useIdleTimer } from './hooks/useIdleTimer';
 import { calculateNetWorthSummary } from '@/lib/networth';
 
@@ -24,7 +25,7 @@ export default function Home() {
 
   useIdleTimer();
 
-  const [activeTab, setActiveTab] = useState<'overview' | 'holdings' | 'cash_pvd' | 'cashflow' | 'expenses'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'holdings' | 'trades' | 'cash_pvd' | 'cashflow' | 'expenses'>('overview');
   
   // States ข้อมูล
   const [holdings, setHoldings] = useState<any[]>([]);
@@ -130,7 +131,7 @@ export default function Home() {
 
           <div className="flex items-center space-x-3">
             <nav className="flex space-x-1 bg-emerald-900/60 p-1 rounded-lg text-xs font-medium">
-              {(['overview', 'holdings', 'cash_pvd', 'cashflow', 'expenses'] as const).map(tab => (
+              {(['overview', 'holdings', 'trades', 'cash_pvd', 'cashflow', 'expenses'] as const).map(tab => (
                 <button
                   key={tab}
                   onClick={() => setActiveTab(tab)}
@@ -142,6 +143,8 @@ export default function Home() {
                     ? 'ภาพรวม'
                     : tab === 'holdings'
                     ? 'พอร์ตลงทุน'
+                    : tab === 'trades'
+                    ? 'ประวัติการเทรด'
                     : tab === 'cash_pvd'
                     ? 'เงินฝาก & PVD'
                     : tab === 'cashflow'
@@ -301,7 +304,12 @@ export default function Home() {
           <PortfolioTable onHoldingsUpdated={fetchAllOverviewData} />
         )}
 
-        {/* Tab 3: เงินฝาก & PVD */}
+        {/* Tab 3: ประวัติการเทรด & คำสั่งซื้อขาย (Trade Transactions) */}
+        {activeTab === 'trades' && (
+          <TradeTransactionsSection onTradesUpdated={fetchAllOverviewData} />
+        )}
+
+        {/* Tab 4: เงินฝาก & PVD */}
         {activeTab === 'cash_pvd' && (
           <CashAndPVDTable onCashPvdUpdated={fetchAllOverviewData} />
         )}

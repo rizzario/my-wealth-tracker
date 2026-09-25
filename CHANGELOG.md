@@ -1,5 +1,71 @@
 # Changelog
 
+## [Unreleased] - 2026-09-25
+
+### Portfolio Holdings Broker Support & Auto Trade Synchronization (ผูกโบรกเกอร์สินทรัพย์ และบันทึก Trade/หักเงินสดอัตโนมัติ)
+
+#### 1. Broker Tracking in Portfolio Holdings (`components/PortfolioTable.tsx`)
+- **New Broker Column & Tag**: Added `broker` column to `portfolio_holdings` database schema, TypeScript types, and UI table.
+- **Sorting & Badges**: Users can now sort holdings by Broker alphabetically, with broker badges displayed cleanly in the table.
+- **Datalist Suggestions**: Input supports fast selection from popular brokers (`BLS`, `InnovestX`, `Dime!`, `Kasikorn Securities`, `SCB Securities`, `Binance`, `Bitkub`, etc.).
+
+#### 2. Automatic Trade Order & Balance Deduction on Asset Creation
+- **Auto BUY Generation**: When adding a new asset to the portfolio, checking **"บันทึกเป็นรายการซื้อ (BUY) ใน Trade Transactions อัตโนมัติ"** will automatically record a corresponding BUY order in `trade_transactions`.
+- **Linked Cash Deduction**: Automatically deducts the purchase cost (`volume * initial_cost * exchange_rate`) from the selected `financial_accounts` to keep cash on hand perfectly synchronized.
+- **Shared Broker Mappings**: Automatically selects the mapped financial account if a default was previously set for that broker in the Trade tab or Portfolio tab (`localStorage: broker_account_mappings`).
+
+#### 3. Buy on Dip & Stop Loss Trade Integration
+- In the Edit Asset modal, after running the **Buy on Dip (DCA)** or **Stop Loss / ขาย** calculator, users can toggle to automatically log the calculated BUY or SELL trade into `trade_transactions` and update the cash balance accordingly.
+
+#### 4. Required SQL Migration
+```sql
+ALTER TABLE public.portfolio_holdings
+  ADD COLUMN IF NOT EXISTS broker character varying(50) null;
+
+CREATE INDEX IF NOT EXISTS idx_holdings_broker ON public.portfolio_holdings(broker);
+```
+
+---
+
+## [Unreleased] - 2026-09-24
+
+### Trade Transactions Ledger & Broker-to-Account Binding (ระบบบันทึกประวัติการเทรดและผูกบัญชีโบรกเกอร์)
+
+#### 1. Dedicated Trade Transactions Tab (`components/TradeTransactionsSection.tsx`)
+- **New Top-Level Navigation Tab**: Added `'trades'` (ประวัติการเทรด) tab adjacent to 'พอร์ตลงทุน' (Holdings) in `app/page.tsx`.
+- **Summary Metrics Dashboard**:
+  - ยอดซื้อสะสม (Total BUY Amount in THB).
+  - ยอดขายสะสม (Total SELL Amount in THB).
+  - กระแสเงินสดสุทธิ (Net Cash Flow in/out).
+  - ค่าธรรมเนียม & ภาษีรวม (Total Commission & Tax).
+  - จำนวนรายการซื้อขายทั้งหมด (Total Trades Count).
+- **Interactive Trade Ledger Table**:
+  - Displays Date, Broker, Linked Financial Account (`account_id`), Side (BUY / SELL / FREE), Stock Symbol, Units, Unit Price (with currency symbol), Commission Fee, Net Amount (THB), and Trade Reason / Order ID.
+  - Resizable column widths with live mouse drag-and-drop handles and localStorage persistence (`trades_col_widths`).
+  - Full Pagination controls with configurable page sizes (10, 20, 50, 100 rows per page, default 20) and smart page navigation (`<< < 1 2 ... > >>`).
+  - Multi-criteria Filtering: Search text, Broker filter, Trade Side filter, Year filter, and Linked Financial Account filter.
+
+#### 2. Broker-to-Financial-Account Binding Architecture
+- **Smart Auto-Pick Binding**:
+  - When recording a trade with a broker (e.g. `BLS`, `InnovestX`, `Dime!`), the form automatically detects and selects the linked financial account (e.g. `BLS` ➔ `[BBL] บัญชีออมทรัพย์ ATS` หรือ `BLS Cash Balance`).
+  - Users can set and adjust default mappings at any time via the dedicated **"ผูกบัญชีโบรกเกอร์ (Broker Accounts Settings)"** modal or via the "จำบัญชีนี้เป็นค่าเริ่มต้นสำหรับ {broker}" checkbox.
+  - Broker-account preferences persist across sessions in `localStorage: broker_account_mappings`.
+- **Optional Balance Synchronization**:
+  - When saving a trade, users can toggle "ปรับยอดเงินในบัญชีทันที" to automatically deduct the net amount on BUY or credit the net amount on SELL from the linked `financial_accounts`.
+- **Database Schema & Safe Migration Support**:
+  - Added `account_id uuid REFERENCES public.financial_accounts(id) ON DELETE SET NULL` to `tableschema.txt` and SQL index `idx_trades_account_id`.
+  - Frontend includes defensive error handling: if the user hasn't yet executed the migration in Supabase, the app detects the missing column, alerts the user with the SQL snippet, and safely proceeds without breaking trade entries.
+
+#### 3. Required SQL Migration
+```sql
+ALTER TABLE public.trade_transactions
+  ADD COLUMN IF NOT EXISTS account_id uuid REFERENCES public.financial_accounts(id) ON DELETE SET NULL;
+
+CREATE INDEX IF NOT EXISTS idx_trades_account_id ON public.trade_transactions(account_id);
+```
+
+---
+
 ## [Unreleased] - 2026-09-23
 
 ### Category Combobox with Popular Categories (ระบบเลือกและพิมพ์ค้นหาหมวดหมู่อัจฉริยะ)

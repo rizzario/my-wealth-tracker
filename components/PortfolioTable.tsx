@@ -15,13 +15,17 @@ import {
   Trash2,
   Calculator,
   AlertCircle,
+  Building2,
+  Wallet,
 } from 'lucide-react';
 import { CURRENCY_OPTIONS, getCurrencySymbol } from '@/lib/currency';
+import { POPULAR_BROKERS } from './TradeTransactionsSection';
 
 export interface Holding {
   id: string;
   user_id?: string;
   symbol: string;
+  broker?: string | null;
   volume: number;
   currency: string;
   initial_cost: number;
@@ -36,7 +40,17 @@ export interface Holding {
   updated_at?: string;
 }
 
-type SortField = 'symbol' | 'volume' | 'initial_cost' | 'present_price' | 'yield_percent';
+export interface FinancialAccountOption {
+  id: string;
+  account_name: string;
+  bank_name?: string | null;
+  account_type: string;
+  currency?: string;
+  current_balance: number;
+  is_liability: boolean;
+}
+
+type SortField = 'symbol' | 'broker' | 'volume' | 'initial_cost' | 'present_price' | 'yield_percent';
 type SortDirection = 'asc' | 'desc';
 
 interface PortfolioTableProps {
@@ -45,26 +59,42 @@ interface PortfolioTableProps {
 
 interface HoldingFormData {
   symbol: string;
+  broker: string;
   currency: string;
   volume: string;
   initial_cost: string;
   present_price: string;
+  accountId: string;
+  recordTrade: boolean;
 }
 
 const initialHoldingForm: HoldingFormData = {
   symbol: '',
+  broker: 'BLS',
   currency: 'THB',
   volume: '',
   initial_cost: '',
   present_price: '',
+  accountId: '',
+  recordTrade: true,
 };
 
 export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProps) {
   const [holdings, setHoldings] = useState<Holding[]>([]);
+  const [accounts, setAccounts] = useState<FinancialAccountOption[]>([]);
   const [loadingData, setLoadingData] = useState(true);
   const [isBulkUpdating, setIsBulkUpdating] = useState(false);
   const [updatingRowId, setUpdatingRowId] = useState<string | null>(null);
   const [fxRates, setFxRates] = useState<Record<string, number>>({ THB: 1.0 });
+
+  // Broker-to-Account Mapping state (persisted in localStorage)
+  const [brokerAccountMap, setBrokerAccountMap] = useState<Record<string, string>>(() => {
+    try {
+      const saved = localStorage.getItem('broker_account_mappings');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return {};
+  });
 
   // Sorting state
   const [sortField, setSortField] = useState<SortField>('symbol');
@@ -89,6 +119,13 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
   const [sellUnits, setSellUnits] = useState('');
   const [calcNotice, setCalcNotice] = useState<string | null>(null);
 
+  // Pending calculator trade states for Edit mode
+  const [recordDipTrade, setRecordDipTrade] = useState(true);
+  const [pendingDipTrade, setPendingDipTrade] = useState<{ units: number; price: number } | null>(null);
+
+  const [recordSellTrade, setRecordSellTrade] = useState(true);
+  const [pendingSellTrade, setPendingSellTrade] = useState<{ units: number } | null>(null);
+
   const supabase = createClient();
 
   // ดึงข้อมูลพอร์ตล่าสุดจาก Supabase (มี RLS กรองตาม user_id อัตโนมัติ)
@@ -106,6 +143,29 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
     } finally {
       setLoadingData(false);
     }
+  };
+
+  // ดึงบัญชีการเงิน financial_accounts
+  const fetchAccounts = async () => {
+    try {
+      const { data } = await supabase
+        .from('financial_accounts')
+        .select('id, account_name, bank_name, account_type, currency, current_balance, is_liability')
+        .order('account_name', { ascending: true });
+      if (data) setAccounts(data as FinancialAccountOption[]);
+    } catch (err: any) {
+      console.error('Fetch accounts error:', err);
+    }
+  };
+
+  // บันทึก Broker-to-Account Mapping ลง localStorage
+  const saveBrokerAccountMapping = (broker: string, accountId: string) => {
+    if (!broker || !accountId) return;
+    const updated = { ...brokerAccountMap, [broker]: accountId };
+    setBrokerAccountMap(updated);
+    try {
+      localStorage.setItem('broker_account_mappings', JSON.stringify(updated));
+    } catch {}
   };
 
   // ดึงอัตราแลกเปลี่ยนล่าสุดสำหรับใช้เป็นค่าตั้งต้น
@@ -126,6 +186,7 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
 
   useEffect(() => {
     fetchHoldings();
+    fetchAccounts();
     fetchFxRates();
   }, []);
 
@@ -177,6 +238,12 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
         const symA = (a.symbol || '').toUpperCase();
         const symB = (b.symbol || '').toUpperCase();
         const cmp = symA.localeCompare(symB);
+        return sortDirection === 'asc' ? cmp : -cmp;
+      }
+      if (sortField === 'broker') {
+        const brkA = (a.broker || '').toUpperCase();
+        const brkB = (b.broker || '').toUpperCase();
+        const cmp = brkA.localeCompare(brkB);
         return sortDirection === 'asc' ? cmp : -cmp;
       }
 
@@ -248,30 +315,48 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
   const handleOpenAddModal = () => {
     setModalMode('add');
     setSelectedHolding(null);
-    setFormData(initialHoldingForm);
-    setCalcMode('dip');
-    setDipAddUnits('');
-    setDipAddPrice('');
-    setSellUnits('');
-    setCalcNotice(null);
-    setIsModalOpen(true);
-  };
-
-  const handleOpenEditModal = (holding: Holding) => {
-    setModalMode('edit');
-    setSelectedHolding(holding);
+    const defaultBroker = 'BLS';
     setFormData({
-      symbol: holding.symbol,
-      currency: (holding.currency || 'THB').toUpperCase(),
-      volume: holding.volume != null ? String(holding.volume) : '',
-      initial_cost: holding.initial_cost != null ? String(holding.initial_cost) : '',
-      present_price: holding.present_price != null ? String(holding.present_price) : '',
+      symbol: '',
+      broker: defaultBroker,
+      currency: 'THB',
+      volume: '',
+      initial_cost: '',
+      present_price: '',
+      accountId: brokerAccountMap[defaultBroker] || '',
+      recordTrade: true,
     });
     setCalcMode('dip');
     setDipAddUnits('');
     setDipAddPrice('');
     setSellUnits('');
     setCalcNotice(null);
+    setPendingDipTrade(null);
+    setPendingSellTrade(null);
+    setIsModalOpen(true);
+  };
+
+  const handleOpenEditModal = (holding: Holding) => {
+    setModalMode('edit');
+    setSelectedHolding(holding);
+    const holdingBroker = holding.broker || 'BLS';
+    setFormData({
+      symbol: holding.symbol,
+      broker: holdingBroker,
+      currency: (holding.currency || 'THB').toUpperCase(),
+      volume: holding.volume != null ? String(holding.volume) : '',
+      initial_cost: holding.initial_cost != null ? String(holding.initial_cost) : '',
+      present_price: holding.present_price != null ? String(holding.present_price) : '',
+      accountId: brokerAccountMap[holdingBroker] || '',
+      recordTrade: false,
+    });
+    setCalcMode('dip');
+    setDipAddUnits('');
+    setDipAddPrice('');
+    setSellUnits('');
+    setCalcNotice(null);
+    setPendingDipTrade(null);
+    setPendingSellTrade(null);
     setIsModalOpen(true);
   };
 
@@ -280,6 +365,17 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
     setSelectedHolding(null);
     setFormData(initialHoldingForm);
     setCalcNotice(null);
+    setPendingDipTrade(null);
+    setPendingSellTrade(null);
+  };
+
+  const handleBrokerChange = (newBroker: string) => {
+    const boundAccId = brokerAccountMap[newBroker];
+    setFormData((prev) => ({
+      ...prev,
+      broker: newBroker,
+      accountId: boundAccId || prev.accountId,
+    }));
   };
 
   // คำนวณซื้อถัวเฉลี่ย (Buy on Dip Calculator)
@@ -307,8 +403,11 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
       initial_cost: String(parseFloat(newCost.toFixed(4))),
     }));
 
+    setPendingDipTrade({ units: addVol, price: addPrice });
+    setRecordDipTrade(true);
+
     setCalcNotice(
-      `คำนวณสำเร็จ: ปรับจำนวนเป็น ${newVol.toLocaleString()} หน่วย, ต้นทุนเฉลี่ยใหม่ ${newCost.toFixed(4)}`
+      `คำนวณสำเร็จ: ปรับจำนวนเป็น ${newVol.toLocaleString()} หน่วย, ต้นทุนเฉลี่ยใหม่ ${newCost.toFixed(4)} (พร้อมบันทึก BUY ${addVol.toLocaleString()} หุ้น)`
     );
     setDipAddUnits('');
     setDipAddPrice('');
@@ -335,8 +434,11 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
       volume: String(newVol),
     }));
 
+    setPendingSellTrade({ units: sold });
+    setRecordSellTrade(true);
+
     setCalcNotice(
-      `คำนวณสำเร็จ: ปรับลดจำนวนคงเหลือเป็น ${newVol.toLocaleString()} หน่วย (ต้นทุนเฉลี่ยต่อหน่วยคงเดิม)`
+      `คำนวณสำเร็จ: ปรับลดจำนวนคงเหลือเป็น ${newVol.toLocaleString()} หน่วย (พร้อมบันทึก SELL ${sold.toLocaleString()} หุ้น)`
     );
     setSellUnits('');
   };
@@ -383,6 +485,7 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
         const payload: Record<string, any> = {
           user_id: user.id,
           symbol: sym,
+          broker: formData.broker.trim() || null,
           currency: curr,
           volume: vol,
           initial_cost: cost,
@@ -391,21 +494,96 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
           updated_at: new Date().toISOString(),
         };
 
-        const { data: inserted, error } = await supabase
+        let inserted: any = null;
+
+        const { data: insData, error: insError } = await supabase
           .from('portfolio_holdings')
           .insert(payload)
           .select()
           .single();
 
-        if (error) {
-          if (error.code === '23505') {
+        if (insError) {
+          if (insError.message?.includes('column portfolio_holdings.broker does not exist')) {
+            delete payload.broker;
+            const { data: retryData, error: retryError } = await supabase
+              .from('portfolio_holdings')
+              .insert(payload)
+              .select()
+              .single();
+            if (retryError) {
+              if (retryError.code === '23505') {
+                throw new Error(`สินทรัพย์ "${sym}" มีอยู่ในพอร์ตแล้ว หากต้องการซื้อถัวเฉลี่ย กรุณากดแก้ไขที่รายการเดิม`);
+              }
+              throw retryError;
+            }
+            inserted = retryData;
+          } else if (insError.code === '23505') {
             throw new Error(`สินทรัพย์ "${sym}" มีอยู่ในพอร์ตแล้ว หากต้องการซื้อถัวเฉลี่ย กรุณากดแก้ไขที่รายการเดิม`);
+          } else {
+            throw insError;
           }
-          throw error;
+        } else {
+          inserted = insData;
+        }
+
+        // บันทึกรายการลงใน trade_transactions และหักเงินสดจาก financial_accounts
+        if (formData.recordTrade && vol > 0) {
+          const gross = vol * cost;
+          const grossThb = gross * rateToThb;
+          const netThb = grossThb;
+
+          const tradePayload: any = {
+            user_id: user.id,
+            broker: formData.broker.trim() || 'BLS',
+            trade_date: new Date().toISOString().split('T')[0],
+            side: 'BUY',
+            stock_symbol: sym,
+            currency: curr,
+            units: vol,
+            unit_price: cost,
+            exchange_rate: rateToThb,
+            gross_amount: gross,
+            fee: 0,
+            withholding_tax: 0,
+            net_amount: gross,
+            gross_amount_thb: grossThb,
+            fee_thb: 0,
+            net_amount_thb: netThb,
+            reason: 'เพิ่มสินทรัพย์ใหม่เข้าพอร์ต (New Holding)',
+            account_id: formData.accountId || null,
+          };
+
+          const { error: tradeErr } = await supabase.from('trade_transactions').insert(tradePayload);
+          if (tradeErr) {
+            if (tradeErr.message?.includes('column trade_transactions.account_id does not exist')) {
+              delete tradePayload.account_id;
+              await supabase.from('trade_transactions').insert(tradePayload);
+            } else {
+              console.warn('Could not record trade transaction:', tradeErr.message);
+            }
+          }
+
+          // ลดเงินสดคงเหลือใน financial_accounts
+          if (formData.accountId) {
+            const targetAcc = accounts.find((a) => a.id === formData.accountId);
+            if (targetAcc) {
+              const newBal = (Number(targetAcc.current_balance) || 0) - netThb;
+              await supabase
+                .from('financial_accounts')
+                .update({ current_balance: newBal, updated_at: new Date().toISOString() })
+                .eq('id', formData.accountId);
+            }
+          }
+        }
+
+        // จำบัญชีเริ่มต้นสำหรับโบรกเกอร์นี้
+        if (formData.broker && formData.accountId) {
+          saveBrokerAccountMapping(formData.broker, formData.accountId);
         }
 
         handleCloseModal();
         await fetchHoldings();
+        await fetchAccounts();
         onHoldingsUpdated?.();
 
         // ลองซิงค์ราคาตลาดจาก API อัตโนมัติหลังเพิ่มสินทรัพย์
@@ -421,6 +599,7 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
         if (!selectedHolding) return;
 
         const updatePayload: Record<string, any> = {
+          broker: formData.broker.trim() || null,
           currency: curr,
           volume: vol,
           initial_cost: cost,
@@ -429,15 +608,120 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
           updated_at: new Date().toISOString(),
         };
 
-        const { error } = await supabase
+        const { error: updErr } = await supabase
           .from('portfolio_holdings')
           .update(updatePayload)
           .eq('id', selectedHolding.id);
 
-        if (error) throw error;
+        if (updErr) {
+          if (updErr.message?.includes('column portfolio_holdings.broker does not exist')) {
+            delete updatePayload.broker;
+            const { error: retryErr } = await supabase
+              .from('portfolio_holdings')
+              .update(updatePayload)
+              .eq('id', selectedHolding.id);
+            if (retryErr) throw retryErr;
+          } else {
+            throw updErr;
+          }
+        }
+
+        // จัดการบันทึกประวัติการซื้อถัวเฉลี่ย (Buy on Dip)
+        if (recordDipTrade && pendingDipTrade && pendingDipTrade.units > 0) {
+          const gross = pendingDipTrade.units * pendingDipTrade.price;
+          const grossThb = gross * rateToThb;
+          const dipTradePayload: any = {
+            user_id: user.id,
+            broker: formData.broker.trim() || selectedHolding.broker || 'BLS',
+            trade_date: new Date().toISOString().split('T')[0],
+            side: 'BUY',
+            stock_symbol: sym,
+            currency: curr,
+            units: pendingDipTrade.units,
+            unit_price: pendingDipTrade.price,
+            exchange_rate: rateToThb,
+            gross_amount: gross,
+            fee: 0,
+            withholding_tax: 0,
+            net_amount: gross,
+            gross_amount_thb: grossThb,
+            fee_thb: 0,
+            net_amount_thb: grossThb,
+            reason: 'ซื้อถัวเฉลี่ย (Buy on Dip)',
+            account_id: formData.accountId || null,
+          };
+
+          const { error: tErr } = await supabase.from('trade_transactions').insert(dipTradePayload);
+          if (tErr && tErr.message?.includes('account_id')) {
+            delete dipTradePayload.account_id;
+            await supabase.from('trade_transactions').insert(dipTradePayload);
+          }
+
+          // ลดเงินสดใน financial_accounts
+          if (formData.accountId) {
+            const targetAcc = accounts.find((a) => a.id === formData.accountId);
+            if (targetAcc) {
+              const newBal = (Number(targetAcc.current_balance) || 0) - grossThb;
+              await supabase
+                .from('financial_accounts')
+                .update({ current_balance: newBal, updated_at: new Date().toISOString() })
+                .eq('id', formData.accountId);
+            }
+          }
+        }
+
+        // จัดการบันทึกประวัติการขายลดจำนวน (Stop Loss / Partial Sell)
+        if (recordSellTrade && pendingSellTrade && pendingSellTrade.units > 0) {
+          const sellPrice = price > 0 ? price : cost;
+          const gross = pendingSellTrade.units * sellPrice;
+          const grossThb = gross * rateToThb;
+          const sellTradePayload: any = {
+            user_id: user.id,
+            broker: formData.broker.trim() || selectedHolding.broker || 'BLS',
+            trade_date: new Date().toISOString().split('T')[0],
+            side: 'SELL',
+            stock_symbol: sym,
+            currency: curr,
+            units: pendingSellTrade.units,
+            unit_price: sellPrice,
+            exchange_rate: rateToThb,
+            gross_amount: gross,
+            fee: 0,
+            withholding_tax: 0,
+            net_amount: gross,
+            gross_amount_thb: grossThb,
+            fee_thb: 0,
+            net_amount_thb: grossThb,
+            reason: 'ลดจำนวน / ตัดขาดทุน (Stop Loss / Sell)',
+            account_id: formData.accountId || null,
+          };
+
+          const { error: tErr } = await supabase.from('trade_transactions').insert(sellTradePayload);
+          if (tErr && tErr.message?.includes('account_id')) {
+            delete sellTradePayload.account_id;
+            await supabase.from('trade_transactions').insert(sellTradePayload);
+          }
+
+          // เพิ่มเงินสดเข้า financial_accounts
+          if (formData.accountId) {
+            const targetAcc = accounts.find((a) => a.id === formData.accountId);
+            if (targetAcc) {
+              const newBal = (Number(targetAcc.current_balance) || 0) + grossThb;
+              await supabase
+                .from('financial_accounts')
+                .update({ current_balance: newBal, updated_at: new Date().toISOString() })
+                .eq('id', formData.accountId);
+            }
+          }
+        }
+
+        if (formData.broker && formData.accountId) {
+          saveBrokerAccountMapping(formData.broker, formData.accountId);
+        }
 
         handleCloseModal();
         await fetchHoldings();
+        await fetchAccounts();
         onHoldingsUpdated?.();
       }
     } catch (err: any) {
@@ -562,6 +846,7 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
           <thead>
             <tr className="border-b border-gray-100 bg-gray-50/80 text-gray-500 text-xs uppercase font-medium">
               {renderSortHeader('สินทรัพย์', 'symbol', 'left')}
+              {renderSortHeader('โบรกเกอร์', 'broker', 'left')}
               {renderSortHeader('จำนวน', 'volume', 'right')}
               {renderSortHeader('ต้นทุนเฉลี่ย', 'initial_cost', 'right')}
               {renderSortHeader('ราคาตลาดล่าสุด', 'present_price', 'right')}
@@ -572,7 +857,7 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
           <tbody className="divide-y divide-gray-100">
             {sortedHoldings.length === 0 ? (
               <tr>
-                <td colSpan={6} className="py-12 text-center text-gray-400">
+                <td colSpan={7} className="py-12 text-center text-gray-400">
                   <div className="space-y-2">
                     <AlertCircle className="w-8 h-8 mx-auto text-gray-300" />
                     <p className="text-sm font-medium">ยังไม่มีสินทรัพย์ในพอร์ต</p>
@@ -601,6 +886,18 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
                           </span>
                         )}
                       </div>
+                    </td>
+
+                    {/* Broker */}
+                    <td className="py-3 px-4 text-left">
+                      {item.broker ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200">
+                          <Building2 className="w-3 h-3 text-amber-500" />
+                          {item.broker}
+                        </span>
+                      ) : (
+                        <span className="text-gray-300 text-xs">-</span>
+                      )}
                     </td>
 
                     {/* Volume: ถ้าไม่มีค่าให้ fallback เป็น 0 */}
@@ -815,6 +1112,85 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
                 </div>
               </div>
 
+              {/* โบรกเกอร์ และ บัญชีการเงินที่ผูก */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1 flex items-center gap-1.5">
+                    <Building2 className="w-3.5 h-3.5 text-blue-600" />
+                    <span>โบรกเกอร์ (Broker)</span>
+                  </label>
+                  <input
+                    type="text"
+                    list="popular-brokers-list-portfolio"
+                    placeholder="เช่น BLS, InnovestX, Dime"
+                    value={formData.broker}
+                    onChange={(e) => handleBrokerChange(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl bg-white outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+                  />
+                  <datalist id="popular-brokers-list-portfolio">
+                    {POPULAR_BROKERS.map((b) => (
+                      <option key={b} value={b} />
+                    ))}
+                  </datalist>
+                  <span className="text-[11px] text-slate-400 mt-0.5 block">
+                    โบรกเกอร์หรือกระดานเทรดที่ถือครอง
+                  </span>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1 flex items-center gap-1.5">
+                    <Wallet className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>บัญชีการเงินที่ผูก (Linked Account)</span>
+                  </label>
+                  <select
+                    value={formData.accountId}
+                    onChange={(e) => setFormData({ ...formData, accountId: e.target.value })}
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl bg-white outline-none focus:ring-2 focus:ring-blue-500 font-medium cursor-pointer"
+                  >
+                    <option value="">-- ไม่ระบุบัญชี --</option>
+                    {accounts.map((acc) => {
+                      const curr = (acc.currency || 'THB').toUpperCase();
+                      return (
+                        <option key={acc.id} value={acc.id}>
+                          {acc.bank_name ? `[${acc.bank_name}] ` : ''}
+                          {acc.account_name} ({Number(acc.current_balance || 0).toLocaleString()} {curr})
+                        </option>
+                      );
+                    })}
+                  </select>
+                  <span className="text-[11px] text-slate-400 mt-0.5 block">
+                    {formData.broker && brokerAccountMap[formData.broker]
+                      ? `ผูกกับ ${formData.broker} อัตโนมัติ`
+                      : 'เลือกบัญชีเพื่อใช้หักเงินสดเมื่อมีรายการซื้อ'}
+                  </span>
+                </div>
+              </div>
+
+              {/* ซิงค์รายการซื้อ (BUY) และตัดเงินสดเมื่อเพิ่มสินทรัพย์ใหม่ */}
+              {modalMode === 'add' && (
+                <div className="p-3 bg-blue-50/70 rounded-xl border border-blue-200/80">
+                  <label className="flex items-start gap-2.5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={formData.recordTrade}
+                      onChange={(e) => setFormData({ ...formData, recordTrade: e.target.checked })}
+                      className="mt-0.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500 h-4 w-4 cursor-pointer"
+                    />
+                    <div className="space-y-0.5">
+                      <span className="text-xs font-bold text-blue-900 block">
+                        บันทึกเป็นรายการซื้อ (BUY) ใน Trade Transactions อัตโนมัติ
+                      </span>
+                      <span className="text-[11px] text-blue-700 block">
+                        สร้างประวัติการซื้อในประวัติ Trade ทันที
+                        {formData.accountId
+                          ? ' และหักเงินสดออกจากบัญชีการเงินที่เลือกโดยอัตโนมัติ'
+                          : ' (เลือกบัญชีการเงินด้านบนหากต้องการให้หักเงินสดคงเหลือ)'}
+                      </span>
+                    </div>
+                  </label>
+                </div>
+              )}
+
               {/* จำนวนที่ถือครอง, ต้นทุนเฉลี่ย, ราคาตลาด */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
@@ -905,65 +1281,108 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
                   </div>
 
                   {calcMode === 'dip' ? (
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 items-end">
-                      <div>
-                        <label className="block text-[11px] font-medium text-slate-600 mb-0.5">
-                          ซื้อเพิ่มกี่หน่วย (Units)
-                        </label>
-                        <input
-                          type="number"
-                          step="any"
-                          placeholder="เช่น 50"
-                          value={dipAddUnits}
-                          onChange={(e) => setDipAddUnits(e.target.value)}
-                          className="w-full px-2.5 py-1.5 text-xs border border-slate-300 rounded-lg bg-white outline-none focus:ring-2 focus:ring-blue-500"
-                        />
+                    <div className="space-y-2.5">
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 items-end">
+                        <div>
+                          <label className="block text-[11px] font-medium text-slate-600 mb-0.5">
+                            ซื้อเพิ่มกี่หน่วย (Units)
+                          </label>
+                          <input
+                            type="number"
+                            step="any"
+                            placeholder="เช่น 50"
+                            value={dipAddUnits}
+                            onChange={(e) => setDipAddUnits(e.target.value)}
+                            className="w-full px-2.5 py-1.5 text-xs border border-slate-300 rounded-lg bg-white outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-medium text-slate-600 mb-0.5">
+                            ราคาที่ซื้อเพิ่ม ({previewCurrencySymbol})
+                          </label>
+                          <input
+                            type="number"
+                            step="any"
+                            placeholder="เช่น 120.00"
+                            value={dipAddPrice}
+                            onChange={(e) => setDipAddPrice(e.target.value)}
+                            className="w-full px-2.5 py-1.5 text-xs border border-slate-300 rounded-lg bg-white outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleApplyDipCalc}
+                          disabled={!dipAddUnits || !dipAddPrice}
+                          className="w-full px-3 py-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition disabled:opacity-50 cursor-pointer shadow-xs"
+                        >
+                          คำนวณ & ใส่ค่าให้อัตโนมัติ
+                        </button>
                       </div>
-                      <div>
-                        <label className="block text-[11px] font-medium text-slate-600 mb-0.5">
-                          ราคาที่ซื้อเพิ่ม ({previewCurrencySymbol})
-                        </label>
-                        <input
-                          type="number"
-                          step="any"
-                          placeholder="เช่น 120.00"
-                          value={dipAddPrice}
-                          onChange={(e) => setDipAddPrice(e.target.value)}
-                          className="w-full px-2.5 py-1.5 text-xs border border-slate-300 rounded-lg bg-white outline-none focus:ring-2 focus:ring-blue-500"
-                        />
-                      </div>
-                      <button
-                        type="button"
-                        onClick={handleApplyDipCalc}
-                        disabled={!dipAddUnits || !dipAddPrice}
-                        className="w-full px-3 py-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition disabled:opacity-50 cursor-pointer shadow-xs"
-                      >
-                        คำนวณ & ใส่ค่าให้อัตโนมัติ
-                      </button>
+
+                      {pendingDipTrade && (
+                        <div className="p-2.5 bg-blue-50/80 rounded-lg border border-blue-200">
+                          <label className="flex items-start gap-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={recordDipTrade}
+                              onChange={(e) => setRecordDipTrade(e.target.checked)}
+                              className="mt-0.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500 h-3.5 w-3.5 cursor-pointer"
+                            />
+                            <span className="text-[11px] font-medium text-blue-900 leading-relaxed">
+                              บันทึกเป็น Trade BUY ({pendingDipTrade.units.toLocaleString()} หน่วย @ {previewCurrencySymbol}
+                              {pendingDipTrade.price.toLocaleString()})
+                              {formData.accountId
+                                ? ' และหักเงินสดจากบัญชีที่ผูกอัตโนมัติ'
+                                : ' (เลือกบัญชีการเงินด้านบนหากต้องการให้หักเงินสด)'}
+                            </span>
+                          </label>
+                        </div>
+                      )}
                     </div>
                   ) : (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 items-end">
-                      <div>
-                        <label className="block text-[11px] font-medium text-slate-600 mb-0.5">
-                          จำนวนหน่วยที่ขายออก / Stop loss (Units)
-                        </label>
-                        <input
-                          type="number"
-                          step="any"
-                          placeholder="เช่น 30"
-                          value={sellUnits}
-                          onChange={(e) => setSellUnits(e.target.value)}
-                          className="w-full px-2.5 py-1.5 text-xs border border-slate-300 rounded-lg bg-white outline-none focus:ring-2 focus:ring-rose-500"
-                        />
+                    <div className="space-y-2.5">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 items-end">
+                        <div>
+                          <label className="block text-[11px] font-medium text-slate-600 mb-0.5">
+                            จำนวนหน่วยที่ขายออก / Stop loss (Units)
+                          </label>
+                          <input
+                            type="number"
+                            step="any"
+                            placeholder="เช่น 30"
+                            value={sellUnits}
+                            onChange={(e) => setSellUnits(e.target.value)}
+                            className="w-full px-2.5 py-1.5 text-xs border border-slate-300 rounded-lg bg-white outline-none focus:ring-2 focus:ring-rose-500"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleApplySellCalc}
+                          disabled={!sellUnits}
+                          className="w-full px-3 py-1.5 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 rounded-lg transition disabled:opacity-50 cursor-pointer shadow-xs"
+                        >
+                          ลดจำนวน & ใส่ค่าให้อัตโนมัติ
+                        </button>
                       </div>
-                      <button
-                        type="button"
-                        onClick={handleApplySellCalc}
-                        disabled={!sellUnits}
-                        className="w-full px-3 py-1.5 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 rounded-lg transition disabled:opacity-50 cursor-pointer shadow-xs"
-                      >
-                        ลดจำนวน & ใส่ค่าให้อัตโนมัติ
-                      </button>
+
+                      {pendingSellTrade && (
+                        <div className="p-2.5 bg-rose-50/80 rounded-lg border border-rose-200">
+                          <label className="flex items-start gap-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={recordSellTrade}
+                              onChange={(e) => setRecordSellTrade(e.target.checked)}
+                              className="mt-0.5 rounded border-slate-300 text-rose-600 focus:ring-rose-500 h-3.5 w-3.5 cursor-pointer"
+                            />
+                            <span className="text-[11px] font-medium text-rose-900 leading-relaxed">
+                              บันทึกเป็น Trade SELL ({pendingSellTrade.units.toLocaleString()} หน่วย)
+                              {formData.accountId
+                                ? ' และเพิ่มเงินสดกลับเข้าบัญชีที่ผูกอัตโนมัติ'
+                                : ' (เลือกบัญชีการเงินด้านบนหากต้องการให้เพิ่มเงินสดกลับเข้าบัญชี)'}
+                            </span>
+                          </label>
+                        </div>
+                      )}
                     </div>
                   )}
 

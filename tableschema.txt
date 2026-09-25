@@ -104,6 +104,7 @@ execute FUNCTION apply_txn_to_balance ();
 create table public.portfolio_holdings (
   id bigserial not null,
   symbol character varying(50) not null,
+  broker character varying(50) null,
   currency character varying(10) not null default 'THB'::character varying,
   volume numeric(18, 8) not null default 0,
   initial_cost numeric(18, 4) not null default 0,
@@ -137,6 +138,8 @@ create table public.portfolio_holdings (
   constraint portfolio_holdings_symbol_key unique (symbol),
   constraint portfolio_holdings_user_id_fkey foreign KEY (user_id) references auth.users (id) on delete CASCADE
 ) TABLESPACE pg_default;
+
+create index IF not exists idx_holdings_broker on public.portfolio_holdings using btree (broker) TABLESPACE pg_default;
 
 create table public.profiles (
   id uuid not null,
@@ -174,10 +177,12 @@ create table public.trade_transactions (
   fee_thb numeric(12, 4) null default 0.00,
   net_amount_thb numeric(18, 4) not null,
   reason text null,
+  account_id uuid null,
   created_at timestamp with time zone null default now(),
   user_id uuid null default auth.uid (),
   constraint trade_transactions_pkey primary key (id),
   constraint trade_transactions_user_id_fkey foreign KEY (user_id) references auth.users (id) on delete CASCADE,
+  constraint trade_transactions_account_id_fkey foreign KEY (account_id) references financial_accounts (id) on delete set null,
   constraint trade_transactions_side_check check (
     (
       (side)::text = any (
@@ -198,6 +203,8 @@ create index IF not exists idx_trades_broker on public.trade_transactions using 
 create index IF not exists idx_trades_symbol on public.trade_transactions using btree (stock_symbol) TABLESPACE pg_default;
 
 create index IF not exists idx_trades_date on public.trade_transactions using btree (trade_date desc) TABLESPACE pg_default;
+
+create index IF not exists idx_trades_account_id on public.trade_transactions using btree (account_id) TABLESPACE pg_default;
 
 create table public.currency_exchange_rates (
   currency character varying(10) not null,
