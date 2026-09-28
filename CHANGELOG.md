@@ -2,6 +2,48 @@
 
 ## [Unreleased] - 2026-09-28
 
+### Financial Accounts Interest Engine & EOD/Annual Forecasting (`lib/interestCalculator.ts`)
+
+#### 1. Core Interest Interfaces & Types
+- **`AccountInterestResult`**: Standardized interface delivering all requested metrics:
+  - `daily`: End-of-Day (EOD) daily net interest accrued.
+  - `monthly`: Monthly net forecast interest (`annual / 12`).
+  - `annual`: 1-year forecasted net interest earnings.
+  - `taxExemptStatus`: Boolean flag indicating exemption from Thai 15% withholding tax.
+  - Extended breakdowns: `grossDaily`, `grossMonthly`, `grossAnnual`, `withholdingTax`, `effectiveRate`, `balanceTHB`.
+- **`FinancialAccountItem`**: Duck-typed interface for `financial_accounts` rows with defensive types for balance, interest rate, FX conversion, and liabilities.
+- **`FinancialAccountsInterestSummary`**: Aggregated batch summary across all eligible asset accounts with total daily, monthly, annual, and portfolio-wide tax status.
+
+#### 2. Calculation Functions
+- **`calculateEstimatedInterest(balance, ratePercent, options)` & `calculateEstimatedInterest(account, options)`**:
+  - Overloaded, developer-friendly helper designed for direct use in `CashFlowSection` and other account interfaces.
+  - Supports passing either numeric balance & rate or full `FinancialAccountItem` object.
+  - Returns `AccountInterestResult` with `daily`, `monthly`, `annual`, `taxExemptStatus`.
+- **`calculateEODInterest(balance, ratePercent, isTaxExempt, daysInYear)`**: Computes End-of-Day (EOD) daily interest accrual based on closing balance (`(balance * rate / 100) / 365`).
+- **`forecastAnnualInterest(balance, ratePercent, isTaxExempt, daysInYear)`**: Comprehensive forecasting function returning the full `AccountInterestResult` with daily, monthly, annual, and tax metrics.
+- **`calculateFinancialAccountInterest(account, options)`**:
+  - Automatically verifies `is_liability`: returns zero interest for debt accounts (credit cards/loans).
+  - Handles foreign currency conversion to THB via `cost_exchange_rate`.
+  - Computes daily, monthly, and annual earnings for single asset accounts.
+- **`calculateFinancialAccountsInterest(accounts, options)`**:
+  - Filters accounts where `is_liability = false`.
+  - Automatically evaluates the **20,000 THB/year Thai tax exemption threshold** (กรมสรรพากร) across all regular savings accounts before applying 15% withholding tax.
+  - Returns complete portfolio-level summary and account-by-account breakdown.
+
+#### 3. CashFlowSection Integration (`components/CashFlowSection.tsx`)
+- **Estimated Annual Passive Income Summary Card**:
+  - Upgraded the top Quick Summary cards from 3 to 4 columns (`grid-cols-1 sm:grid-cols-2 lg:grid-cols-4`).
+  - Added dedicated **"ดอกเบี้ยคาดการณ์ต่อปี (Passive Income)"** card summarizing total forecasted passive income across all reliable asset accounts.
+  - Displays daily (`~฿X.XX/วัน`) and monthly (`~฿X.XX/เดือน`) average passive income.
+  - Full Privacy Mode compliance: masks numbers when eye toggle is active.
+- **Account-Level Estimated Interest Badges**:
+  - Added clean badges (`text-[10px] sm:text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200/80`) positioned directly below the total remain balance by account in both **Table View** and **Grid View**.
+  - Formatted dynamically (e.g. `ดอกเบี้ยคาดการณ์ +14.5 บาท/ปี (~0.0397 บาท/วัน)`).
+  - Automatically hidden for zero-balance or liability accounts.
+  - Privacy-mode aware: displays masked figures when privacy mode is engaged.
+
+---
+
 ### Executive Overview Page: Port Ratio & Monthly Spent Summary (หน้าภาพรวม: สัดส่วนพอร์ตสินทรัพย์ & สรุปรายรับ-จ่ายประจำเดือน)
 
 #### 1. Left Column: Port Ratio & Asset Allocation Breakdown (`components/OverviewSection.tsx`)

@@ -22,6 +22,10 @@ import {
   List,
 } from 'lucide-react';
 import { CURRENCY_OPTIONS, getCurrencySymbol } from '@/lib/currency';
+import {
+  calculateEstimatedInterest,
+  calculateFinancialAccountsInterest,
+} from '@/lib/interestCalculator';
 
 export interface FinancialAccount {
   id: string;
@@ -518,6 +522,11 @@ export default function CashFlowSection({ onCashFlowUpdated }: CashFlowSectionPr
 
   const netBalance = totalAssets - totalLiabilities;
 
+  // คำนวณดอกเบี้ยคาดการณ์ต่อปี (Estimated Annual Passive Income) จากบัญชีเงินฝาก/สภาพคล่อง
+  const estimatedInterestSummary = useMemo(() => {
+    return calculateFinancialAccountsInterest(accounts);
+  }, [accounts]);
+
   // จำนวนบัญชีแต่ละประเภท
   const assetAccountsCount = useMemo(() => accounts.filter((a) => !a.is_liability).length, [accounts]);
   const liabilityAccountsCount = useMemo(() => accounts.filter((a) => a.is_liability).length, [accounts]);
@@ -618,7 +627,7 @@ export default function CashFlowSection({ onCashFlowUpdated }: CashFlowSectionPr
           </div>
 
           {/* Quick Summary Metrics Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/60">
               <div className="flex items-center justify-between">
                 <p className="text-xs font-medium text-slate-500 flex items-center gap-1.5">
@@ -658,6 +667,32 @@ export default function CashFlowSection({ onCashFlowUpdated }: CashFlowSectionPr
               <p className={`text-base sm:text-lg font-bold mt-1 ${netBalance < 0 ? 'text-rose-600' : 'text-slate-900'}`}>
                 {formatMoney(netBalance)}
               </p>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/60 flex flex-col justify-between">
+              <div>
+                <p className="text-xs font-medium text-slate-500 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-amber-500 inline-block"></span>
+                  <span>ดอกเบี้ยคาดการณ์ต่อปี (Passive Income)</span>
+                </p>
+                <p className="text-base sm:text-lg font-bold text-emerald-600 mt-1">
+                  {hideCashFlow
+                    ? '฿••••••'
+                    : `+฿${estimatedInterestSummary.annual.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                </p>
+              </div>
+              <div className="text-[11px] text-slate-400 mt-1 flex items-center justify-between">
+                <span>
+                  {hideCashFlow
+                    ? '~฿••••/วัน'
+                    : `~฿${estimatedInterestSummary.daily.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/วัน`}
+                </span>
+                <span>
+                  {hideCashFlow
+                    ? '(~฿••••/เดือน)'
+                    : `(~฿${estimatedInterestSummary.monthly.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/เดือน)`}
+                </span>
+              </div>
             </div>
           </div>
 
@@ -937,6 +972,27 @@ export default function CashFlowSection({ onCashFlowUpdated }: CashFlowSectionPr
                               {isRowBalanceHidden ? '≈ ฿••••••' : `≈ ฿${balanceThb.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                             </div>
                           )}
+                          {!isDebt && interestRateNum > 0 && balanceNum > 0 && (() => {
+                            const est = calculateEstimatedInterest(acc);
+                            if (est.annual <= 0) return null;
+                            return (
+                              <div className="mt-1 flex justify-end">
+                                <span
+                                  className="inline-flex items-center gap-1 px-1.5 sm:px-2 py-0.5 rounded-md text-[10px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200/80 shadow-2xs"
+                                  title={`Estimated interest: +${est.annual.toLocaleString('th-TH', { minimumFractionDigits: 2 })} baht/years (~${est.daily.toFixed(4)} baht/day)`}
+                                >
+                                  <Coins className="w-2.5 h-2.5 text-emerald-600 shrink-0" />
+                                  {isRowBalanceHidden ? (
+                                    <span>ดอกเบี้ยคาดการณ์ +•••• บาท/ปี (~•••• บาท/วัน)</span>
+                                  ) : (
+                                    <span>
+                                      ดอกเบี้ยคาดการณ์ +{est.annual.toLocaleString('th-TH', { minimumFractionDigits: 1, maximumFractionDigits: 2 })} บาท/ปี (~{est.daily.toFixed(4)} บาท/วัน)
+                                    </span>
+                                  )}
+                                </span>
+                              </div>
+                            );
+                          })()}
                         </td>
 
                         <td className="py-2.5 px-3">
@@ -1150,6 +1206,27 @@ export default function CashFlowSection({ onCashFlowUpdated }: CashFlowSectionPr
                             </span>
                           </div>
                         )}
+                        {!isDebt && interestRateNum > 0 && balanceNum > 0 && (() => {
+                          const est = calculateEstimatedInterest(acc);
+                          if (est.annual <= 0) return null;
+                          return (
+                            <div className="mt-1.5">
+                              <span
+                                className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] sm:text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200/80 shadow-2xs"
+                                title={`Estimated interest: +${est.annual.toLocaleString('th-TH', { minimumFractionDigits: 2 })} baht/years (~${est.daily.toFixed(4)} baht/day)`}
+                              >
+                                <Coins className="w-3 h-3 text-emerald-600 shrink-0" />
+                                {isRowBalanceHidden ? (
+                                  <span>ดอกเบี้ยคาดการณ์ +•••• บาท/ปี (~•••• บาท/วัน)</span>
+                                ) : (
+                                  <span>
+                                    ดอกเบี้ยคาดการณ์ +{est.annual.toLocaleString('th-TH', { minimumFractionDigits: 1, maximumFractionDigits: 2 })} บาท/ปี (~{est.daily.toFixed(4)} บาท/วัน)
+                                  </span>
+                                )}
+                              </span>
+                            </div>
+                          );
+                        })()}
                       </div>
                     </div>
 
