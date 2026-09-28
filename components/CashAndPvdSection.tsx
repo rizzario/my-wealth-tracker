@@ -43,11 +43,19 @@ export default function CashAndPvdSection({ onCashPvdUpdated }: CashAndPvdSectio
   const [hideAllAccountNumbers, setHideAllAccountNumbers] = useState<boolean>(true);
   const [individualToggles, setIndividualToggles] = useState<Record<number, boolean>>({});
 
+  // State สำหรับการซ่อน/แสดงยอดเงิน (Data Masking)
+  const [hideBalances, setHideBalances] = useState<boolean>(false);
+  const [individualBalanceToggles, setIndividualBalanceToggles] = useState<Record<number, boolean>>({});
+
   useEffect(() => {
     try {
-      const saved = localStorage.getItem('hide_account_numbers');
-      if (saved !== null) {
-        setHideAllAccountNumbers(saved === 'true');
+      const savedAcc = localStorage.getItem('hide_account_numbers');
+      if (savedAcc !== null) {
+        setHideAllAccountNumbers(savedAcc === 'true');
+      }
+      const savedBalances = localStorage.getItem('hide_cash_pvd_balances');
+      if (savedBalances !== null) {
+        setHideBalances(savedBalances === 'true');
       }
     } catch {
       // ignore
@@ -70,6 +78,29 @@ export default function CashAndPvdSection({ onCashPvdUpdated }: CashAndPvdSectio
   const toggleRowAccount = (id: number) => {
     setIndividualToggles((prev) => {
       const currentIsHidden = prev[id] !== undefined ? prev[id] : hideAllAccountNumbers;
+      return {
+        ...prev,
+        [id]: !currentIsHidden,
+      };
+    });
+  };
+
+  const toggleHideBalances = () => {
+    setHideBalances((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('hide_cash_pvd_balances', String(next));
+      } catch {
+        // ignore
+      }
+      setIndividualBalanceToggles({});
+      return next;
+    });
+  };
+
+  const toggleRowBalance = (id: number) => {
+    setIndividualBalanceToggles((prev) => {
+      const currentIsHidden = prev[id] !== undefined ? prev[id] : hideBalances;
       return {
         ...prev,
         [id]: !currentIsHidden,
@@ -357,9 +388,24 @@ export default function CashAndPvdSection({ onCashPvdUpdated }: CashAndPvdSectio
       {/* 2. Top Summary Metrics Cards */}
       <div className={`grid grid-cols-1 ${totalFixedDeposit > 0 ? 'sm:grid-cols-2 lg:grid-cols-4' : 'md:grid-cols-3'} gap-4`}>
         <div className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm">
-          <p className="text-xs text-gray-500 font-medium uppercase">เงินสดดอกเบี้ยสูง (High-Yield Cash)</p>
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-gray-500 font-medium uppercase">เงินสดดอกเบี้ยสูง (High-Yield Cash)</p>
+            <button
+              type="button"
+              onClick={toggleHideBalances}
+              title={hideBalances ? 'แสดงยอดเงิน' : 'ซ่อนยอดเงิน'}
+              className="text-gray-400 hover:text-blue-600 p-1 -mr-1 rounded-md hover:bg-blue-50 transition cursor-pointer"
+              aria-label={hideBalances ? 'แสดงยอดเงิน' : 'ซ่อนยอดเงิน'}
+            >
+              {hideBalances ? <EyeOff className="h-4 w-4 text-blue-600" /> : <Eye className="h-4 w-4" />}
+            </button>
+          </div>
           <h3 className="text-2xl font-bold text-gray-900 mt-1">
-            ฿{totalLiquidCash.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            {hideBalances ? (
+              <span className="tracking-widest font-mono text-gray-400 select-none">฿••••••••</span>
+            ) : (
+              `฿${totalLiquidCash.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+            )}
           </h3>
           <p className="text-xs text-gray-400 mt-1">เงินฝากสภาพคล่องสูงเพื่อผลตอบแทน</p>
         </div>
@@ -368,7 +414,11 @@ export default function CashAndPvdSection({ onCashPvdUpdated }: CashAndPvdSectio
           <div className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm">
             <p className="text-xs text-gray-500 font-medium uppercase">เงินฝากประจำ (Fixed Deposit)</p>
             <h3 className="text-2xl font-bold text-purple-600 mt-1">
-              ฿{totalFixedDeposit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              {hideBalances ? (
+                <span className="tracking-widest font-mono text-purple-300 select-none">฿••••••••</span>
+              ) : (
+                `฿${totalFixedDeposit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+              )}
             </h3>
             <p className="text-xs text-gray-400 mt-1">เงินฝากประจำระยะยาวรอครบกำหนด</p>
           </div>
@@ -377,7 +427,11 @@ export default function CashAndPvdSection({ onCashPvdUpdated }: CashAndPvdSectio
         <div className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm">
           <p className="text-xs text-gray-500 font-medium uppercase">กองทุนสำรองเลี้ยงชีพ (PVD)</p>
           <h3 className="text-2xl font-bold text-blue-600 mt-1">
-            ฿{totalPvd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            {hideBalances ? (
+              <span className="tracking-widest font-mono text-blue-300 select-none">฿••••••••</span>
+            ) : (
+              `฿${totalPvd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+            )}
           </h3>
           <p className="text-xs text-gray-400 mt-1">สะสมส่วนตัว + สมทบจากนายจ้าง</p>
         </div>
@@ -385,26 +439,46 @@ export default function CashAndPvdSection({ onCashPvdUpdated }: CashAndPvdSectio
         <div className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm">
           <p className="text-xs text-gray-500 font-medium uppercase">ดอกเบี้ยคาดการณ์รวมต่อปี (Est. Interest)</p>
           <h3 className="text-2xl font-bold text-emerald-600 mt-1">
-            ฿{estimatedAnnualInterest.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            {hideBalances ? (
+              <span className="tracking-widest font-mono text-emerald-300 select-none">฿••••••••</span>
+            ) : (
+              `฿${estimatedAnnualInterest.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+            )}
           </h3>
-          <p className="text-xs text-gray-400 mt-1">เฉลี่ยเดือนละ ~฿{(estimatedAnnualInterest / 12).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+          <p className="text-xs text-gray-400 mt-1">
+            {hideBalances
+              ? 'เฉลี่ยเดือนละ ~฿••••••'
+              : `เฉลี่ยเดือนละ ~฿${(estimatedAnnualInterest / 12).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+          </p>
         </div>
       </div>
 
       {/* 3. Account List Table */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-        <div className="p-5 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
+        <div className="p-5 border-b border-gray-100 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 bg-gray-50/50">
           <div>
             <h2 className="text-lg font-bold text-gray-800">เงินฝาก & กองทุนสำรองเลี้ยงชีพ (Cash & PVD)</h2>
             <p className="text-xs text-gray-500 mt-0.5">จัดการบัญชีธนาคาร ดอกเบี้ยเงินฝาก และยอดสะสมกองทุน</p>
           </div>
 
-          <button
-            onClick={handleOpenCreateModal}
-            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition"
-          >
-            <span>+</span> เพิ่มบัญชีใหม่
-          </button>
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={toggleHideBalances}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 bg-white hover:bg-slate-100 rounded-lg border border-slate-200 transition shadow-xs cursor-pointer"
+              title={hideBalances ? 'แสดงยอดเงิน' : 'ซ่อนยอดเงิน'}
+            >
+              {hideBalances ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5 text-slate-500" />}
+              <span>{hideBalances ? 'แสดงยอดเงิน' : 'ซ่อนยอดเงิน'}</span>
+            </button>
+
+            <button
+              onClick={handleOpenCreateModal}
+              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition"
+            >
+              <span>+</span> เพิ่มบัญชีใหม่
+            </button>
+          </div>
         </div>
 
         <div className="overflow-x-auto">
@@ -432,7 +506,24 @@ export default function CashAndPvdSection({ onCashPvdUpdated }: CashAndPvdSectio
                 <th className="py-3 px-4">ประเภท</th>
                 <th className="py-3 px-4 text-center">อัตราดอกเบี้ย</th>
                 <th className="py-3 px-4 text-center">สถานะโปรโมชัน</th>
-                <th className="py-3 px-4 text-right">ยอดคงเหลือ (บาท)</th>
+                <th className="py-3 px-4 text-right">
+                  <div className="inline-flex items-center justify-end gap-1.5 w-full">
+                    <span>ยอดคงเหลือ (บาท)</span>
+                    <button
+                      type="button"
+                      onClick={toggleHideBalances}
+                      title={hideBalances ? 'แสดงยอดเงินทั้งหมด' : 'ซ่อนยอดเงินทั้งหมด'}
+                      className="p-1 rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition cursor-pointer"
+                      aria-label={hideBalances ? 'แสดงยอดเงินทั้งหมด' : 'ซ่อนยอดเงินทั้งหมด'}
+                    >
+                      {hideBalances ? (
+                        <EyeOff className="w-3.5 h-3.5 text-blue-600" />
+                      ) : (
+                        <Eye className="w-3.5 h-3.5" />
+                      )}
+                    </button>
+                  </div>
+                </th>
                 <th className="py-3 px-4 text-center">จัดการ</th>
               </tr>
             </thead>
@@ -450,6 +541,10 @@ export default function CashAndPvdSection({ onCashPvdUpdated }: CashAndPvdSectio
                     individualToggles[item.id] !== undefined
                       ? individualToggles[item.id]
                       : hideAllAccountNumbers;
+                  const isRowBalanceHidden =
+                    individualBalanceToggles[item.id] !== undefined
+                      ? individualBalanceToggles[item.id]
+                      : hideBalances;
 
                   return (
                     <tr key={item.id} className="hover:bg-blue-50/30 transition">
@@ -517,10 +612,33 @@ export default function CashAndPvdSection({ onCashPvdUpdated }: CashAndPvdSectio
                         )}
                       </td>
                       <td className="py-3 px-4 text-right font-semibold text-gray-900">
-                        ฿{Number(item.current_balance ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        <div className="inline-flex items-center justify-end gap-1.5">
+                          {isRowBalanceHidden ? (
+                            <span className="tracking-widest font-mono text-gray-400 select-none">฿••••••••</span>
+                          ) : (
+                            <span>฿{Number(item.current_balance ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => toggleRowBalance(item.id)}
+                            title={isRowBalanceHidden ? 'แสดงยอดเงิน' : 'ซ่อนยอดเงิน'}
+                            className="p-0.5 text-gray-400 hover:text-blue-600 rounded transition cursor-pointer"
+                            aria-label={isRowBalanceHidden ? 'แสดงยอดเงิน' : 'ซ่อนยอดเงิน'}
+                          >
+                            {isRowBalanceHidden ? (
+                              <EyeOff className="w-3 h-3 text-blue-500" />
+                            ) : (
+                              <Eye className="w-3 h-3" />
+                            )}
+                          </button>
+                        </div>
                         {item.account_type === 'PVD' && (
                           <div className="text-[11px] text-gray-400 font-normal">
-                            (ตนเอง: ฿{Number(item.pvd_employee_contrib ?? 0).toLocaleString()} / นายจ้าง: ฿{Number(item.pvd_employer_contrib ?? 0).toLocaleString()})
+                            {isRowBalanceHidden ? (
+                              <span className="tracking-widest font-mono text-gray-400 select-none">(ตนเอง: ฿•••••• / นายจ้าง: ฿••••••)</span>
+                            ) : (
+                              <span>(ตนเอง: ฿{Number(item.pvd_employee_contrib ?? 0).toLocaleString()} / นายจ้าง: ฿{Number(item.pvd_employer_contrib ?? 0).toLocaleString()})</span>
+                            )}
                           </div>
                         )}
                       </td>

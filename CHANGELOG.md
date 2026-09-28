@@ -1,6 +1,78 @@
 # Changelog
 
+## [Unreleased] - 2026-09-28
+
+### Executive Overview Page: Port Ratio & Monthly Spent Summary (หน้าภาพรวม: สัดส่วนพอร์ตสินทรัพย์ & สรุปรายรับ-จ่ายประจำเดือน)
+
+#### 1. Left Column: Port Ratio & Asset Allocation Breakdown (`components/OverviewSection.tsx`)
+- **Dual Visualization Modes**: Features a dedicated toggle between an **Interactive SVG Donut Chart** and a **Segmented Stacked Bar (Stackbar)** with preferences saved in `localStorage: overview_chart_mode`.
+- **Sub-Scope Switching**:
+  - **สินทรัพย์รวม (Total Assets)**: Breakdown across Liquid Cash & Operating Accounts, Investment Holdings, Fixed Deposits, and Provident Fund (PVD), with gross vs net liabilities indicators.
+  - **พอร์ตลงทุน (Portfolio Holdings)**: Deep-dive breakdown of capital investments across Thai Equities, US/Global Equities, Cryptocurrency, and Gold/Mutual Funds.
+- **Interactive Inspection**: Hovering or tapping any chart segment or legend row highlights the slice, displaying category name, percentage, and value in THB in real-time.
+- **One-Tap Deep Links**: Clicking any asset class row automatically navigates to its corresponding tab (`holdings`, `cash_pvd`, or `cashflow`).
+- **Privacy Mode Compliant**: Seamlessly masks THB figures (`฿••••••`) when Privacy Mode is activated.
+
+#### 2. Right Column: Summary of Monthly Spent & Cash Flow Box (`components/OverviewSection.tsx`)
+- **Balanced Proportions**: Designed with ideal dimensions ("not too small, not too large") that match the height and visual weight of the left column.
+- **Three Core Financial Blocks**:
+  - **รายรับรวม (Total Income)**: Bold emerald block displaying total monthly inflows and transaction count.
+  - **รายจ่ายรวม (Total Outcome / Expense)**: Bold rose block displaying total monthly outflows and transaction count.
+  - **เงินคงเหลือสุทธิ (Remain / Net Savings)**: Highlighted block with color coding (emerald for surplus, amber/rose for deficit) and savings status badge.
+- **Interactive Month Navigator**:
+  - Includes `<` and `>` buttons to navigate backwards and forwards across historical months.
+  - Displays Thai month and year (e.g. `กันยายน 2026`) with a "เดือนนี้" (This Month) badge and a quick-return button when viewing past months.
+- **Savings Rate & Budget Meter**:
+  - Displays **อัตราการออมเงิน (Savings Rate %)** and a dual progress bar showing spent vs saved percentage.
+  - Computes and displays the average daily spend (`เฉลี่ย ฿/วัน`).
+- **Top 3 Spending Categories**:
+  - Lists the top 3 highest spending categories of the active month with mini progress bars and percentage of total expenses.
+- **Quick Action**: Footer button with direct transition to the `expenses` tab to log new transactions or inspect detailed reports.
+
+#### 3. Recent Transactions & Architecture Integration (`app/page.tsx`)
+- **Recent Activity Card**: Displays the 5 latest transactions below the 2-column overview with category badges, date/time formatting, and transaction type tags.
+- **Monthly Transactions Query**: Extended `fetchAllOverviewData` to query transactions for monthly cash flow calculation without interfering with the 5-item recent list.
+- **Clean Architecture**: Encapsulated all overview logic inside `components/OverviewSection.tsx`, removing redundant inline code from `app/page.tsx`.
+
+---
+
+### Responsive Mobile Top Navigation Bar (ปรับปรุงแถบเมนูด้านบนให้รองรับและใช้งานสะดวกบนอุปกรณ์มือถือ)
+
+#### 1. Two-Tier Mobile Header Architecture (`app/page.tsx`)
+- **Compact Brand & Actions Row**: Redesigned the top brand bar on mobile screens (`< lg`) to prevent horizontal overflow and awkward text collisions. The logo sits on the left with a dedicated compact Sign Out button and an animated Hamburger Menu toggle button on the right.
+- **Swipeable Horizontal Tab Bar**: Added a persistent, smooth-scrolling horizontal pill tab bar below the brand row on mobile devices (`overflow-x-auto scrollbar-none touch-pan-x`). Each tab is equipped with a distinct Lucide icon (`LayoutDashboard`, `TrendingUp`, `ArrowLeftRight`, `PiggyBank`, `CreditCard`, `Receipt`), text label, and touch-friendly padding.
+- **Smart Active Tab Auto-Centering**: Implemented smooth automatic scrolling (`activeEl.scrollIntoView({ behavior: 'smooth', inline: 'center' })`) so that whenever the active tab changes or loads, it immediately centers itself in the user's mobile viewport.
+
+#### 2. Interactive Mobile Drawer Menu
+- **Full Navigation Overlay**: Tapping the hamburger button (`Menu` / `X`) expands an intuitive drawer panel featuring large touch targets, icons, Thai descriptions for each tab section, and current active status badges.
+- **Convenient Dismissal**: Automatically closes upon selecting any tab, tapping the toggle button, or pressing the `Escape` key.
+- **Integrated Sign Out**: Includes a prominent, safe Sign Out button at the bottom of the drawer.
+
+#### 3. Responsive Metrics Grid Layout
+- **Fluid Layout**: Updated the top cards container from `grid-cols-1 md:grid-cols-4` to `grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4`, delivering a balanced 2x2 grid on tablets and landscape mobile screens.
+
+---
+
 ## [Unreleased] - 2026-09-25
+
+### Privacy Mode & Comprehensive Data Masking Eye Icons (`CashAndPvdSection` & `CashFlowSection`)
+
+#### 1. Cash and PVD Assets Data Masking (`components/CashAndPvdSection.tsx`)
+- **Top Summary Metrics Privacy Toggle**: Added an eye icon button on the first summary card ("เงินสดดอกเบี้ยสูง") to mask/unmask all summary figures (`totalLiquidCash`, `totalFixedDeposit`, `totalPvd`, and `estimatedAnnualInterest`).
+- **Table Action Bar Button**: Added a dedicated `แสดงยอดเงิน` / `ซ่อนยอดเงิน` button in the table header card alongside "+ เพิ่มบัญชีใหม่".
+- **Table Header Column Toggle**: Added an eye icon on the "ยอดคงเหลือ (บาท)" table header (`<th>`) for one-click toggle across all holdings.
+- **Row-Level Masking**: Each row now features an individual eye icon next to its balance, allowing users to toggle specific account balances independently.
+- **PVD Breakdown Masking**: Automatically masks PVD employee and employer contributions when balance masking is active.
+- **Persistent State**: Masking preferences persist across browser sessions in `localStorage: hide_cash_pvd_balances`.
+
+#### 2. Cash Flow & Accounts Data Masking (`components/CashFlowSection.tsx`)
+- **Quick Summary Metrics Toggle**: Added an eye icon button to the first summary card ("สินทรัพย์คล่องมือ") to quickly toggle privacy on top cash flow figures.
+- **Table View Header Toggles**: Added interactive eye icons to both "บัญชี / สถาบันการเงิน" (masks all account numbers) and "ยอดคงเหลือ / ค้างชำระ" (masks all balances).
+- **Row-Level Toggles in Table View**: Added individual eye icons next to account numbers and balances for fine-grained privacy control per account.
+- **Grid View Card-Level Toggles**: Added individual eye icons on each account card in Grid View for account numbers, balances, and credit limits.
+- **Enhanced `formatAccountNumber`**: Extended the helper to accept an optional `isHidden` parameter, enabling seamless per-row and global account masking.
+
+---
 
 ### Portfolio Holdings Broker Support & Auto Trade Synchronization (ผูกโบรกเกอร์สินทรัพย์ และบันทึก Trade/หักเงินสดอัตโนมัติ)
 

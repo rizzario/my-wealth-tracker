@@ -113,6 +113,8 @@ export default function CashFlowSection({ onCashFlowUpdated }: CashFlowSectionPr
   const [submittingAccount, setSubmittingAccount] = useState(false);
   const [hideAccountNumbers, setHideAccountNumbers] = useState(true);
   const [hideCashFlow, setHideCashFlow] = useState(false);
+  const [individualAccountToggles, setIndividualAccountToggles] = useState<Record<string, boolean>>({});
+  const [individualBalanceToggles, setIndividualBalanceToggles] = useState<Record<string, boolean>>({});
   const [fxRates, setFxRates] = useState<Record<string, number>>({ THB: 1.0 });
 
   // Account Filters & Layout View States (รองรับบัญชีจำนวนมาก 15-20+ บัญชี)
@@ -167,6 +169,7 @@ export default function CashFlowSection({ onCashFlowUpdated }: CashFlowSectionPr
       } catch {
         // ignore
       }
+      setIndividualAccountToggles({});
       return next;
     });
   };
@@ -179,7 +182,28 @@ export default function CashFlowSection({ onCashFlowUpdated }: CashFlowSectionPr
       } catch {
         // ignore
       }
+      setIndividualBalanceToggles({});
       return next;
+    });
+  };
+
+  const toggleRowAccount = (id: string) => {
+    setIndividualAccountToggles((prev) => {
+      const currentIsHidden = prev[id] !== undefined ? prev[id] : hideAccountNumbers;
+      return {
+        ...prev,
+        [id]: !currentIsHidden,
+      };
+    });
+  };
+
+  const toggleRowBalance = (id: string) => {
+    setIndividualBalanceToggles((prev) => {
+      const currentIsHidden = prev[id] !== undefined ? prev[id] : hideCashFlow;
+      return {
+        ...prev,
+        [id]: !currentIsHidden,
+      };
     });
   };
 
@@ -418,9 +442,10 @@ export default function CashFlowSection({ onCashFlowUpdated }: CashFlowSectionPr
   };
 
   // Helper สำหรับจัดรูปแบบเลขบัญชี
-  const formatAccountNumber = (accNo: string | null | undefined) => {
+  const formatAccountNumber = (accNo: string | null | undefined, isHidden?: boolean) => {
     if (!accNo) return null;
-    if (!hideAccountNumbers) return accNo;
+    const hide = isHidden !== undefined ? isHidden : hideAccountNumbers;
+    if (!hide) return accNo;
     if (accNo.length <= 4) return `•••• ${accNo}`;
     const lastFour = accNo.slice(-4);
     return `••••-••••-${lastFour}`;
@@ -595,10 +620,21 @@ export default function CashFlowSection({ onCashFlowUpdated }: CashFlowSectionPr
           {/* Quick Summary Metrics Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/60">
-              <p className="text-xs font-medium text-slate-500 flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block"></span>
-                สินทรัพย์คล่องมือ (Liquid Assets)
-              </p>
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-medium text-slate-500 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block"></span>
+                  สินทรัพย์คล่องมือ (Liquid Assets)
+                </p>
+                <button
+                  type="button"
+                  onClick={toggleHideCashFlow}
+                  title={hideCashFlow ? 'แสดงยอดเงิน' : 'ซ่อนยอดเงิน'}
+                  className="text-slate-400 hover:text-emerald-700 p-0.5 rounded hover:bg-slate-200/60 transition cursor-pointer"
+                  aria-label={hideCashFlow ? 'แสดงยอดเงิน' : 'ซ่อนยอดเงิน'}
+                >
+                  {hideCashFlow ? <EyeOff className="w-3.5 h-3.5 text-emerald-600" /> : <Eye className="w-3.5 h-3.5" />}
+                </button>
+              </div>
               <p className="text-base sm:text-lg font-bold text-slate-800 mt-1">
                 {formatMoney(totalAssets)}
               </p>
@@ -750,9 +786,43 @@ export default function CashFlowSection({ onCashFlowUpdated }: CashFlowSectionPr
               <table className="w-full text-left border-collapse text-xs">
                 <thead>
                   <tr className="bg-slate-50/80 border-b border-slate-200 text-slate-500 font-semibold text-[11px]">
-                    <th className="py-3 px-3.5">บัญชี / สถาบันการเงิน</th>
+                    <th className="py-3 px-3.5">
+                      <div className="inline-flex items-center gap-1.5">
+                        <span>บัญชี / สถาบันการเงิน</span>
+                        <button
+                          type="button"
+                          onClick={toggleHideAccountNumbers}
+                          title={hideAccountNumbers ? 'แสดงเลขที่บัญชีทั้งหมด' : 'ซ่อนเลขที่บัญชีทั้งหมด'}
+                          className="p-1 rounded text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 transition cursor-pointer"
+                          aria-label={hideAccountNumbers ? 'แสดงเลขที่บัญชีทั้งหมด' : 'ซ่อนเลขที่บัญชีทั้งหมด'}
+                        >
+                          {hideAccountNumbers ? (
+                            <EyeOff className="w-3.5 h-3.5 text-emerald-600" />
+                          ) : (
+                            <Eye className="w-3.5 h-3.5" />
+                          )}
+                        </button>
+                      </div>
+                    </th>
                     <th className="py-3 px-3">ประเภท</th>
-                    <th className="py-3 px-3 text-right">ยอดคงเหลือ / ค้างชำระ</th>
+                    <th className="py-3 px-3 text-right">
+                      <div className="inline-flex items-center justify-end gap-1.5 w-full">
+                        <span>ยอดคงเหลือ / ค้างชำระ</span>
+                        <button
+                          type="button"
+                          onClick={toggleHideCashFlow}
+                          title={hideCashFlow ? 'แสดงยอดเงินทั้งหมด' : 'ซ่อนยอดเงินทั้งหมด'}
+                          className="p-1 rounded text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 transition cursor-pointer"
+                          aria-label={hideCashFlow ? 'แสดงยอดเงินทั้งหมด' : 'ซ่อนยอดเงินทั้งหมด'}
+                        >
+                          {hideCashFlow ? (
+                            <EyeOff className="w-3.5 h-3.5 text-emerald-600" />
+                          ) : (
+                            <Eye className="w-3.5 h-3.5" />
+                          )}
+                        </button>
+                      </div>
+                    </th>
                     <th className="py-3 px-3">วงเงิน / ดอกเบี้ย / รอบบิล</th>
                     <th className="py-3 px-3 text-center w-20">จัดการ</th>
                   </tr>
@@ -768,6 +838,15 @@ export default function CashFlowSection({ onCashFlowUpdated }: CashFlowSectionPr
                     const isForeign = accCurrency !== 'THB';
                     const fxRate = Number(acc.cost_exchange_rate || fxRates[accCurrency] || 1.0);
                     const balanceThb = balanceNum * fxRate;
+
+                    const isRowAccountHidden =
+                      individualAccountToggles[acc.id] !== undefined
+                        ? individualAccountToggles[acc.id]
+                        : hideAccountNumbers;
+                    const isRowBalanceHidden =
+                      individualBalanceToggles[acc.id] !== undefined
+                        ? individualBalanceToggles[acc.id]
+                        : hideCashFlow;
 
                     const hasCreditLimit = creditLimitNum > 0;
                     const remainingCredit = Math.max(0, creditLimitNum - balanceNum);
@@ -793,7 +872,22 @@ export default function CashFlowSection({ onCashFlowUpdated }: CashFlowSectionPr
                                 )}
                                 {acc.bank_name && acc.account_number && <span>•</span>}
                                 {acc.account_number && (
-                                  <span className="font-mono">{formatAccountNumber(acc.account_number)}</span>
+                                  <span className="inline-flex items-center gap-1 font-mono">
+                                    <span>{formatAccountNumber(acc.account_number, isRowAccountHidden)}</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => toggleRowAccount(acc.id)}
+                                      title={isRowAccountHidden ? 'แสดงเลขที่บัญชี' : 'ซ่อนเลขที่บัญชี'}
+                                      className="p-0.5 text-slate-400 hover:text-emerald-600 rounded transition cursor-pointer"
+                                      aria-label={isRowAccountHidden ? 'แสดงเลขที่บัญชี' : 'ซ่อนเลขที่บัญชี'}
+                                    >
+                                      {isRowAccountHidden ? (
+                                        <EyeOff className="w-3 h-3 text-emerald-600" />
+                                      ) : (
+                                        <Eye className="w-3 h-3" />
+                                      )}
+                                    </button>
+                                  </span>
                                 )}
                               </div>
                             </div>
@@ -818,14 +912,29 @@ export default function CashFlowSection({ onCashFlowUpdated }: CashFlowSectionPr
                         </td>
 
                         <td className="py-2.5 px-3 text-right whitespace-nowrap">
-                          <div className={`font-bold text-xs sm:text-sm ${isDebt ? 'text-rose-600' : 'text-slate-900'}`}>
-                            {hideCashFlow
-                              ? `${accCurrency === 'THB' ? '฿' : getCurrencySymbol(accCurrency)}••••••••`
-                              : `${getCurrencySymbol(accCurrency)}${balanceNum.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                          <div className="inline-flex items-center justify-end gap-1.5">
+                            <div className={`font-bold text-xs sm:text-sm ${isDebt ? 'text-rose-600' : 'text-slate-900'}`}>
+                              {isRowBalanceHidden
+                                ? `${accCurrency === 'THB' ? '฿' : getCurrencySymbol(accCurrency)}••••••••`
+                                : `${getCurrencySymbol(accCurrency)}${balanceNum.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => toggleRowBalance(acc.id)}
+                              title={isRowBalanceHidden ? 'แสดงยอดเงิน' : 'ซ่อนยอดเงิน'}
+                              className="p-0.5 text-slate-400 hover:text-emerald-600 rounded transition cursor-pointer"
+                              aria-label={isRowBalanceHidden ? 'แสดงยอดเงิน' : 'ซ่อนยอดเงิน'}
+                            >
+                              {isRowBalanceHidden ? (
+                                <EyeOff className="w-3 h-3 text-emerald-600" />
+                              ) : (
+                                <Eye className="w-3 h-3" />
+                              )}
+                            </button>
                           </div>
                           {isForeign && (
                             <div className="text-[11px] font-medium text-slate-400 mt-0.5">
-                              {hideCashFlow ? '≈ ฿••••••' : `≈ ฿${balanceThb.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                              {isRowBalanceHidden ? '≈ ฿••••••' : `≈ ฿${balanceThb.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                             </div>
                           )}
                         </td>
@@ -835,9 +944,11 @@ export default function CashFlowSection({ onCashFlowUpdated }: CashFlowSectionPr
                             {hasCreditLimit && (
                               <div>
                                 <div className="flex justify-between items-center text-[10px] text-slate-500 mb-0.5">
-                                  <span>ใช้วงเงิน {hideCashFlow ? '••%' : `${usagePercent.toFixed(0)}%`}</span>
+                                  <span>ใช้วงเงิน {isRowBalanceHidden ? '••%' : `${usagePercent.toFixed(0)}%`}</span>
                                   <span className="text-slate-400">
-                                    {formatMoney(remainingCredit, { minimumFractionDigits: 0, maximumFractionDigits: 0, mask: '฿••••' })}
+                                    {isRowBalanceHidden
+                                      ? '฿••••'
+                                      : formatMoney(remainingCredit, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
                                   </span>
                                 </div>
                                 <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
@@ -903,6 +1014,15 @@ export default function CashFlowSection({ onCashFlowUpdated }: CashFlowSectionPr
                 const isForeign = accCurrency !== 'THB';
                 const fxRate = Number(acc.cost_exchange_rate || fxRates[accCurrency] || 1.0);
                 const balanceThb = balanceNum * fxRate;
+
+                const isRowAccountHidden =
+                  individualAccountToggles[acc.id] !== undefined
+                    ? individualAccountToggles[acc.id]
+                    : hideAccountNumbers;
+                const isRowBalanceHidden =
+                  individualBalanceToggles[acc.id] !== undefined
+                    ? individualBalanceToggles[acc.id]
+                    : hideCashFlow;
 
                 // คำนวณ % วงเงินที่ใช้ไป สำหรับบัตร/สินเชื่อ
                 const hasCreditLimit = creditLimitNum > 0;
@@ -972,29 +1092,57 @@ export default function CashFlowSection({ onCashFlowUpdated }: CashFlowSectionPr
                           {acc.account_name}
                         </div>
                         {acc.account_number && (
-                          <div className="text-[11px] text-slate-400 font-mono mt-0.5">
-                            {formatAccountNumber(acc.account_number)}
+                          <div className="flex items-center gap-1 text-[11px] text-slate-400 font-mono mt-0.5">
+                            <span>{formatAccountNumber(acc.account_number, isRowAccountHidden)}</span>
+                            <button
+                              type="button"
+                              onClick={() => toggleRowAccount(acc.id)}
+                              title={isRowAccountHidden ? 'แสดงเลขที่บัญชี' : 'ซ่อนเลขที่บัญชี'}
+                              className="p-0.5 text-slate-400 hover:text-emerald-600 rounded transition cursor-pointer"
+                              aria-label={isRowAccountHidden ? 'แสดงเลขที่บัญชี' : 'ซ่อนเลขที่บัญชี'}
+                            >
+                              {isRowAccountHidden ? (
+                                <EyeOff className="w-3 h-3 text-emerald-600" />
+                              ) : (
+                                <Eye className="w-3 h-3" />
+                              )}
+                            </button>
                           </div>
                         )}
                       </div>
 
                       {/* ยอดเงินคงเหลือ / ค้างชำระ */}
                       <div className="mt-2.5">
-                        <span className="text-[11px] text-slate-400 block">
-                          {isDebt ? 'ยอดค้างชำระ / ใช้ไป' : isForeign ? `ยอดคงเหลือ (${accCurrency})` : 'ยอดเงินคงเหลือ'}
-                        </span>
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] text-slate-400 block">
+                            {isDebt ? 'ยอดค้างชำระ / ใช้ไป' : isForeign ? `ยอดคงเหลือ (${accCurrency})` : 'ยอดเงินคงเหลือ'}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => toggleRowBalance(acc.id)}
+                            title={isRowBalanceHidden ? 'แสดงยอดเงิน' : 'ซ่อนยอดเงิน'}
+                            className="p-0.5 text-slate-400 hover:text-emerald-600 rounded transition cursor-pointer"
+                            aria-label={isRowBalanceHidden ? 'แสดงยอดเงิน' : 'ซ่อนยอดเงิน'}
+                          >
+                            {isRowBalanceHidden ? (
+                              <EyeOff className="w-3 h-3 text-emerald-600" />
+                            ) : (
+                              <Eye className="w-3 h-3" />
+                            )}
+                          </button>
+                        </div>
                         <div
                           className={`text-lg font-bold tracking-tight ${
                             isDebt ? 'text-rose-600' : 'text-slate-900'
                           }`}
                         >
-                          {hideCashFlow
+                          {isRowBalanceHidden
                             ? `${accCurrency === 'THB' ? '฿' : getCurrencySymbol(accCurrency)}••••••••`
                             : `${getCurrencySymbol(accCurrency)}${balanceNum.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                         </div>
                         {isForeign && (
                           <div className="text-xs font-medium text-slate-500 mt-0.5">
-                            {hideCashFlow
+                            {isRowBalanceHidden
                               ? '≈ ฿••••••'
                               : `≈ ฿${balanceThb.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                             <span className="text-[10px] text-slate-400 ml-1.5 font-mono">
@@ -1011,9 +1159,9 @@ export default function CashFlowSection({ onCashFlowUpdated }: CashFlowSectionPr
                       {hasCreditLimit && (
                         <div>
                           <div className="flex justify-between items-center text-[11px] text-slate-500 mb-1">
-                            <span>วงเงินที่ใช้ ({hideCashFlow ? '••%' : `${usagePercent.toFixed(0)}%`})</span>
+                            <span>วงเงินที่ใช้ ({isRowBalanceHidden ? '••%' : `${usagePercent.toFixed(0)}%`})</span>
                             <span className="font-medium text-slate-700">
-                              เหลือ {formatMoney(remainingCredit, { minimumFractionDigits: 0, maximumFractionDigits: 0, mask: '฿••••••' })}
+                              เหลือ {isRowBalanceHidden ? '฿••••••' : formatMoney(remainingCredit, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
                             </span>
                           </div>
                           <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
@@ -1023,8 +1171,8 @@ export default function CashFlowSection({ onCashFlowUpdated }: CashFlowSectionPr
                             />
                           </div>
                           <div className="flex justify-between text-[10px] text-slate-400 mt-1">
-                            <span>ใช้: {formatMoney(balanceNum, { minimumFractionDigits: 0, maximumFractionDigits: 0, mask: '฿••••••' })}</span>
-                            <span>เต็ม: {formatMoney(creditLimitNum, { minimumFractionDigits: 0, maximumFractionDigits: 0, mask: '฿••••••' })}</span>
+                            <span>ใช้: {isRowBalanceHidden ? '฿••••••' : formatMoney(balanceNum, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
+                            <span>เต็ม: {isRowBalanceHidden ? '฿••••••' : formatMoney(creditLimitNum, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
                           </div>
                         </div>
                       )}
