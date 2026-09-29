@@ -656,7 +656,7 @@ export default function TradeTransactionsSection({ onTradesUpdated }: TradeTrans
           <p className="text-xl font-bold text-slate-900 mt-2">
             ฿{summaryMetrics.totalBuyThb.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </p>
-          <p className="text-[11px] text-slate-400 mt-0.5">{summaryMetrics.buyCount} รายการซื้อ</p>
+          <p className="text-[11px] text-slate-500 mt-0.5">{summaryMetrics.buyCount} รายการซื้อ</p>
         </div>
 
         {/* ยอดขายรวม */}
@@ -670,7 +670,7 @@ export default function TradeTransactionsSection({ onTradesUpdated }: TradeTrans
           <p className="text-xl font-bold text-slate-900 mt-2">
             ฿{summaryMetrics.totalSellThb.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </p>
-          <p className="text-[11px] text-slate-400 mt-0.5">{summaryMetrics.sellCount} รายการขาย</p>
+          <p className="text-[11px] text-slate-500 mt-0.5">{summaryMetrics.sellCount} รายการขาย</p>
         </div>
 
         {/* กระแสเงินสุทธิเข้า/ออกจากการเทรด */}
@@ -684,7 +684,7 @@ export default function TradeTransactionsSection({ onTradesUpdated }: TradeTrans
           <p className={`text-xl font-bold mt-2 ${summaryMetrics.netCashFlow >= 0 ? 'text-emerald-600' : 'text-slate-900'}`}>
             {summaryMetrics.netCashFlow >= 0 ? '+' : ''}฿{summaryMetrics.netCashFlow.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </p>
-          <p className="text-[11px] text-slate-400 mt-0.5">
+          <p className="text-[11px] text-slate-500 mt-0.5">
             {summaryMetrics.netCashFlow >= 0 ? 'เงินสดรับมากกว่าเงินที่ซื้อ' : 'ยอดลงทุนสะสมสุทธิ'}
           </p>
         </div>
@@ -700,7 +700,7 @@ export default function TradeTransactionsSection({ onTradesUpdated }: TradeTrans
           <p className="text-xl font-bold text-amber-600 mt-2">
             ฿{summaryMetrics.totalFeeThb.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </p>
-          <p className="text-[11px] text-slate-400 mt-0.5">รวมค่าคอมมิชชั่น & VAT</p>
+          <p className="text-[11px] text-slate-500 mt-0.5">รวมค่าคอมมิชชั่น & VAT</p>
         </div>
 
         {/* จำนวนธุรกรรมทั้งหมด */}
@@ -712,7 +712,7 @@ export default function TradeTransactionsSection({ onTradesUpdated }: TradeTrans
             จำนวนรายการ
           </span>
           <p className="text-xl font-bold text-slate-800 mt-2">{summaryMetrics.totalTrades} รายการ</p>
-          <p className="text-[11px] text-slate-400 mt-0.5">ในประวัติการเทรดทั้งหมด</p>
+          <p className="text-[11px] text-slate-500 mt-0.5">ในประวัติการเทรดทั้งหมด</p>
         </div>
       </div>
 
@@ -804,7 +804,7 @@ export default function TradeTransactionsSection({ onTradesUpdated }: TradeTrans
             className="px-2.5 py-1.5 text-xs text-slate-500 hover:text-slate-800 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl transition flex items-center gap-1 cursor-pointer"
             title="รีเซ็ตความกว้างคอลัมน์ทั้งหมดเป็นค่าเริ่มต้น"
           >
-            <RotateCcw className="w-3 h-3 text-slate-400" />
+            <RotateCcw className="w-3 h-3 text-slate-500" />
             <span className="hidden sm:inline">รีเซ็ตคอลัมน์</span>
           </button>
         </div>
@@ -918,13 +918,13 @@ export default function TradeTransactionsSection({ onTradesUpdated }: TradeTrans
             <tbody className="divide-y divide-slate-100 font-mono">
               {loading ? (
                 <tr>
-                  <td colSpan={10} className="py-12 text-center text-slate-400 font-sans">
+                  <td colSpan={10} className="py-12 text-center text-slate-500 font-sans">
                     กำลังโหลดข้อมูลการซื้อขาย...
                   </td>
                 </tr>
               ) : paginatedTrades.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="py-12 text-center text-slate-400 font-sans">
+                  <td colSpan={10} className="py-12 text-center text-slate-500 font-sans">
                     {trades.length === 0 ? 'ยังไม่มีประวัติการซื้อขาย คลิก "+ บันทึก Trade ใหม่" เพื่อเริ่มต้น' : 'ไม่พบรายการที่ตรงกับเงื่อนไขการค้นหา'}
                   </td>
                 </tr>
@@ -945,12 +945,12 @@ export default function TradeTransactionsSection({ onTradesUpdated }: TradeTrans
                       <td className="py-2.5 px-3 truncate" title={`${t.broker}${boundAccName ? ` (${boundAccName})` : ''}`}>
                         <div className="font-sans font-semibold text-slate-800">{t.broker}</div>
                         {boundAccName ? (
-                          <div className="text-[10px] text-slate-400 truncate flex items-center gap-1 mt-0.5">
+                          <div className="text-[10px] text-slate-500 truncate flex items-center gap-1 mt-0.5">
                             <Wallet className="w-3 h-3 text-emerald-600 shrink-0" />
                             <span className="truncate">{boundAccName}</span>
                           </div>
                         ) : (
-                          <span className="text-[10px] text-slate-300">ไม่ได้ผูกบัญชี</span>
+                          <span className="text-[10px] text-slate-500">ไม่ได้ผูกบัญชี</span>
                         )}
                       </td>
 
@@ -973,27 +973,27 @@ export default function TradeTransactionsSection({ onTradesUpdated }: TradeTrans
                       <td className="py-2.5 px-3 whitespace-nowrap">
                         <span className="font-bold text-slate-900 font-sans">{t.stock_symbol}</span>
                         {t.currency && t.currency !== 'THB' && (
-                          <span className="ml-1 text-[10px] text-slate-400 font-sans">({t.currency})</span>
+                          <span className="ml-1 text-[10px] text-slate-500 font-sans">({t.currency})</span>
                         )}
                       </td>
 
                       {/* จำนวนหุ้น */}
-                      <td className="py-2.5 px-3 text-right text-slate-700">
+                      <td className="py-2.5 px-3 text-right text-slate-700 font-mono tabular-nums">
                         {Number(t.units).toLocaleString(undefined, { maximumFractionDigits: 6 })}
                       </td>
 
                       {/* ราคาต่อหน่วย */}
-                      <td className="py-2.5 px-3 text-right text-slate-700">
+                      <td className="py-2.5 px-3 text-right text-slate-700 font-mono tabular-nums">
                         {currSym}{Number(t.unit_price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
                       </td>
 
                       {/* ค่าธรรมเนียม */}
-                      <td className="py-2.5 px-3 text-right text-slate-500 text-[11px]">
+                      <td className="py-2.5 px-3 text-right text-slate-500 text-[11px] font-mono tabular-nums">
                         {Number(t.fee_thb || 0) > 0 ? `฿${Number(t.fee_thb).toLocaleString(undefined, { minimumFractionDigits: 2 })}` : '-'}
                       </td>
 
                       {/* ยอดเงินสุทธิ */}
-                      <td className="py-2.5 px-3 text-right font-bold whitespace-nowrap">
+                      <td className="py-2.5 px-3 text-right font-bold whitespace-nowrap font-mono tabular-nums">
                         <span className={isBuy ? 'text-emerald-700' : isSell ? 'text-rose-700' : 'text-blue-700'}>
                           {isBuy ? '-' : isSell ? '+' : ''}฿{Number(t.net_amount_thb || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                         </span>
@@ -1010,7 +1010,7 @@ export default function TradeTransactionsSection({ onTradesUpdated }: TradeTrans
                           <button
                             type="button"
                             onClick={() => handleOpenEditModal(t)}
-                            className="p-1 text-slate-400 hover:text-emerald-600 rounded-lg hover:bg-slate-100 transition cursor-pointer"
+                            className="p-1 min-w-[32px] min-h-[32px] flex items-center justify-center text-slate-500 hover:text-emerald-600 rounded-lg hover:bg-slate-100 transition cursor-pointer"
                             title="แก้ไขรายการ"
                           >
                             <Pencil className="w-3.5 h-3.5" />
@@ -1018,7 +1018,7 @@ export default function TradeTransactionsSection({ onTradesUpdated }: TradeTrans
                           <button
                             type="button"
                             onClick={() => handleDeleteTrade(t)}
-                            className="p-1 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-slate-100 transition cursor-pointer"
+                            className="p-1 min-w-[32px] min-h-[32px] flex items-center justify-center text-slate-500 hover:text-rose-600 rounded-lg hover:bg-slate-100 transition cursor-pointer"
                             title="ลบรายการ"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
@@ -1129,7 +1129,7 @@ export default function TradeTransactionsSection({ onTradesUpdated }: TradeTrans
               <button
                 type="button"
                 onClick={() => setIsModalOpen(false)}
-                className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg transition cursor-pointer"
+                className="p-1.5 text-slate-500 hover:text-slate-700 rounded-lg transition cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -1455,7 +1455,7 @@ export default function TradeTransactionsSection({ onTradesUpdated }: TradeTrans
               <button
                 type="button"
                 onClick={() => setIsBrokerSettingsOpen(false)}
-                className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg transition cursor-pointer"
+                className="p-1.5 text-slate-500 hover:text-slate-700 rounded-lg transition cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>

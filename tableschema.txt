@@ -24,7 +24,26 @@ create table public.cash_and_pvd_assets (
   holding_period_years integer null,
   notes text null,
   constraint cash_and_pvd_assets_pkey primary key (id),
-  constraint cash_and_pvd_assets_user_id_fkey foreign KEY (user_id) references auth.users (id) on delete CASCADE
+  constraint cash_and_pvd_assets_user_id_fkey foreign KEY (user_id) references auth.users (id) on delete CASCADE,
+  constraint chk_parked_types check (
+    (
+      (account_type)::text = any (
+        (
+          array[
+            'FIXED_DEPOSIT'::character varying,
+            'PVD'::character varying,
+            'HIGH_YIELD'::character varying,
+            'CORPORATE_BOND'::character varying,
+            'GOV_BOND'::character varying,
+            'SSF'::character varying,
+            'THAI_ESG'::character varying,
+            'RMF'::character varying,
+            'OTHER'::character varying
+          ]
+        )::text[]
+      )
+    )
+  )
 ) TABLESPACE pg_default;
 
 create table public.expense_income_transactions (

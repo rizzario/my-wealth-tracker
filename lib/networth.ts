@@ -29,6 +29,9 @@ export interface CashPvdAssetLike {
   account_type?: string | null;
   asset_type?: string | null;
   is_liquid?: boolean | null;
+  cost_basis?: number | string | null;
+  tax_deductible?: boolean | null;
+  holding_period_years?: number | null;
 }
 
 export interface PortfolioHoldingLike {
@@ -48,16 +51,19 @@ export interface NetWorthSummary {
   // Components of Net Worth
   totalOperatingAssets: number;     // financial_accounts (is_liability = false)
   totalLiabilities: number;         // financial_accounts (is_liability = true)
-  totalCashAndPvd: number;          // ALL cash_and_pvd_assets (PVD + Fixed Deposit + High Yield)
+  totalCashAndPvd: number;          // ALL cash_and_pvd_assets (Bonds + SSF/ESG + PVD + FD + High Yield)
   totalHoldingsValueTHB: number;    // portfolio_holdings (total_present_price_thb)
   totalHoldingsCostTHB: number;     // portfolio_holdings (total_cost_thb)
   holdingsPL: number;               // totalHoldingsValueTHB - totalHoldingsCostTHB
   holdingsYield: number;            // (holdingsPL / totalHoldingsCostTHB) * 100
 
-  // Category breakdowns for dashboard cards
+  // Category breakdowns for dashboard cards & charts
   totalLiquidCash: number;          // Operating Assets + parked liquid cash
   totalPVD: number;                 // Provident Fund (PVD)
   totalFixedDeposit: number;        // Fixed Deposit (เงินฝากประจำ)
+  totalBonds: number;               // Corporate & Gov Bonds (หุ้นกู้และพันธบัตร)
+  totalTaxSavingFunds: number;      // SSF, Thai ESG, RMF (กองทุนลดหย่อนภาษี)
+  totalOtherAssets: number;         // Other long-term assets (สินทรัพย์อื่นๆ ไม่จำกัดเวลาถือครอง)
 }
 
 /**
@@ -85,10 +91,13 @@ export function calculateNetWorthSummary(
     }
   }
 
-  // 2. Cash and PVD Assets (Parked / locked yield-bearing assets)
+  // 2. Long-Term & Fixed Assets (Parked / locked yield-bearing assets)
   let totalCashAndPvd = 0;
   let totalPVD = 0;
   let totalFixedDeposit = 0;
+  let totalBonds = 0;
+  let totalTaxSavingFunds = 0;
+  let totalOtherAssets = 0;
   let parkedLiquidCash = 0;
 
   for (const item of cashPvd) {
@@ -101,9 +110,19 @@ export function calculateNetWorthSummary(
       totalPVD += balance;
     } else if (accType === 'FIXED_DEPOSIT') {
       totalFixedDeposit += balance;
+    } else if (accType === 'CORPORATE_BOND' || accType === 'BOND' || accType === 'GOV_BOND') {
+      totalBonds += balance;
+    } else if (accType === 'SSF' || accType === 'THAI_ESG' || accType === 'THAIESG' || accType === 'RMF') {
+      totalTaxSavingFunds += balance;
+    } else if (accType === 'OTHER') {
+      totalOtherAssets += balance;
     } else {
-      // CASH, SAVINGS, HIGH_YIELD, etc.
-      parkedLiquidCash += balance;
+      // Check liquidity flag to avoid misclassifying illiquid assets as liquid cash
+      if (item.is_liquid === false) {
+        totalOtherAssets += balance;
+      } else {
+        parkedLiquidCash += balance;
+      }
     }
   }
 
@@ -154,6 +173,9 @@ export function calculateNetWorthSummary(
     totalLiquidCash,
     totalPVD,
     totalFixedDeposit,
+    totalBonds,
+    totalTaxSavingFunds,
+    totalOtherAssets,
   };
 }
 
@@ -182,6 +204,9 @@ export async function fetchNetWorthSummary(supabase: any): Promise<NetWorthSumma
         totalLiquidCash: Number(viewRow.total_liquid_cash ?? 0),
         totalPVD: Number(viewRow.total_pvd ?? 0),
         totalFixedDeposit: Number(viewRow.total_fixed_deposit ?? 0),
+        totalBonds: Number(viewRow.total_bonds ?? 0),
+        totalTaxSavingFunds: Number(viewRow.total_tax_saving_funds ?? 0),
+        totalOtherAssets: Number(viewRow.total_other_assets ?? 0),
       };
     }
   } catch {

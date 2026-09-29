@@ -556,8 +556,7 @@ export default function CashFlowSection({ onCashFlowUpdated }: CashFlowSectionPr
   }, [accounts, accountFilter, searchQuery]);
 
   return (
-    <div className="min-h-screen bg-slate-50/60 p-4 sm:p-6 md:p-8">
-      <div className="max-w-6xl mx-auto space-y-6">
+    <div className="space-y-6">
         
         {/* หัวข้อหน้า */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
@@ -595,7 +594,92 @@ export default function CashFlowSection({ onCashFlowUpdated }: CashFlowSectionPr
           </div>
         </div>
 
-        {/* ส่วนแสดงบัญชีและบัตรทั้งหมด */}
+        {/* 1. Quick Summary Metrics Cards (4-Pillar Grid) */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+          <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col justify-between">
+            <div>
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-medium text-slate-500 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block"></span>
+                  สินทรัพย์คล่องมือ (Liquid Assets)
+                </p>
+                <button
+                  type="button"
+                  onClick={toggleHideCashFlow}
+                  title={hideCashFlow ? 'แสดงยอดเงิน' : 'ซ่อนยอดเงิน'}
+                  className="text-slate-500 hover:text-emerald-700 p-0.5 rounded hover:bg-slate-100 transition cursor-pointer"
+                  aria-label={hideCashFlow ? 'แสดงยอดเงิน' : 'ซ่อนยอดเงิน'}
+                >
+                  {hideCashFlow ? <EyeOff className="w-3.5 h-3.5 text-emerald-600" /> : <Eye className="w-3.5 h-3.5" />}
+                </button>
+              </div>
+              <p className="text-2xl font-bold font-mono tabular-nums text-slate-900 mt-2">
+                {formatMoney(totalAssets)}
+              </p>
+            </div>
+            <div className="mt-2 pt-2 border-t border-slate-100 text-xs text-slate-500">
+              {accounts.filter((a) => !a.is_liability).length} บัญชีสินทรัพย์
+            </div>
+          </div>
+
+          <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col justify-between">
+            <div>
+              <p className="text-xs font-medium text-slate-500 flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-rose-500 inline-block"></span>
+                หนี้สินบัตร / สินเชื่อ (Liabilities)
+              </p>
+              <p className="text-2xl font-bold font-mono tabular-nums text-rose-600 mt-2">
+                {formatMoney(totalLiabilities)}
+              </p>
+            </div>
+            <div className="mt-2 pt-2 border-t border-slate-100 text-xs text-slate-500">
+              {accounts.filter((a) => a.is_liability).length} บัญชีหนี้สิน
+            </div>
+          </div>
+
+          <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col justify-between">
+            <div>
+              <p className="text-xs font-medium text-slate-500 flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-sky-500 inline-block"></span>
+                ยอดสุทธิ (Net Liquid Balance)
+              </p>
+              <p className={`text-2xl font-bold font-mono tabular-nums mt-2 ${netBalance < 0 ? 'text-rose-600' : 'text-slate-900'}`}>
+                {formatMoney(netBalance)}
+              </p>
+            </div>
+            <div className="mt-2 pt-2 border-t border-slate-100 text-xs text-slate-500">
+              {netBalance >= 0 ? 'สภาพคล่องสุทธิเป็นบวก' : 'ภาระหนี้สินมากกว่าสินทรัพย์'}
+            </div>
+          </div>
+
+          <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col justify-between">
+            <div>
+              <p className="text-xs font-medium text-slate-500 flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-amber-500 inline-block"></span>
+                <span>ดอกเบี้ยคาดการณ์ต่อปี (Passive)</span>
+              </p>
+              <p className="text-2xl font-bold font-mono tabular-nums text-emerald-600 mt-2">
+                {hideCashFlow
+                  ? '฿••••••'
+                  : `+฿${estimatedInterestSummary.annual.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+              </p>
+            </div>
+            <div className="mt-2 pt-2 border-t border-slate-100 text-[11px] text-slate-500 flex items-center justify-between">
+              <span>
+                {hideCashFlow
+                  ? '~฿••••/วัน'
+                  : `~฿${estimatedInterestSummary.daily.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/วัน`}
+              </span>
+              <span>
+                {hideCashFlow
+                  ? '(~฿••••/เดือน)'
+                  : `(~฿${estimatedInterestSummary.monthly.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/เดือน)`}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* 2. ส่วนแสดงบัญชีและบัตรทั้งหมด */}
         <div className="bg-white rounded-2xl p-5 sm:p-6 border border-slate-200/80 shadow-xs space-y-5">
           {/* แถบด้านบนของกล่องบัญชี */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
@@ -623,76 +707,6 @@ export default function CashFlowSection({ onCashFlowUpdated }: CashFlowSectionPr
                 <Plus className="w-3.5 h-3.5" />
                 <span>เพิ่มบัตร/สินเชื่อ</span>
               </button>
-            </div>
-          </div>
-
-          {/* Quick Summary Metrics Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/60">
-              <div className="flex items-center justify-between">
-                <p className="text-xs font-medium text-slate-500 flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block"></span>
-                  สินทรัพย์คล่องมือ (Liquid Assets)
-                </p>
-                <button
-                  type="button"
-                  onClick={toggleHideCashFlow}
-                  title={hideCashFlow ? 'แสดงยอดเงิน' : 'ซ่อนยอดเงิน'}
-                  className="text-slate-400 hover:text-emerald-700 p-0.5 rounded hover:bg-slate-200/60 transition cursor-pointer"
-                  aria-label={hideCashFlow ? 'แสดงยอดเงิน' : 'ซ่อนยอดเงิน'}
-                >
-                  {hideCashFlow ? <EyeOff className="w-3.5 h-3.5 text-emerald-600" /> : <Eye className="w-3.5 h-3.5" />}
-                </button>
-              </div>
-              <p className="text-base sm:text-lg font-bold text-slate-800 mt-1">
-                {formatMoney(totalAssets)}
-              </p>
-            </div>
-
-            <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/60">
-              <p className="text-xs font-medium text-slate-500 flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-rose-500 inline-block"></span>
-                หนี้สินบัตร / สินเชื่อ (Liabilities)
-              </p>
-              <p className="text-base sm:text-lg font-bold text-rose-600 mt-1">
-                {formatMoney(totalLiabilities)}
-              </p>
-            </div>
-
-            <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/60">
-              <p className="text-xs font-medium text-slate-500 flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-sky-500 inline-block"></span>
-                ยอดสุทธิ (Net Liquid Balance)
-              </p>
-              <p className={`text-base sm:text-lg font-bold mt-1 ${netBalance < 0 ? 'text-rose-600' : 'text-slate-900'}`}>
-                {formatMoney(netBalance)}
-              </p>
-            </div>
-
-            <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/60 flex flex-col justify-between">
-              <div>
-                <p className="text-xs font-medium text-slate-500 flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-amber-500 inline-block"></span>
-                  <span>ดอกเบี้ยคาดการณ์ต่อปี (Passive Income)</span>
-                </p>
-                <p className="text-base sm:text-lg font-bold text-emerald-600 mt-1">
-                  {hideCashFlow
-                    ? '฿••••••'
-                    : `+฿${estimatedInterestSummary.annual.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-                </p>
-              </div>
-              <div className="text-[11px] text-slate-400 mt-1 flex items-center justify-between">
-                <span>
-                  {hideCashFlow
-                    ? '~฿••••/วัน'
-                    : `~฿${estimatedInterestSummary.daily.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/วัน`}
-                </span>
-                <span>
-                  {hideCashFlow
-                    ? '(~฿••••/เดือน)'
-                    : `(~฿${estimatedInterestSummary.monthly.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/เดือน)`}
-                </span>
-              </div>
             </div>
           </div>
 
@@ -752,7 +766,7 @@ export default function CashFlowSection({ onCashFlowUpdated }: CashFlowSectionPr
                   <button
                     type="button"
                     onClick={() => setSearchQuery('')}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5 cursor-pointer"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-700 p-0.5 cursor-pointer"
                   >
                     <X className="w-3 h-3" />
                   </button>
@@ -766,7 +780,7 @@ export default function CashFlowSection({ onCashFlowUpdated }: CashFlowSectionPr
                   className={`p-1.5 rounded-lg transition cursor-pointer ${
                     viewMode === 'grid'
                       ? 'bg-white text-slate-800 shadow-xs'
-                      : 'text-slate-400 hover:text-slate-600'
+                      : 'text-slate-500 hover:text-slate-700'
                   }`}
                   title="มุมมองการ์ด (Grid View)"
                 >
@@ -778,7 +792,7 @@ export default function CashFlowSection({ onCashFlowUpdated }: CashFlowSectionPr
                   className={`p-1.5 rounded-lg transition cursor-pointer ${
                     viewMode === 'table'
                       ? 'bg-white text-slate-800 shadow-xs'
-                      : 'text-slate-400 hover:text-slate-600'
+                      : 'text-slate-500 hover:text-slate-700'
                   }`}
                   title="มุมมองตารางย่อ (Compact Table View)"
                 >
@@ -790,20 +804,20 @@ export default function CashFlowSection({ onCashFlowUpdated }: CashFlowSectionPr
 
           {/* ตารางแสดงการ์ดบัญชี / มุมมองตาราง */}
           {loading ? (
-            <div className="py-12 text-center text-sm text-slate-400">
+            <div className="py-12 text-center text-sm text-slate-500">
               กำลังโหลดข้อมูลบัญชี...
             </div>
           ) : accounts.length === 0 ? (
-            <div className="py-12 text-center text-slate-400 space-y-2">
-              <AlertCircle className="w-8 h-8 mx-auto text-slate-300" />
+            <div className="py-12 text-center text-slate-500 space-y-2">
+              <AlertCircle className="w-8 h-8 mx-auto text-slate-400" />
               <p className="text-sm font-medium">ยังไม่มีบัญชีการเงินในระบบ</p>
-              <p className="text-xs text-slate-400">กดปุ่ม "+ เพิ่มบัญชีเงินฝาก" หรือ "+ เพิ่มบัตร/สินเชื่อ" ด้านบนเพื่อเริ่มต้นติดตามยอดเงิน</p>
+              <p className="text-xs text-slate-500">กดปุ่ม "+ เพิ่มบัญชีเงินฝาก" หรือ "+ เพิ่มบัตร/สินเชื่อ" ด้านบนเพื่อเริ่มต้นติดตามยอดเงิน</p>
             </div>
           ) : filteredAccounts.length === 0 ? (
-            <div className="py-12 text-center text-slate-400 space-y-2">
-              <Search className="w-8 h-8 mx-auto text-slate-300" />
+            <div className="py-12 text-center text-slate-500 space-y-2">
+              <Search className="w-8 h-8 mx-auto text-slate-400" />
               <p className="text-sm font-medium text-slate-600">ไม่พบบัญชีที่ตรงกับเงื่อนไขการค้นหา</p>
-              <p className="text-xs text-slate-400">ลองค้นหาด้วยคำอื่น หรือสลับแท็บประเภทบัญชี</p>
+              <p className="text-xs text-slate-500">ลองค้นหาด้วยคำอื่น หรือสลับแท็บประเภทบัญชี</p>
               <button
                 type="button"
                 onClick={() => {
@@ -828,7 +842,7 @@ export default function CashFlowSection({ onCashFlowUpdated }: CashFlowSectionPr
                           type="button"
                           onClick={toggleHideAccountNumbers}
                           title={hideAccountNumbers ? 'แสดงเลขที่บัญชีทั้งหมด' : 'ซ่อนเลขที่บัญชีทั้งหมด'}
-                          className="p-1 rounded text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 transition cursor-pointer"
+                          className="p-1 rounded text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 transition cursor-pointer"
                           aria-label={hideAccountNumbers ? 'แสดงเลขที่บัญชีทั้งหมด' : 'ซ่อนเลขที่บัญชีทั้งหมด'}
                         >
                           {hideAccountNumbers ? (
@@ -847,7 +861,7 @@ export default function CashFlowSection({ onCashFlowUpdated }: CashFlowSectionPr
                           type="button"
                           onClick={toggleHideCashFlow}
                           title={hideCashFlow ? 'แสดงยอดเงินทั้งหมด' : 'ซ่อนยอดเงินทั้งหมด'}
-                          className="p-1 rounded text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 transition cursor-pointer"
+                          className="p-1 rounded text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 transition cursor-pointer"
                           aria-label={hideCashFlow ? 'แสดงยอดเงินทั้งหมด' : 'ซ่อนยอดเงินทั้งหมด'}
                         >
                           {hideCashFlow ? (
@@ -899,7 +913,7 @@ export default function CashFlowSection({ onCashFlowUpdated }: CashFlowSectionPr
                               <div className="font-semibold text-slate-800 text-xs sm:text-sm truncate" title={acc.account_name}>
                                 {acc.account_name}
                               </div>
-                              <div className="flex items-center gap-1.5 text-[11px] text-slate-400 mt-0.5">
+                              <div className="flex items-center gap-1.5 text-[11px] text-slate-500 mt-0.5">
                                 {acc.bank_name && (
                                   <span className="font-medium text-slate-600 truncate max-w-[130px]" title={acc.bank_name}>
                                     {acc.bank_name}
@@ -913,7 +927,7 @@ export default function CashFlowSection({ onCashFlowUpdated }: CashFlowSectionPr
                                       type="button"
                                       onClick={() => toggleRowAccount(acc.id)}
                                       title={isRowAccountHidden ? 'แสดงเลขที่บัญชี' : 'ซ่อนเลขที่บัญชี'}
-                                      className="p-0.5 text-slate-400 hover:text-emerald-600 rounded transition cursor-pointer"
+                                      className="p-0.5 text-slate-500 hover:text-emerald-600 rounded transition cursor-pointer"
                                       aria-label={isRowAccountHidden ? 'แสดงเลขที่บัญชี' : 'ซ่อนเลขที่บัญชี'}
                                     >
                                       {isRowAccountHidden ? (
@@ -948,7 +962,7 @@ export default function CashFlowSection({ onCashFlowUpdated }: CashFlowSectionPr
 
                         <td className="py-2.5 px-3 text-right whitespace-nowrap">
                           <div className="inline-flex items-center justify-end gap-1.5">
-                            <div className={`font-bold text-xs sm:text-sm ${isDebt ? 'text-rose-600' : 'text-slate-900'}`}>
+                            <div className={`font-bold font-mono tabular-nums text-xs sm:text-sm ${isDebt ? 'text-rose-600' : 'text-slate-900'}`}>
                               {isRowBalanceHidden
                                 ? `${accCurrency === 'THB' ? '฿' : getCurrencySymbol(accCurrency)}••••••••`
                                 : `${getCurrencySymbol(accCurrency)}${balanceNum.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
@@ -957,7 +971,7 @@ export default function CashFlowSection({ onCashFlowUpdated }: CashFlowSectionPr
                               type="button"
                               onClick={() => toggleRowBalance(acc.id)}
                               title={isRowBalanceHidden ? 'แสดงยอดเงิน' : 'ซ่อนยอดเงิน'}
-                              className="p-0.5 text-slate-400 hover:text-emerald-600 rounded transition cursor-pointer"
+                              className="p-0.5 text-slate-500 hover:text-emerald-600 rounded transition cursor-pointer"
                               aria-label={isRowBalanceHidden ? 'แสดงยอดเงิน' : 'ซ่อนยอดเงิน'}
                             >
                               {isRowBalanceHidden ? (
@@ -968,7 +982,7 @@ export default function CashFlowSection({ onCashFlowUpdated }: CashFlowSectionPr
                             </button>
                           </div>
                           {isForeign && (
-                            <div className="text-[11px] font-medium text-slate-400 mt-0.5">
+                            <div className="text-[11px] font-mono tabular-nums font-medium text-slate-500 mt-0.5">
                               {isRowBalanceHidden ? '≈ ฿••••••' : `≈ ฿${balanceThb.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                             </div>
                           )}
@@ -1036,7 +1050,7 @@ export default function CashFlowSection({ onCashFlowUpdated }: CashFlowSectionPr
                             <button
                               type="button"
                               onClick={() => handleOpenEditForm(acc)}
-                              className="p-1 text-slate-400 hover:text-sky-600 hover:bg-sky-50 rounded-lg transition cursor-pointer"
+                              className="p-1 min-w-[32px] min-h-[32px] flex items-center justify-center text-slate-500 hover:text-sky-600 hover:bg-sky-50 rounded-lg transition cursor-pointer"
                               title="แก้ไขข้อมูล"
                             >
                               <Pencil className="w-3.5 h-3.5" />
@@ -1044,7 +1058,7 @@ export default function CashFlowSection({ onCashFlowUpdated }: CashFlowSectionPr
                             <button
                               type="button"
                               onClick={() => handleDeleteAccount(acc.id, acc.account_name)}
-                              className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
+                              className="p-1 min-w-[32px] min-h-[32px] flex items-center justify-center text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
                               title="ลบบัญชีนี้"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
@@ -1126,7 +1140,7 @@ export default function CashFlowSection({ onCashFlowUpdated }: CashFlowSectionPr
                           <button
                             type="button"
                             onClick={() => handleOpenEditForm(acc)}
-                            className="p-1 text-slate-400 hover:text-sky-600 hover:bg-sky-50 rounded-lg transition cursor-pointer"
+                            className="p-1 min-w-[32px] min-h-[32px] flex items-center justify-center text-slate-500 hover:text-sky-600 hover:bg-sky-50 rounded-lg transition cursor-pointer"
                             title="แก้ไขข้อมูล"
                           >
                             <Pencil className="w-3.5 h-3.5" />
@@ -1134,7 +1148,7 @@ export default function CashFlowSection({ onCashFlowUpdated }: CashFlowSectionPr
                           <button
                             type="button"
                             onClick={() => handleDeleteAccount(acc.id, acc.account_name)}
-                            className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
+                            className="p-1 min-w-[32px] min-h-[32px] flex items-center justify-center text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
                             title="ลบบัญชีนี้"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
@@ -1148,13 +1162,13 @@ export default function CashFlowSection({ onCashFlowUpdated }: CashFlowSectionPr
                           {acc.account_name}
                         </div>
                         {acc.account_number && (
-                          <div className="flex items-center gap-1 text-[11px] text-slate-400 font-mono mt-0.5">
+                          <div className="flex items-center gap-1 text-[11px] text-slate-500 font-mono mt-0.5">
                             <span>{formatAccountNumber(acc.account_number, isRowAccountHidden)}</span>
                             <button
                               type="button"
                               onClick={() => toggleRowAccount(acc.id)}
                               title={isRowAccountHidden ? 'แสดงเลขที่บัญชี' : 'ซ่อนเลขที่บัญชี'}
-                              className="p-0.5 text-slate-400 hover:text-emerald-600 rounded transition cursor-pointer"
+                              className="p-0.5 text-slate-500 hover:text-emerald-600 rounded transition cursor-pointer"
                               aria-label={isRowAccountHidden ? 'แสดงเลขที่บัญชี' : 'ซ่อนเลขที่บัญชี'}
                             >
                               {isRowAccountHidden ? (
@@ -1170,14 +1184,14 @@ export default function CashFlowSection({ onCashFlowUpdated }: CashFlowSectionPr
                       {/* ยอดเงินคงเหลือ / ค้างชำระ */}
                       <div className="mt-2.5">
                         <div className="flex items-center justify-between">
-                          <span className="text-[11px] text-slate-400 block">
+                          <span className="text-[11px] text-slate-500 block">
                             {isDebt ? 'ยอดค้างชำระ / ใช้ไป' : isForeign ? `ยอดคงเหลือ (${accCurrency})` : 'ยอดเงินคงเหลือ'}
                           </span>
                           <button
                             type="button"
                             onClick={() => toggleRowBalance(acc.id)}
                             title={isRowBalanceHidden ? 'แสดงยอดเงิน' : 'ซ่อนยอดเงิน'}
-                            className="p-0.5 text-slate-400 hover:text-emerald-600 rounded transition cursor-pointer"
+                            className="p-0.5 text-slate-500 hover:text-emerald-600 rounded transition cursor-pointer"
                             aria-label={isRowBalanceHidden ? 'แสดงยอดเงิน' : 'ซ่อนยอดเงิน'}
                           >
                             {isRowBalanceHidden ? (
@@ -1201,7 +1215,7 @@ export default function CashFlowSection({ onCashFlowUpdated }: CashFlowSectionPr
                             {isRowBalanceHidden
                               ? '≈ ฿••••••'
                               : `≈ ฿${balanceThb.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-                            <span className="text-[10px] text-slate-400 ml-1.5 font-mono">
+                            <span className="text-[10px] text-slate-500 ml-1.5 font-mono">
                               (@{fxRate.toFixed(4)})
                             </span>
                           </div>
@@ -1247,7 +1261,7 @@ export default function CashFlowSection({ onCashFlowUpdated }: CashFlowSectionPr
                               style={{ width: `${usagePercent}%` }}
                             />
                           </div>
-                          <div className="flex justify-between text-[10px] text-slate-400 mt-1">
+                          <div className="flex justify-between text-[10px] text-slate-500 mt-1">
                             <span>ใช้: {isRowBalanceHidden ? '฿••••••' : formatMoney(balanceNum, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
                             <span>เต็ม: {isRowBalanceHidden ? '฿••••••' : formatMoney(creditLimitNum, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
                           </div>
@@ -1265,7 +1279,7 @@ export default function CashFlowSection({ onCashFlowUpdated }: CashFlowSectionPr
 
                         {(acc.billing_cycle_day || acc.payment_due_day) && (
                           <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 bg-slate-100 rounded-md">
-                            <Calendar className="w-2.5 h-2.5 text-slate-400" />
+                            <Calendar className="w-2.5 h-2.5 text-slate-500" />
                             <span>
                               {acc.billing_cycle_day ? `ตัดรอบ ${acc.billing_cycle_day}` : ''}
                               {acc.billing_cycle_day && acc.payment_due_day ? ' • ' : ''}
@@ -1281,8 +1295,6 @@ export default function CashFlowSection({ onCashFlowUpdated }: CashFlowSectionPr
             </div>
           )}
         </div>
-
-      </div>
 
       {/* Datalist สถาบันการเงินยอดนิยม */}
       <datalist id="thai-banks-list">
@@ -1317,7 +1329,7 @@ export default function CashFlowSection({ onCashFlowUpdated }: CashFlowSectionPr
               <button
                 type="button"
                 onClick={handleCloseForm}
-                className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition cursor-pointer"
+                className="p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition cursor-pointer"
                 title="ปิดหน้าต่าง (Esc)"
               >
                 <X className="w-5 h-5" />

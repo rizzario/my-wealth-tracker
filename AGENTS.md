@@ -52,7 +52,7 @@ settle borderline cases like a high-yield digital savings account. The rule is:
 | Answer | Table | Intended `account_type` |
 |---|---|---|
 | Yes — spending / operating account | `financial_accounts` | `bank`, `cash`, `credit_card`, `loan` |
-| No — parked or locked for yield | `cash_and_pvd_assets` | `FIXED_DEPOSIT`, `PVD`, `HIGH_YIELD` |
+| No — parked or locked for yield | `cash_and_pvd_assets` | `FIXED_DEPOSIT`, `PVD`, `HIGH_YIELD`, `CORPORATE_BOND`, `GOV_BOND`, `SSF`, `THAI_ESG`, `RMF` |
 
 **The database does not enforce this today.** `expense_income_transactions.account_id` is a
 `bigint` pointing at `cash_and_pvd_assets`, i.e. the exact inverse of the rule, and neither
@@ -447,9 +447,6 @@ Ordered. M0 first; M3 depends on M2.
 **M0 — scope the symbol constraint to the user**
 ```sql
 ALTER TABLE portfolio_holdings
-  DROP CONSTRAINT portfolio_holdings_symbol_key;
- 
-ALTER TABLE portfolio_holdings
   ADD CONSTRAINT portfolio_holdings_user_symbol_key UNIQUE (user_id, symbol);
 ```
 Check for existing duplicates first:
@@ -591,8 +588,21 @@ convention, in which case historical balances need a one-off recalculation.
 **M5 — enforce the boundary, retire `is_liquid`**
 ```sql
 ALTER TABLE cash_and_pvd_assets
+  DROP CONSTRAINT IF EXISTS chk_parked_types;
+
+ALTER TABLE cash_and_pvd_assets
   ADD CONSTRAINT chk_parked_types
-  CHECK (account_type IN ('FIXED_DEPOSIT', 'PVD', 'HIGH_YIELD'));
+  CHECK (account_type IN (
+    'FIXED_DEPOSIT',
+    'PVD',
+    'HIGH_YIELD',
+    'CORPORATE_BOND',
+    'GOV_BOND',
+    'SSF',
+    'THAI_ESG',
+    'RMF',
+    'OTHER'
+  ));
 
 ALTER TABLE financial_accounts
   ADD CONSTRAINT chk_operating_types

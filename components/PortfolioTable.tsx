@@ -759,7 +759,7 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
     return (
       <th
         key={field}
-        className={`py-3 px-4 select-none cursor-pointer transition hover:bg-gray-100/80 ${
+        className={`py-3 px-4 select-none cursor-pointer transition hover:bg-slate-100/80 ${
           align === 'right' ? 'text-right' : align === 'center' ? 'text-center' : 'text-left'
         }`}
         onClick={() => handleSort(field)}
@@ -770,8 +770,8 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
             align === 'right' ? 'flex-row-reverse' : ''
           }`}
         >
-          <span className={isActive ? 'text-blue-600 font-bold' : 'text-gray-500'}>{label}</span>
-          <span className={`transition-colors ${isActive ? 'text-blue-600' : 'text-gray-400 opacity-40'}`}>
+          <span className={isActive ? 'text-blue-600 font-bold' : 'text-slate-500'}>{label}</span>
+          <span className={`transition-colors ${isActive ? 'text-blue-600' : 'text-slate-400 opacity-40'}`}>
             {isActive ? (
               sortDirection === 'asc' ? (
                 <ArrowUp className="w-3.5 h-3.5" />
@@ -798,7 +798,7 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
 
   if (loadingData) {
     return (
-      <div className="p-6 bg-white rounded-xl shadow-sm border border-gray-100 text-center text-gray-500 flex items-center justify-center gap-2">
+      <div className="p-6 bg-white rounded-2xl shadow-sm border border-slate-200 text-center text-slate-500 flex items-center justify-center gap-2">
         <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
         <span>กำลังโหลดข้อมูลพอร์ตสินทรัพย์...</span>
       </div>
@@ -806,12 +806,12 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
   }
 
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden space-y-0">
+    <div className="bg-white rounded-2xl shadow-xs border border-slate-200/80 overflow-hidden space-y-0">
       {/* Header */}
-      <div className="p-5 border-b border-gray-100 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 bg-gray-50/50">
+      <div className="p-5 border-b border-slate-100 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 bg-slate-50/50">
         <div>
-          <h2 className="text-lg font-bold text-gray-800">Asset on Hand</h2>
-          <p className="text-xs text-gray-500 mt-0.5">
+          <h2 className="text-lg font-bold text-slate-800">Asset on Hand</h2>
+          <p className="text-xs text-slate-500 mt-0.5">
             พอร์ตหุ้น คริปโต และสินทรัพย์ลงทุน • เพิ่ม/ลบสินทรัพย์ ปรับต้นทุนเฉลี่ย (Buy on dip) หรือตัดขาดทุน (Stop loss)
           </p>
         </div>
@@ -844,24 +844,24 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
       <div className="overflow-x-auto">
         <table className="w-full text-left border-collapse text-sm">
           <thead>
-            <tr className="border-b border-gray-100 bg-gray-50/80 text-gray-500 text-xs uppercase font-medium">
+            <tr className="border-b border-slate-200 bg-slate-50/80 text-slate-500 text-xs uppercase font-medium">
               {renderSortHeader('สินทรัพย์', 'symbol', 'left')}
               {renderSortHeader('โบรกเกอร์', 'broker', 'left')}
               {renderSortHeader('จำนวน', 'volume', 'right')}
               {renderSortHeader('ต้นทุนเฉลี่ย', 'initial_cost', 'right')}
               {renderSortHeader('ราคาตลาดล่าสุด', 'present_price', 'right')}
               {renderSortHeader('ผลตอบแทน (%)', 'yield_percent', 'right')}
-              <th className="py-3 px-4 text-center text-xs uppercase font-semibold text-gray-500">จัดการ</th>
+              <th className="py-3 px-4 text-center text-xs uppercase font-semibold text-slate-500">จัดการ</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-100">
+          <tbody className="divide-y divide-slate-100">
             {sortedHoldings.length === 0 ? (
               <tr>
-                <td colSpan={7} className="py-12 text-center text-gray-400">
+                <td colSpan={7} className="py-12 text-center text-slate-500">
                   <div className="space-y-2">
-                    <AlertCircle className="w-8 h-8 mx-auto text-gray-300" />
+                    <AlertCircle className="w-8 h-8 mx-auto text-slate-400" />
                     <p className="text-sm font-medium">ยังไม่มีสินทรัพย์ในพอร์ต</p>
-                    <p className="text-xs text-gray-400">
+                    <p className="text-xs text-slate-500">
                       กดปุ่ม "+ เพิ่มสินทรัพย์" เพื่อเริ่มต้นบันทึกหุ้น คริปโต หรือสินทรัพย์ที่ถือครอง
                     </p>
                   </div>
@@ -879,7 +879,7 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
                     {/* Symbol */}
                     <td className="py-3 px-4">
                       <div className="flex items-center gap-1.5">
-                        <span className="font-semibold text-gray-800">{item.symbol}</span>
+                        <span className="font-semibold text-slate-800">{item.symbol}</span>
                         {item.currency && item.currency !== 'THB' && (
                           <span className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-slate-100 text-slate-600 border border-slate-200">
                             {item.currency}
@@ -896,17 +896,17 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
                           {item.broker}
                         </span>
                       ) : (
-                        <span className="text-gray-300 text-xs">-</span>
+                        <span className="text-slate-300 text-xs">-</span>
                       )}
                     </td>
 
                     {/* Volume: ถ้าไม่มีค่าให้ fallback เป็น 0 */}
-                    <td className="py-3 px-4 text-right text-gray-600 font-mono">
+                    <td className="py-3 px-4 text-right text-slate-600 font-mono tabular-nums">
                       {(item.volume ?? 0).toLocaleString(undefined, { maximumFractionDigits: 6 })}
                     </td>
 
                     {/* Initial Cost */}
-                    <td className="py-3 px-4 text-right text-gray-600 font-mono">
+                    <td className="py-3 px-4 text-right text-slate-600 font-mono tabular-nums">
                       {item.initial_cost != null
                         ? `${currencyPrefix}${Number(item.initial_cost).toLocaleString(undefined, {
                             minimumFractionDigits: 2,
@@ -916,14 +916,14 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
                     </td>
 
                     {/* Present Price (Editable Inline หรือคลิกเปิด modal) */}
-                    <td className="py-3 px-4 text-right font-semibold text-gray-600">
+                    <td className="py-3 px-4 text-right font-semibold text-slate-600">
                       {isEditing ? (
                         <div
                           className="inline-flex items-center justify-end gap-1.5"
                           onClick={(e) => e.stopPropagation()}
                         >
                           <div className="relative flex items-center">
-                            <span className="text-xs text-gray-400 font-semibold mr-1">
+                            <span className="text-xs text-slate-500 font-semibold mr-1">
                               {currencyPrefix}
                             </span>
                             <input
@@ -960,7 +960,7 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
                             onClick={cancelInlineEditing}
                             disabled={isSavingThisRow}
                             title="ยกเลิก (Esc)"
-                            className="p-1.5 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded transition cursor-pointer"
+                            className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded transition cursor-pointer"
                           >
                             <X className="w-3.5 h-3.5" />
                           </button>
@@ -970,9 +970,9 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
                           type="button"
                           onClick={() => startInlineEditing(item)}
                           title="คลิกเพื่อแก้ไขราคาตลาดอย่างรวดเร็ว"
-                          className="inline-flex items-center justify-end gap-1.5 font-semibold text-gray-700 hover:text-blue-600 cursor-pointer group py-0.5 px-1.5 -mr-1.5 rounded hover:bg-blue-50/60 transition"
+                          className="inline-flex items-center justify-end gap-1.5 font-semibold text-slate-700 hover:text-blue-600 cursor-pointer group py-0.5 px-1.5 -mr-1.5 rounded hover:bg-blue-50/60 transition"
                         >
-                          <span className="font-mono">
+                          <span className="font-mono tabular-nums">
                             {item.present_price != null
                               ? `${currencyPrefix}${Number(item.present_price).toLocaleString(undefined, {
                                   minimumFractionDigits: 2,
@@ -980,14 +980,14 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
                                 })}`
                               : '-'}
                           </span>
-                          <Pencil className="w-3 h-3 text-gray-300 group-hover:text-blue-600 opacity-0 group-hover:opacity-100 transition" />
+                          <Pencil className="w-3 h-3 text-slate-300 group-hover:text-blue-600 opacity-0 group-hover:opacity-100 transition" />
                         </button>
                       )}
                     </td>
 
                     {/* Yield % */}
                     <td
-                      className={`py-3 px-4 text-right font-medium font-mono ${
+                      className={`py-3 px-4 text-right font-medium font-mono tabular-nums ${
                         (item.yield_percent ?? 0) >= 0 ? 'text-emerald-600' : 'text-red-600'
                       }`}
                     >
@@ -1006,7 +1006,7 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
                           onClick={() => handleOpenEditModal(item)}
                           disabled={isRowLoading || isBulkUpdating || isSavingThisRow}
                           title="แก้ไขข้อมูลสินทรัพย์ (จำนวน, ต้นทุนเฉลี่ย, ซื้อถัวเฉลี่ย)"
-                          className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-md transition disabled:opacity-30 cursor-pointer"
+                          className="p-1.5 min-w-[32px] min-h-[32px] flex items-center justify-center text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition disabled:opacity-30 cursor-pointer"
                         >
                           <Pencil className="w-3.5 h-3.5" />
                         </button>
@@ -1017,7 +1017,7 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
                           onClick={() => handleUpdateSingle(item.id)}
                           disabled={isRowLoading || isBulkUpdating || isSavingThisRow}
                           title="กดเพื่อดึงราคาล่าสุดจากตลาด (API)"
-                          className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-md transition disabled:opacity-30 cursor-pointer"
+                          className="p-1.5 min-w-[32px] min-h-[32px] flex items-center justify-center text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition disabled:opacity-30 cursor-pointer"
                         >
                           <RotateCw
                             className={`w-3.5 h-3.5 ${isRowLoading ? 'animate-spin text-blue-600' : ''}`}
@@ -1030,7 +1030,7 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
                           onClick={() => handleDeleteHolding(item)}
                           disabled={isRowLoading || isBulkUpdating || isSavingThisRow}
                           title="ลบสินทรัพย์ออกจากพอร์ต"
-                          className="p-1.5 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-md transition disabled:opacity-30 cursor-pointer"
+                          className="p-1.5 min-w-[32px] min-h-[32px] flex items-center justify-center text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition disabled:opacity-30 cursor-pointer"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
@@ -1063,7 +1063,7 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
               <button
                 type="button"
                 onClick={handleCloseModal}
-                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition cursor-pointer"
+                className="text-slate-500 hover:text-slate-700 p-1.5 rounded-lg hover:bg-slate-100 transition cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -1086,7 +1086,7 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
                     onChange={(e) => setFormData({ ...formData, symbol: e.target.value.toUpperCase() })}
                     className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl bg-white outline-none focus:ring-2 focus:ring-blue-500 font-semibold uppercase disabled:bg-slate-100 disabled:text-slate-500"
                   />
-                  <span className="text-[11px] text-slate-400 mt-0.5 block">
+                  <span className="text-[11px] text-slate-500 mt-0.5 block">
                     {modalMode === 'add' ? 'ใส่ชื่อย่อหุ้น หรือเหรียญคริปโต' : 'สัญลักษณ์อ้างอิงของสินทรัพย์'}
                   </span>
                 </div>
@@ -1106,7 +1106,7 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
                       </option>
                     ))}
                   </select>
-                  <span className="text-[11px] text-slate-400 mt-0.5 block">
+                  <span className="text-[11px] text-slate-500 mt-0.5 block">
                     สกุลเงินที่ใช้ซื้อขายสินทรัพย์นี้
                   </span>
                 </div>
@@ -1132,7 +1132,7 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
                       <option key={b} value={b} />
                     ))}
                   </datalist>
-                  <span className="text-[11px] text-slate-400 mt-0.5 block">
+                  <span className="text-[11px] text-slate-500 mt-0.5 block">
                     โบรกเกอร์หรือกระดานเทรดที่ถือครอง
                   </span>
                 </div>
@@ -1158,7 +1158,7 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
                       );
                     })}
                   </select>
-                  <span className="text-[11px] text-slate-400 mt-0.5 block">
+                  <span className="text-[11px] text-slate-500 mt-0.5 block">
                     {formData.broker && brokerAccountMap[formData.broker]
                       ? `ผูกกับ ${formData.broker} อัตโนมัติ`
                       : 'เลือกบัญชีเพื่อใช้หักเงินสดเมื่อมีรายการซื้อ'}
@@ -1206,7 +1206,7 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
                     onChange={(e) => setFormData({ ...formData, volume: e.target.value })}
                     className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl bg-white outline-none focus:ring-2 focus:ring-blue-500 font-semibold"
                   />
-                  <span className="text-[11px] text-slate-400 mt-0.5 block">หุ้น / เหรียญ</span>
+                  <span className="text-[11px] text-slate-500 mt-0.5 block">หุ้น / เหรียญ</span>
                 </div>
 
                 <div>
@@ -1222,7 +1222,7 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
                     onChange={(e) => setFormData({ ...formData, initial_cost: e.target.value })}
                     className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl bg-white outline-none focus:ring-2 focus:ring-blue-500 font-semibold"
                   />
-                  <span className="text-[11px] text-slate-400 mt-0.5 block">ราคาซื้อเฉลี่ย</span>
+                  <span className="text-[11px] text-slate-500 mt-0.5 block">ราคาซื้อเฉลี่ย</span>
                 </div>
 
                 <div>
@@ -1237,7 +1237,7 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
                     onChange={(e) => setFormData({ ...formData, present_price: e.target.value })}
                     className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl bg-white outline-none focus:ring-2 focus:ring-blue-500 font-semibold"
                   />
-                  <span className="text-[11px] text-slate-400 mt-0.5 block">
+                  <span className="text-[11px] text-slate-500 mt-0.5 block">
                     {modalMode === 'add' ? 'เว้นว่าง = เท่ากับต้นทุน' : 'ราคาตลาดปัจจุบัน'}
                   </span>
                 </div>
@@ -1399,7 +1399,7 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
               <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200/80 grid grid-cols-3 gap-2 text-center">
                 <div>
                   <span className="text-[11px] text-slate-500 block">มูลค่าต้นทุนรวม</span>
-                  <span className="text-xs sm:text-sm font-bold text-slate-800">
+                  <span className="text-xs sm:text-sm font-bold font-mono tabular-nums text-slate-800">
                     {previewCurrencySymbol}
                     {previewTotalCost.toLocaleString(undefined, {
                       minimumFractionDigits: 2,
@@ -1409,7 +1409,7 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
                 </div>
                 <div>
                   <span className="text-[11px] text-slate-500 block">มูลค่าตลาดรวม</span>
-                  <span className="text-xs sm:text-sm font-bold text-slate-800">
+                  <span className="text-xs sm:text-sm font-bold font-mono tabular-nums text-slate-800">
                     {previewCurrencySymbol}
                     {previewTotalPrice.toLocaleString(undefined, {
                       minimumFractionDigits: 2,
@@ -1420,7 +1420,7 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
                 <div>
                   <span className="text-[11px] text-slate-500 block">ผลตอบแทนคาดการณ์</span>
                   <span
-                    className={`text-xs sm:text-sm font-bold ${
+                    className={`text-xs sm:text-sm font-bold font-mono tabular-nums ${
                       previewPnl >= 0 ? 'text-emerald-600' : 'text-rose-600'
                     }`}
                   >

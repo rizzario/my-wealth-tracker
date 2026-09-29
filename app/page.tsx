@@ -18,6 +18,7 @@ import {
   LogOut,
   Menu,
   X,
+  Landmark,
 } from 'lucide-react';
 import PortfolioTable from '../components/PortfolioTable';
 import CashAndPVDTable from '../components/CashAndPvdSection';
@@ -58,9 +59,9 @@ const TABS: TabItem[] = [
   },
   {
     id: 'cash_pvd',
-    label: 'เงินฝาก & PVD',
-    icon: PiggyBank,
-    description: 'เงินฝากดอกเบี้ยสูง ฝากประจำ และ PVD',
+    label: 'สินทรัพย์ระยะยาว & ผลตอบแทนคงที่',
+    icon: Landmark,
+    description: 'หุ้นกู้, กองทุนลดหย่อนภาษี (SSF/Thai ESG), PVD และเงินฝากประจำ',
   },
   {
     id: 'cashflow',
@@ -208,7 +209,7 @@ export default function Home() {
                     <button
                       key={tab.id}
                       onClick={() => setActiveTab(tab.id)}
-                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-colors duration-150 cursor-pointer ${
                         isActive
                           ? 'bg-emerald-500 text-white font-semibold shadow-xs'
                           : 'text-emerald-200 hover:text-white hover:bg-emerald-900/80'
@@ -276,7 +277,7 @@ export default function Home() {
                       setActiveTab(tab.id);
                       setMobileMenuOpen(false);
                     }}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-all shrink-0 cursor-pointer ${
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors duration-150 shrink-0 cursor-pointer ${
                       isActive
                         ? 'bg-emerald-500 text-white font-semibold shadow-xs'
                         : 'bg-emerald-900/50 text-emerald-200 hover:text-white hover:bg-emerald-900/80 border border-emerald-900/60'
@@ -309,7 +310,7 @@ export default function Home() {
                       setActiveTab(tab.id);
                       setMobileMenuOpen(false);
                     }}
-                    className={`flex items-start gap-3 p-3 rounded-xl text-left transition-all cursor-pointer ${
+                    className={`flex items-start gap-3 p-3 rounded-xl text-left transition-colors duration-150 cursor-pointer ${
                       isActive
                         ? 'bg-emerald-500 text-white shadow-md'
                         : 'bg-emerald-900/40 hover:bg-emerald-900/80 text-emerald-100 border border-emerald-900/80'
@@ -368,12 +369,12 @@ export default function Home() {
                 type="button"
                 onClick={toggleHideValues}
                 title={hideValues ? 'แสดงตัวเลขยอดเงิน' : 'ซ่อนตัวเลขยอดเงิน'}
-                className="text-slate-400 hover:text-emerald-700 p-1 -mr-1 rounded-md hover:bg-emerald-50 transition cursor-pointer"
+                className="text-slate-500 hover:text-emerald-700 p-1 -mr-1 rounded-md hover:bg-emerald-50 transition cursor-pointer"
               >
                 {hideValues ? <EyeOff className="h-4 w-4 text-emerald-600" /> : <Eye className="h-4 w-4" />}
               </button>
             </div>
-            <p className="text-2xl font-bold mt-2 text-slate-900">
+            <p className="text-2xl font-bold font-mono tabular-nums mt-2 text-slate-900">
               {hideValues ? (
                 <span className="tracking-widest font-mono text-slate-400 select-none">฿••••••••</span>
               ) : (
@@ -381,7 +382,7 @@ export default function Home() {
               )}
             </p>
             {summary.totalLiabilities > 0 && !hideValues && (
-              <p className="text-[11px] text-slate-400 mt-1">
+              <p className="text-[11px] text-slate-500 mt-1">
                 (หักหนี้สินบัตร/สินเชื่อ ฿{summary.totalLiabilities.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
               </p>
             )}
@@ -391,7 +392,7 @@ export default function Home() {
             <span className="text-xs font-medium text-slate-500 flex items-center gap-1.5">
               <TrendingUp className="h-4 w-4 text-blue-600" /> พอร์ตลงทุน (Unrealized P&L)
             </span>
-            <p className="text-2xl font-bold mt-2 text-slate-900">
+            <p className="text-2xl font-bold font-mono tabular-nums mt-2 text-slate-900">
               {hideValues ? (
                 <span className="tracking-widest font-mono text-slate-400 select-none">฿••••••••</span>
               ) : (
@@ -411,32 +412,35 @@ export default function Home() {
             <span className="text-xs font-medium text-slate-500 flex items-center gap-1.5">
               <PiggyBank className="h-4 w-4 text-amber-600" /> สภาพคล่องพร้อมใช้ (Liquid Cash)
             </span>
-            <p className="text-2xl font-bold mt-2 text-slate-900">
+            <p className="text-2xl font-bold font-mono tabular-nums mt-2 text-slate-900">
               {hideValues ? (
                 <span className="tracking-widest font-mono text-slate-400 select-none">฿••••••••</span>
               ) : (
                 `฿${summary.totalLiquidCash.toLocaleString('th-TH', { minimumFractionDigits: 2 })}`
               )}
             </p>
-            <span className="text-xs text-slate-400">เงินฝากออมทรัพย์ & บัญชีหมุนเวียน</span>
+            <span className="text-xs text-slate-500">เงินฝากออมทรัพย์ & บัญชีหมุนเวียน</span>
           </div>
 
           <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
             <span className="text-xs font-medium text-slate-500 flex items-center gap-1.5">
-              <CalendarClock className="h-4 w-4 text-purple-600" />{' '}
-              {summary.totalFixedDeposit > 0 ? 'เงินฝากประจำ & PVD' : 'กองทุนสำรองเลี้ยงชีพ (PVD)'}
+              <Landmark className="h-4 w-4 text-purple-600" /> สินทรัพย์ระยะยาว & ผลตอบแทนคงที่
             </span>
-            <p className="text-2xl font-bold mt-2 text-slate-900">
+            <p className="text-2xl font-bold font-mono tabular-nums mt-2 text-slate-900">
               {hideValues ? (
                 <span className="tracking-widest font-mono text-slate-400 select-none">฿••••••••</span>
               ) : (
-                `฿${(summary.totalPVD + summary.totalFixedDeposit).toLocaleString('th-TH', { minimumFractionDigits: 2 })}`
+                `฿${((summary.totalBonds ?? 0) + (summary.totalTaxSavingFunds ?? 0) + summary.totalPVD + summary.totalFixedDeposit + (summary.totalOtherAssets ?? 0)).toLocaleString('th-TH', { minimumFractionDigits: 2 })}`
               )}
             </p>
-            <span className="text-xs text-slate-400">
-              {summary.totalFixedDeposit > 0
-                ? `PVD: ฿${summary.totalPVD.toLocaleString('th-TH', { maximumFractionDigits: 0 })} • ฝากประจำ: ฿${summary.totalFixedDeposit.toLocaleString('th-TH', { maximumFractionDigits: 0 })}`
-                : 'สินทรัพย์เพื่อการเกษียณ'}
+            <span className="text-xs text-slate-500 line-clamp-1">
+              {[
+                (summary.totalBonds ?? 0) > 0 ? `หุ้นกู้ ฿${(summary.totalBonds ?? 0).toLocaleString('th-TH', { maximumFractionDigits: 0 })}` : null,
+                (summary.totalTaxSavingFunds ?? 0) > 0 ? `SSF/ESG ฿${(summary.totalTaxSavingFunds ?? 0).toLocaleString('th-TH', { maximumFractionDigits: 0 })}` : null,
+                summary.totalPVD > 0 ? `PVD ฿${summary.totalPVD.toLocaleString('th-TH', { maximumFractionDigits: 0 })}` : null,
+                summary.totalFixedDeposit > 0 ? `ฝากประจำ ฿${summary.totalFixedDeposit.toLocaleString('th-TH', { maximumFractionDigits: 0 })}` : null,
+                (summary.totalOtherAssets ?? 0) > 0 ? `อื่นๆ ฿${(summary.totalOtherAssets ?? 0).toLocaleString('th-TH', { maximumFractionDigits: 0 })}` : null,
+              ].filter(Boolean).join(' • ') || 'หุ้นกู้, SSF/Thai ESG, PVD, ฝากประจำ, สินทรัพย์อื่นๆ'}
             </span>
           </div>
         </section>

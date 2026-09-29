@@ -1,17 +1,52 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { calculateAccountInterest } from '@/lib/interestCalculator';
-import { Eye, EyeOff } from 'lucide-react';
+import {
+  Eye,
+  EyeOff,
+  Building2,
+  ShieldCheck,
+  PiggyBank,
+  TrendingUp,
+  Percent,
+  Calendar,
+  AlertCircle,
+  Clock,
+  Sparkles,
+  Info,
+  Landmark,
+  Search,
+  Filter,
+  CheckCircle2,
+  Layers,
+  X,
+  Pencil,
+  Trash2,
+} from 'lucide-react';
+
+export type LongTermAssetType =
+  | 'CORPORATE_BOND'
+  | 'GOV_BOND'
+  | 'SSF'
+  | 'THAI_ESG'
+  | 'RMF'
+  | 'PVD'
+  | 'FIXED_DEPOSIT'
+  | 'HIGH_YIELD'
+  | 'OTHER'
+  | 'NORMAL_FUND'
+  | string;
 
 export interface CashPvdAsset {
   id: number;
   account_name: string;
-  account_type: 'HIGH_YIELD' | 'FIXED_DEPOSIT' | 'PVD' | string;
+  account_type: LongTermAssetType;
   bank_name: string | null;
   account_number: string | null;
   current_balance: number;
+  cost_basis: number | null;
   pvd_employee_contrib: number | null;
   pvd_employer_contrib: number | null;
   interest_rate: number | null;
@@ -22,8 +57,11 @@ export interface CashPvdAsset {
   maturity_date: string | null;
   is_liquid: boolean | null;
   is_tax_exempt: boolean | null;
+  tax_deductible: boolean | null;
+  holding_period_years: number | null;
   interest_payout_frequency: string | null;
   next_interest_payout_date: string | null;
+  notes: string | null;
   updated_at?: string;
 }
 
@@ -31,11 +69,15 @@ interface CashAndPvdSectionProps {
   onCashPvdUpdated?: () => void;
 }
 
+type FilterCategory = 'ALL' | 'BONDS' | 'TAX_FUNDS' | 'PVD' | 'DEPOSITS' | 'OTHER';
+
 export default function CashAndPvdSection({ onCashPvdUpdated }: CashAndPvdSectionProps = {}) {
   const [assets, setAssets] = useState<CashPvdAsset[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [selectedFilter, setSelectedFilter] = useState<FilterCategory>('ALL');
+  const [searchQuery, setSearchQuery] = useState('');
 
   const supabase = createClient();
 
@@ -113,17 +155,18 @@ export default function CashAndPvdSection({ onCashPvdUpdated }: CashAndPvdSectio
     return accNo.replace(/\d/g, '•');
   };
 
-  // 1. เพิ่ม state เก็บ ID ที่กำลังแก้ไข (null = โหมดเพิ่มใหม่, number = โหมดแก้ไข)
+  // State เก็บ ID ที่กำลังแก้ไข (null = โหมดเพิ่มใหม่, number = โหมดแก้ไข)
   const [editingId, setEditingId] = useState<number | null>(null);
 
   // Form State
-  const [formData, setFormData] = useState({
+  const initialFormState = {
     account_name: '',
-    account_type: 'HIGH_YIELD',
+    account_type: 'CORPORATE_BOND' as LongTermAssetType,
     bank_name: '',
     account_number: '',
     current_balance: '',
-    interest_rate: '1.50',
+    cost_basis: '',
+    interest_rate: '4.20',
     base_interest_rate: '0.25',
     promo_interest_rate: '',
     promo_duration_days: '',
@@ -131,10 +174,16 @@ export default function CashAndPvdSection({ onCashPvdUpdated }: CashAndPvdSectio
     maturity_date: '',
     pvd_employee_contrib: '',
     pvd_employer_contrib: '',
-    is_liquid: true,
+    is_liquid: false,
     is_tax_exempt: false,
+    tax_deductible: false,
+    holding_period_years: '',
     interest_payout_frequency: 'SEMI_ANNUAL',
-  });
+    next_interest_payout_date: '',
+    notes: '',
+  };
+
+  const [formData, setFormData] = useState(initialFormState);
 
   // ดึงข้อมูลบัญชีจากตาราง cash_and_pvd_assets
   const fetchAssets = async () => {
@@ -147,7 +196,7 @@ export default function CashAndPvdSection({ onCashPvdUpdated }: CashAndPvdSectio
       if (error) throw error;
       if (data) setAssets(data as CashPvdAsset[]);
     } catch (err: any) {
-      console.error('Error fetching cash assets:', err.message);
+      console.error('Error fetching long-term assets:', err.message);
     } finally {
       setLoading(false);
     }
@@ -157,7 +206,92 @@ export default function CashAndPvdSection({ onCashPvdUpdated }: CashAndPvdSectio
     fetchAssets();
   }, []);
 
-  // คำนวณวัน maturity_date อัตโนมัติเมื่อเลือก start date และ duration
+  // เมื่อเปลี่ยนประเภทสินทรัพย์ ปรับค่าเริ่มต้นที่เหมาะสมอัตโนมัติ
+  const handleAccountTypeChange = (newType: string) => {
+    let defaults: Partial<typeof formData> = { account_type: newType };
+
+    if (newType === 'CORPORATE_BOND' || newType === 'GOV_BOND') {
+      defaults = {
+        ...defaults,
+        is_liquid: false,
+        tax_deductible: false,
+        interest_payout_frequency: 'SEMI_ANNUAL',
+        interest_rate: formData.interest_rate || '4.00',
+      };
+    } else if (newType === 'THAI_ESG') {
+      defaults = {
+        ...defaults,
+        is_liquid: false,
+        tax_deductible: true,
+        holding_period_years: '5',
+        interest_rate: '0',
+      };
+      if (formData.deposit_start_date) {
+        const start = new Date(formData.deposit_start_date);
+        start.setFullYear(start.getFullYear() + 5);
+        defaults.maturity_date = start.toISOString().split('T')[0];
+      }
+    } else if (newType === 'SSF') {
+      defaults = {
+        ...defaults,
+        is_liquid: false,
+        tax_deductible: true,
+        holding_period_years: '10',
+        interest_rate: '0',
+      };
+      if (formData.deposit_start_date) {
+        const start = new Date(formData.deposit_start_date);
+        start.setFullYear(start.getFullYear() + 10);
+        defaults.maturity_date = start.toISOString().split('T')[0];
+      }
+    } else if (newType === 'RMF') {
+      defaults = {
+        ...defaults,
+        is_liquid: false,
+        tax_deductible: true,
+        interest_rate: '0',
+      };
+    } else if (newType === 'PVD') {
+      defaults = {
+        ...defaults,
+        is_liquid: false,
+        tax_deductible: true,
+        interest_rate: '0',
+      };
+    } else if (newType === 'FIXED_DEPOSIT') {
+      defaults = {
+        ...defaults,
+        is_liquid: false,
+        interest_rate: formData.interest_rate || '2.00',
+      };
+    } else if (newType === 'HIGH_YIELD') {
+      defaults = {
+        ...defaults,
+        is_liquid: true,
+        interest_rate: formData.interest_rate || '1.50',
+      };
+    } else if (newType === 'OTHER') {
+      defaults = {
+        ...defaults,
+        is_liquid: false,
+        tax_deductible: false,
+        holding_period_years: '',
+        deposit_start_date: '',
+        maturity_date: '',
+        interest_rate: formData.interest_rate || '0',
+      };
+    } else if (newType === 'NORMAL_FUND') {
+      defaults = {
+        ...defaults,
+        is_liquid: true,
+        interest_rate: formData.interest_rate || '0',
+      };
+    }
+
+    setFormData((prev) => ({ ...prev, ...defaults }));
+  };
+
+  // คำนวณวัน maturity_date อัตโนมัติเมื่อเลือก start date และ duration สำหรับเงินฝากโปรโมชัน
   const handlePromoDateChange = (startDate: string, durationDays: string) => {
     let maturity = formData.maturity_date;
     if (startDate && durationDays) {
@@ -176,75 +310,103 @@ export default function CashAndPvdSection({ onCashPvdUpdated }: CashAndPvdSectio
     }));
   };
 
-  // บันทึก (เพิ่ม/แก้ไข) ข้อมูลบัญชี
-  const handleSubmit = async (e: React.FormEvent) => {
-  e.preventDefault();
-  try {
-    setIsSubmitting(true);
-
-    const isPvd = formData.account_type === 'PVD';
-    const balance = isPvd
-      ? (parseFloat(formData.pvd_employee_contrib) || 0) + (parseFloat(formData.pvd_employer_contrib) || 0)
-      : parseFloat(formData.current_balance) || 0;
-
-    const payload = {
-      account_name: formData.account_name,
-      account_type: formData.account_type,
-      bank_name: formData.bank_name || null,
-      account_number: formData.account_number || null,
-      current_balance: balance,
-      interest_rate: formData.interest_rate ? parseFloat(formData.interest_rate) : 0,
-      base_interest_rate: formData.base_interest_rate ? parseFloat(formData.base_interest_rate) : 0.25,
-      promo_interest_rate: formData.promo_interest_rate ? parseFloat(formData.promo_interest_rate) : null,
-      promo_duration_days: formData.promo_duration_days ? parseInt(formData.promo_duration_days, 10) : null,
-      deposit_start_date: formData.deposit_start_date || null,
-      maturity_date: formData.maturity_date || null,
-      pvd_employee_contrib: isPvd ? (parseFloat(formData.pvd_employee_contrib) || 0) : 0,
-      pvd_employer_contrib: isPvd ? (parseFloat(formData.pvd_employer_contrib) || 0) : 0,
-      is_liquid: isPvd || formData.account_type === 'FIXED_DEPOSIT' ? false : formData.is_liquid,
-      is_tax_exempt: formData.is_tax_exempt,
-      interest_payout_frequency: formData.interest_payout_frequency,
-      updated_at: new Date().toISOString(),
-    };
-
-    if (editingId) {
-      // โหมดแก้ไข: อัปเดตแถวเดิมตาม ID
-      const { error } = await supabase
-        .from('cash_and_pvd_assets')
-        .update(payload)
-        .eq('id', editingId);
-
-      if (error) throw error;
-    } else {
-      // โหมดเพิ่มใหม่
-      const { error } = await supabase
-        .from('cash_and_pvd_assets')
-        .insert([payload]);
-
-      if (error) throw error;
+  // คำนวณวันครบกำหนดภาษีอัตโนมัติเมื่อกรอกวันเริ่มซื้อและจำนวนปีถือครอง
+  const handleTaxStartDateChange = (startDate: string, yearsStr?: string) => {
+    const years = parseInt(yearsStr ?? formData.holding_period_years, 10);
+    let maturity = formData.maturity_date;
+    if (startDate && !isNaN(years) && years > 0) {
+      const start = new Date(startDate);
+      start.setFullYear(start.getFullYear() + years);
+      maturity = start.toISOString().split('T')[0];
     }
+    setFormData((prev) => ({
+      ...prev,
+      deposit_start_date: startDate,
+      maturity_date: maturity,
+    }));
+  };
 
-    await fetchAssets();
-    onCashPvdUpdated?.();
-    setIsModalOpen(false);
-    setEditingId(null);
-  } catch (err: any) {
-    alert(`เกิดข้อผิดพลาด: ${err.message}`);
-  } finally {
-    setIsSubmitting(false);
-  }
-};
+  // บันทึก (เพิ่ม/แก้ไข) ข้อมูลสินทรัพย์
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      setIsSubmitting(true);
 
-  // 2. ฟังก์ชันเปิด Modal แก้ไข พร้อมนำค่าเดิมของแถวนั้นมาหยอดลง Form
+      const isPvd = formData.account_type === 'PVD';
+      const balance = isPvd
+        ? (parseFloat(formData.pvd_employee_contrib) || 0) + (parseFloat(formData.pvd_employer_contrib) || 0)
+        : parseFloat(formData.current_balance) || 0;
+
+      const isBond = ['CORPORATE_BOND', 'GOV_BOND', 'BOND'].includes(formData.account_type);
+      const isTaxFund = ['SSF', 'THAI_ESG', 'THAIESG', 'RMF'].includes(formData.account_type);
+      const isFixed = formData.account_type === 'FIXED_DEPOSIT';
+      const isNormalFund = formData.account_type === 'NORMAL_FUND';
+      const isOther = formData.account_type === 'OTHER';
+
+      const payload = {
+        account_name: formData.account_name,
+        account_type: formData.account_type,
+        bank_name: formData.bank_name || null,
+        account_number: formData.account_number || null,
+        current_balance: balance,
+        cost_basis: formData.cost_basis ? parseFloat(formData.cost_basis) : (isBond || isOther ? balance : 0),
+        interest_rate: formData.interest_rate ? parseFloat(formData.interest_rate) : 0,
+        base_interest_rate: formData.base_interest_rate ? parseFloat(formData.base_interest_rate) : 0.25,
+        promo_interest_rate: formData.promo_interest_rate ? parseFloat(formData.promo_interest_rate) : null,
+        promo_duration_days: formData.promo_duration_days ? parseInt(formData.promo_duration_days, 10) : null,
+        deposit_start_date: formData.deposit_start_date || null,
+        maturity_date: formData.maturity_date || null,
+        pvd_employee_contrib: isPvd ? (parseFloat(formData.pvd_employee_contrib) || 0) : 0,
+        pvd_employer_contrib: isPvd ? (parseFloat(formData.pvd_employer_contrib) || 0) : 0,
+        is_liquid: isPvd || isFixed || isBond || isTaxFund || isNormalFund || isOther ? false : formData.is_liquid,
+        is_tax_exempt: formData.is_tax_exempt,
+        tax_deductible: isTaxFund || isPvd ? true : formData.tax_deductible,
+        holding_period_years: formData.holding_period_years ? parseInt(formData.holding_period_years, 10) : null,
+        interest_payout_frequency: formData.interest_payout_frequency,
+        next_interest_payout_date: formData.next_interest_payout_date || null,
+        notes: formData.notes || null,
+        updated_at: new Date().toISOString(),
+      };
+
+      if (editingId) {
+        // โหมดแก้ไข: อัปเดตแถวเดิมตาม ID
+        const { error } = await supabase
+          .from('cash_and_pvd_assets')
+          .update(payload)
+          .eq('id', editingId);
+
+        if (error) throw error;
+      } else {
+        // โหมดเพิ่มใหม่
+        const { error } = await supabase
+          .from('cash_and_pvd_assets')
+          .insert([payload]);
+
+        if (error) throw error;
+      }
+
+      await fetchAssets();
+      onCashPvdUpdated?.();
+      setIsModalOpen(false);
+      setEditingId(null);
+    } catch (err: any) {
+      alert(`เกิดข้อผิดพลาด: ${err.message}`);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // ฟังก์ชันเปิด Modal แก้ไข
   const handleOpenEditModal = (item: CashPvdAsset) => {
     setEditingId(item.id);
     setFormData({
       account_name: item.account_name ?? '',
-      account_type: item.account_type ?? 'HIGH_YIELD',
+      account_type: item.account_type ?? 'CORPORATE_BOND',
       bank_name: item.bank_name ?? '',
       account_number: item.account_number ?? '',
       current_balance: item.current_balance != null ? String(item.current_balance) : '',
-      interest_rate: item.interest_rate != null ? String(item.interest_rate) : '1.50',
+      cost_basis: item.cost_basis != null ? String(item.cost_basis) : '',
+      interest_rate: item.interest_rate != null ? String(item.interest_rate) : '0',
       base_interest_rate: item.base_interest_rate != null ? String(item.base_interest_rate) : '0.25',
       promo_interest_rate: item.promo_interest_rate != null ? String(item.promo_interest_rate) : '',
       promo_duration_days: item.promo_duration_days != null ? String(item.promo_duration_days) : '',
@@ -252,41 +414,30 @@ export default function CashAndPvdSection({ onCashPvdUpdated }: CashAndPvdSectio
       maturity_date: item.maturity_date ?? '',
       pvd_employee_contrib: item.pvd_employee_contrib != null ? String(item.pvd_employee_contrib) : '',
       pvd_employer_contrib: item.pvd_employer_contrib != null ? String(item.pvd_employer_contrib) : '',
-      is_liquid: item.is_liquid ?? true,
+      is_liquid: item.is_liquid ?? false,
       is_tax_exempt: item.is_tax_exempt ?? false,
+      tax_deductible: item.tax_deductible ?? false,
+      holding_period_years: item.holding_period_years != null ? String(item.holding_period_years) : '',
       interest_payout_frequency: item.interest_payout_frequency ?? 'SEMI_ANNUAL',
+      next_interest_payout_date: item.next_interest_payout_date ?? '',
+      notes: item.notes ?? '',
     });
     setIsModalOpen(true);
   };
 
-  // 3. ฟังก์ชันเปิด Modal สำหรับเพิ่มใหม่
-  const handleOpenCreateModal = () => {
+  // ฟังก์ชันเปิด Modal สำหรับเพิ่มใหม่
+  const handleOpenCreateModal = (defaultType: LongTermAssetType = 'CORPORATE_BOND') => {
     setEditingId(null);
-    // Reset ค่าฟอร์มเป็นค่าเริ่มต้น
     setFormData({
-      account_name: '',
-      account_type: 'HIGH_YIELD',
-      bank_name: '',
-      account_number: '',
-      current_balance: '',
-      interest_rate: '1.50',
-      base_interest_rate: '0.25',
-      promo_interest_rate: '',
-      promo_duration_days: '',
-      deposit_start_date: '',
-      maturity_date: '',
-      pvd_employee_contrib: '',
-      pvd_employer_contrib: '',
-      is_liquid: true,
-      is_tax_exempt: false,
-      interest_payout_frequency: 'SEMI_ANNUAL',
+      ...initialFormState,
+      account_type: defaultType,
     });
     setIsModalOpen(true);
   };
 
   // ลบบัญชี
   const handleDelete = async (id: number, name: string) => {
-    if (!confirm(`คุณต้องการลบบัญชี "${name}" ใช่หรือไม่? การกระทำนี้ไม่สามารถย้อนกลับได้`)) return;
+    if (!confirm(`คุณต้องการลบรายการ "${name}" ใช่หรือไม่? การกระทำนี้ไม่สามารถย้อนกลับได้`)) return;
 
     try {
       const { error } = await supabase.from('cash_and_pvd_assets').delete().eq('id', id);
@@ -298,245 +449,578 @@ export default function CashAndPvdSection({ onCashPvdUpdated }: CashAndPvdSectio
     }
   };
 
-  // คำนวณยอดเงินสดสภาพคล่อง, เงินฝากประจำ และ PVD ตามกฎการแบ่งประเภทบัญชี (AGENTS.md §3.0 & §3.5)
-  const totalLiquidCash = assets
-    .filter((a) => a.account_type !== 'PVD' && a.account_type !== 'FIXED_DEPOSIT' && a.is_liquid)
-    .reduce((sum, a) => sum + (Number(a.current_balance) || 0), 0);
+  // ----------------------------------------------------
+  // การจัดกลุ่มและการคำนวณ Metrics เชิงลึก
+  // ----------------------------------------------------
+  const bondAssets = useMemo(() => {
+    return assets.filter((a) => ['CORPORATE_BOND', 'GOV_BOND', 'BOND'].includes(a.account_type?.toUpperCase() || ''));
+  }, [assets]);
 
-  const totalFixedDeposit = assets
+  const taxFundAssets = useMemo(() => {
+    return assets.filter((a) => ['SSF', 'THAI_ESG', 'THAIESG', 'RMF'].includes(a.account_type?.toUpperCase() || ''));
+  }, [assets]);
+
+  const pvdAssets = useMemo(() => {
+    return assets.filter((a) => a.account_type?.toUpperCase() === 'PVD');
+  }, [assets]);
+
+  const depositAssets = useMemo(() => {
+    return assets.filter((a) => ['FIXED_DEPOSIT', 'HIGH_YIELD'].includes(a.account_type?.toUpperCase() || ''));
+  }, [assets]);
+
+  const otherAssets = useMemo(() => {
+    return assets.filter((a) => ['OTHER', 'NORMAL_FUND'].includes(a.account_type?.toUpperCase() || ''));
+  }, [assets]);
+  const totalOther = otherAssets.reduce((sum, a) => sum + (Number(a.current_balance) || 0), 0);
+
+  // 1. ยอดรวมหุ้นกู้ & คูปอง
+  const totalBonds = bondAssets.reduce((sum, a) => sum + (Number(a.current_balance) || 0), 0);
+  const annualBondCoupons = bondAssets.reduce((sum, a) => {
+    const rate = Number(a.interest_rate) || 0;
+    return sum + (Number(a.current_balance) || 0) * (rate / 100);
+  }, 0);
+  const avgBondCouponRate = totalBonds > 0 ? (annualBondCoupons / totalBonds) * 100 : 0;
+
+  // 2. ยอดรวมกองทุนลดหย่อนภาษี & กำไร/ขาดทุน
+  const totalTaxFunds = taxFundAssets.reduce((sum, a) => sum + (Number(a.current_balance) || 0), 0);
+  const totalTaxCostBasis = taxFundAssets.reduce((sum, a) => sum + (Number(a.cost_basis) || 0), 0);
+  const taxFundsPL = totalTaxFunds - totalTaxCostBasis;
+  const taxFundsYield = totalTaxCostBasis > 0 ? (taxFundsPL / totalTaxCostBasis) * 100 : 0;
+
+  // 3. ยอดรวม PVD
+  const totalPvd = pvdAssets.reduce((sum, a) => sum + (Number(a.current_balance) || 0), 0);
+  const totalPvdEmployee = pvdAssets.reduce((sum, a) => sum + (Number(a.pvd_employee_contrib) || 0), 0);
+  const totalPvdEmployer = pvdAssets.reduce((sum, a) => sum + (Number(a.pvd_employer_contrib) || 0), 0);
+
+  // 4. ยอดเงินฝากประจำ & ดอกเบี้ย
+  const totalFixedDeposit = depositAssets
     .filter((a) => a.account_type === 'FIXED_DEPOSIT')
     .reduce((sum, a) => sum + (Number(a.current_balance) || 0), 0);
 
-  const totalPvd = assets
-    .filter((a) => a.account_type === 'PVD')
+  const totalHighYield = depositAssets
+    .filter((a) => a.account_type === 'HIGH_YIELD')
     .reduce((sum, a) => sum + (Number(a.current_balance) || 0), 0);
 
-  // คำนวณดอกเบี้ยสะสมงวดปัจจุบันรวมทุกบัญชี (Accrued to Date)
-  const totalAccruedInterest = assets
-    .filter((a) => a.account_type !== 'PVD')
-    .reduce((sum, a) => {
-      const activeRate = a.promo_interest_rate ?? a.interest_rate ?? 0;
-      const res = calculateAccountInterest({
-        balance: Number(a.current_balance) || 0,
-        ratePercent: Number(activeRate),
-        payoutFrequency: a.interest_payout_frequency || 'SEMI_ANNUAL',
-        depositStartDate: a.deposit_start_date,
-        maturityDate: a.maturity_date,
-      });
-      return sum + res.accruedToDate;
-    }, 0);
+  const annualDepositInterest = depositAssets.reduce((sum, a) => {
+    const rate = a.promo_interest_rate ?? a.interest_rate ?? 0;
+    return sum + ((Number(a.current_balance) || 0) * (Number(rate) / 100));
+  }, 0);
 
-  const estimatedAnnualInterest = assets
-    .filter((a) => a.account_type !== 'PVD')
-    .reduce((sum, a) => {
-      const rate = a.promo_interest_rate ?? a.interest_rate ?? 0;
-      return sum + ((Number(a.current_balance) || 0) * (rate / 100));
-    }, 0);
+  // ผลตอบแทนกระแสเงินสดคาดการณ์รวมต่อปี (คูปองหุ้นกู้ + ดอกเบี้ยเงินฝาก)
+  const totalAnnualPassiveIncome = annualBondCoupons + annualDepositInterest;
 
-  // คำนวณวันคงเหลือของโปรโมชัน
-  const getPromoDaysLeft = (maturityDateStr: string | null) => {
-    if (!maturityDateStr) return null;
+  // กรองรายการที่จะแสดงในตารางตามหมวดหมู่และคำค้นหา
+  const filteredAssets = useMemo(() => {
+    return assets.filter((item) => {
+      const type = item.account_type?.toUpperCase() || '';
+      let matchCat = true;
+      if (selectedFilter === 'BONDS') {
+        matchCat = ['CORPORATE_BOND', 'GOV_BOND', 'BOND'].includes(type);
+      } else if (selectedFilter === 'TAX_FUNDS') {
+        matchCat = ['SSF', 'THAI_ESG', 'THAIESG', 'RMF'].includes(type);
+      } else if (selectedFilter === 'PVD') {
+        matchCat = type === 'PVD';
+      } else if (selectedFilter === 'DEPOSITS') {
+        matchCat = ['FIXED_DEPOSIT', 'HIGH_YIELD'].includes(type);
+      } else if (selectedFilter === 'OTHER') {
+        matchCat = ['OTHER', 'NORMAL_FUND'].includes(type);
+      }
+
+      if (!matchCat) return false;
+
+      if (!searchQuery.trim()) return true;
+      const q = searchQuery.toLowerCase().trim();
+      return (
+        (item.account_name || '').toLowerCase().includes(q) ||
+        (item.bank_name || '').toLowerCase().includes(q) ||
+        (item.notes || '').toLowerCase().includes(q) ||
+        (item.account_number || '').includes(q)
+      );
+    });
+  }, [assets, selectedFilter, searchQuery]);
+
+  // คำนวณวันคงเหลือ / สถานะครบกำหนด
+  const getDaysLeft = (dateStr: string | null) => {
+    if (!dateStr) return null;
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const maturity = new Date(maturityDateStr);
-    maturity.setHours(0, 0, 0, 0);
-    const diffTime = maturity.getTime() - today.getTime();
+    const target = new Date(dateStr);
+    target.setHours(0, 0, 0, 0);
+    const diffTime = target.getTime() - today.getTime();
     return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
   };
 
-  // กรองบัญชีที่โปรโมชันหมดอายุหรือใกล้หมด (<= 14 วัน)
-  const expiringAccounts = assets.filter((item) => {
-    if (!item.maturity_date) return false;
-    const days = getPromoDaysLeft(item.maturity_date);
-    return days !== null && days <= 14;
-  });
+  // Helper แปลงข้อความสถานะครบกำหนด หรือปลดล็อกภาษี
+  const formatMaturityOrLock = (item: CashPvdAsset) => {
+    const type = item.account_type?.toUpperCase() || '';
+    if (type === 'PVD') {
+      return (
+        <div>
+          <span className="text-xs text-slate-500 font-medium">สะสมต่อเนื่อง</span>
+          <div className="text-[11px] text-slate-500">เกษียณอายุการทำงาน</div>
+        </div>
+      );
+    }
+
+    if (type === 'SSF') {
+      const days = getDaysLeft(item.maturity_date);
+      const unlockYear = item.maturity_date ? new Date(item.maturity_date).getFullYear() : null;
+      return (
+        <div>
+          <div className="text-xs font-semibold text-purple-700">
+            {unlockYear ? `ครบเกณฑ์ปี ${unlockYear}` : 'ถือครอง 10 ปีปฏิทิน'}
+          </div>
+          <div className="text-[11px] text-slate-500">
+            {days !== null ? (days <= 0 ? 'ครบกำหนดแล้ว (ขายได้)' : `เหลืออีก ~${Math.ceil(days / 365)} ปี (${days} วัน)`) : 'ไม่ระบุวันเริ่ม'}
+          </div>
+        </div>
+      );
+    }
+
+    if (type === 'THAI_ESG') {
+      const days = getDaysLeft(item.maturity_date);
+      return (
+        <div>
+          <div className="text-xs font-semibold text-emerald-700">
+            {item.maturity_date ? `ปลดล็อก ${item.maturity_date}` : 'ถือครอง 5 ปีเต็ม'}
+          </div>
+          <div className="text-[11px] text-slate-500">
+            {days !== null ? (days <= 0 ? 'ครบกำหนดแล้ว (ขายได้)' : `เหลืออีก ${days} วัน`) : 'ไม่ระบุวันเริ่ม'}
+          </div>
+        </div>
+      );
+    }
+
+    if (['CORPORATE_BOND', 'GOV_BOND', 'BOND', 'FIXED_DEPOSIT'].includes(type)) {
+      if (!item.maturity_date) return <span className="text-xs text-slate-400">-</span>;
+      const days = getDaysLeft(item.maturity_date);
+      const isMatured = days !== null && days <= 0;
+      return (
+        <div>
+          <div className="text-xs font-semibold text-slate-800">
+            {item.maturity_date}
+          </div>
+          <span className={`inline-block text-[11px] px-1.5 py-0.2 rounded font-medium mt-0.5 ${
+            isMatured
+              ? 'bg-rose-100 text-rose-700'
+              : days !== null && days <= 60
+              ? 'bg-amber-100 text-amber-800 font-semibold'
+              : 'text-slate-500'
+          }`}>
+            {isMatured ? 'ครบกำหนดไถ่ถอนแล้ว' : `เหลืออีก ${days} วัน`}
+          </span>
+        </div>
+      );
+    }
+
+    if (type === 'OTHER' || type === 'NORMAL_FUND') {
+      return (
+        <div>
+          <span className="text-xs text-slate-700 font-semibold">ไม่จำกัดระยะเวลา</span>
+          <div className="text-[11px] text-slate-500">ไม่มีกำหนดถือครอง (No lock)</div>
+        </div>
+      );
+    }
+
+    // High Yield
+    const days = getDaysLeft(item.maturity_date);
+    if (days !== null) {
+      return (
+        <span className={`text-xs px-2 py-0.5 rounded font-semibold ${
+          days <= 0 ? 'bg-red-100 text-red-700' : days <= 14 ? 'bg-amber-100 text-amber-800' : 'bg-emerald-50 text-emerald-700'
+        }`}>
+          {days <= 0 ? 'หมดโปรโมชัน' : `เหลือ ${days} วัน`}
+        </span>
+      );
+    }
+
+    return <span className="text-xs text-slate-400">-</span>;
+  };
+
+  // Helper Badge ประเภทสินทรัพย์
+  const renderAssetBadge = (item: CashPvdAsset) => {
+    const type = item.account_type?.toUpperCase() || '';
+    if (type === 'CORPORATE_BOND') {
+      return (
+        <div className="inline-flex items-center gap-1.5 flex-wrap">
+          <span className="px-2 py-0.5 text-xs font-semibold rounded-md bg-blue-100 text-blue-800 border border-blue-200">
+            หุ้นกู้เอกชน
+          </span>
+          {item.notes && item.notes.trim() && (
+            <span className="px-1.5 py-0.5 text-[11px] font-mono font-medium rounded bg-slate-100 text-slate-700 border border-slate-200">
+              {item.notes}
+            </span>
+          )}
+        </div>
+      );
+    }
+    if (type === 'GOV_BOND') {
+      return (
+        <span className="px-2 py-0.5 text-xs font-semibold rounded-md bg-indigo-100 text-indigo-800 border border-indigo-200">
+          พันธบัตร
+        </span>
+      );
+    }
+    if (type === 'THAI_ESG' || type === 'THAIESG') {
+      return (
+        <div className="inline-flex items-center gap-1">
+          <span className="px-2 py-0.5 text-xs font-semibold rounded-md bg-emerald-100 text-emerald-800 border border-emerald-200">
+            Thai ESG
+          </span>
+          <span className="text-[10px] bg-emerald-50 text-emerald-700 px-1 py-0.2 rounded border border-emerald-200">
+            ลดหย่อนภาษี
+          </span>
+        </div>
+      );
+    }
+    if (type === 'SSF') {
+      return (
+        <div className="inline-flex items-center gap-1">
+          <span className="px-2 py-0.5 text-xs font-semibold rounded-md bg-purple-100 text-purple-800 border border-purple-200">
+            SSF (10 ปี)
+          </span>
+          <span className="text-[10px] bg-purple-50 text-purple-700 px-1 py-0.2 rounded border border-purple-200">
+            ลดหย่อนภาษี
+          </span>
+        </div>
+      );
+    }
+    if (type === 'RMF') {
+      return (
+        <div className="inline-flex items-center gap-1">
+          <span className="px-2 py-0.5 text-xs font-semibold rounded-md bg-teal-100 text-teal-800 border border-teal-200">
+            RMF
+          </span>
+          <span className="text-[10px] bg-teal-50 text-teal-700 px-1 py-0.2 rounded border border-teal-200">
+            ลดหย่อนภาษี
+          </span>
+        </div>
+      );
+    }
+    if (type === 'PVD') {
+      return (
+        <div className="inline-flex items-center gap-1">
+          <span className="px-2 py-0.5 text-xs font-semibold rounded-md bg-violet-100 text-violet-800 border border-violet-200">
+            PVD สำรองเลี้ยงชีพ
+          </span>
+          <span className="text-[10px] bg-violet-50 text-violet-700 px-1 py-0.2 rounded border border-violet-200">
+            ลดหย่อนภาษี
+          </span>
+        </div>
+      );
+    }
+    if (type === 'FIXED_DEPOSIT') {
+      return (
+        <span className="px-2 py-0.5 text-xs font-semibold rounded-md bg-amber-100 text-amber-800 border border-amber-200">
+          เงินฝากประจำ
+        </span>
+      );
+    }
+    if (type === 'HIGH_YIELD') {
+      return (
+        <span className="px-2 py-0.5 text-xs font-semibold rounded-md bg-sky-50 text-sky-800 border border-sky-200">
+          เงินฝากดอกเบี้ยสูง
+        </span>
+      );
+    }
+    return (
+      <div className="inline-flex items-center gap-1.5 flex-wrap">
+        <span className="px-2 py-0.5 text-xs font-semibold rounded-md bg-slate-100 text-slate-800 border border-slate-300">
+          สินทรัพย์อื่นๆ
+        </span>
+        {item.notes && item.notes.trim() && (
+          <span className="px-1.5 py-0.5 text-[11px] font-medium rounded bg-slate-50 text-slate-600 border border-slate-200">
+            {item.notes}
+          </span>
+        )}
+      </div>
+    );
+  };
 
   if (loading) {
-    return <div className="p-6 text-center text-gray-500 bg-white rounded-xl border">กำลังโหลดข้อมูลเงินฝากและ PVD...</div>;
+    return (
+      <div className="p-8 text-center text-slate-500 bg-white rounded-2xl border border-slate-200">
+        กำลังโหลดข้อมูลสินทรัพย์ระยะยาว & ผลตอบแทนคงที่...
+      </div>
+    );
   }
 
   return (
-    <div className="space-y-4">
-      {/* 1. Alerts Banner (แสดงเมื่อมีบัญชีหมดโปรหรือใกล้ครบกำหนด) */}
-      {expiringAccounts.length > 0 && (
-        <div className="bg-amber-50 border-l-4 border-amber-500 p-4 rounded-r-xl space-y-2">
-          <div className="flex items-center gap-2">
-            <span className="text-amber-600 font-bold text-base">⚠️ แจ้งเตือนโปรโมชันเงินฝาก:</span>
+    <div className="space-y-5">
+      {/* 1. Header Information Banner & Section Title */}
+      <div className="bg-white p-5 sm:p-6 rounded-2xl border border-slate-200/80 shadow-xs">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div>
+            <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-700 text-xs font-semibold mb-2 border border-indigo-200/80">
+              <Landmark className="w-3.5 h-3.5 text-indigo-600" />
+              <span>สินทรัพย์ระยะยาว & ผลตอบแทนคงที่ (Long-Term & Fixed Assets)</span>
+            </div>
+            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900">
+              พอร์ตหุ้นกู้, กองทุนลดหย่อนภาษี & เงินฝากระยะยาว
+            </h1>
+            <p className="text-xs sm:text-sm text-slate-500 mt-1 max-w-2xl leading-relaxed">
+              ติดตามสินทรัพย์ที่มีเงื่อนไขล็อกระยะเวลา หรือให้ผลตอบแทนดอกเบี้ยสม่ำเสมอ: หุ้นกู้ภาคเอกชน, พันธบัตร, กองทุน SSF / Thai ESG / RMF, PVD และเงินฝากประจำ
+            </p>
           </div>
-          <div className="space-y-1 text-sm text-amber-900">
-            {expiringAccounts.map((acc) => {
-              const days = getPromoDaysLeft(acc.maturity_date);
-              const isExpired = days !== null && days <= 0;
-              return (
-                <div key={acc.id} className="flex items-center justify-between">
-                  <span>
-                    <strong>{acc.account_name}</strong> ({acc.bank_name ?? 'ไม่ระบุธนาคาร'}):{' '}
-                    {isExpired
-                      ? 'โปรโมชันสิ้นสุดแล้ว! ดอกเบี้ยอาจปรับลงเป็นอัตราปกติ'
-                      : `จะหมดโปรโมชันในอีก ${days} วัน (ครบกำหนด ${acc.maturity_date})`}
-                  </span>
-                  <span className={`px-2 py-0.5 rounded text-xs font-semibold ${isExpired ? 'bg-red-100 text-red-700' : 'bg-amber-200 text-amber-900'}`}>
-                    {isExpired ? 'หมดโปรโมชัน' : `เหลือ ${days} วัน`}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
 
-      {/* 2. Top Summary Metrics Cards */}
-      <div className={`grid grid-cols-1 ${totalFixedDeposit > 0 ? 'sm:grid-cols-2 lg:grid-cols-4' : 'md:grid-cols-3'} gap-4`}>
-        <div className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm">
-          <div className="flex items-center justify-between">
-            <p className="text-xs text-gray-500 font-medium uppercase">เงินสดดอกเบี้ยสูง (High-Yield Cash)</p>
+          <div className="flex items-center gap-2 sm:self-center">
             <button
-              type="button"
-              onClick={toggleHideBalances}
-              title={hideBalances ? 'แสดงยอดเงิน' : 'ซ่อนยอดเงิน'}
-              className="text-gray-400 hover:text-blue-600 p-1 -mr-1 rounded-md hover:bg-blue-50 transition cursor-pointer"
-              aria-label={hideBalances ? 'แสดงยอดเงิน' : 'ซ่อนยอดเงิน'}
+              onClick={() => handleOpenCreateModal('CORPORATE_BOND')}
+              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-blue-600 rounded-xl hover:bg-blue-700 transition shadow-xs cursor-pointer whitespace-nowrap"
             >
-              {hideBalances ? <EyeOff className="h-4 w-4 text-blue-600" /> : <Eye className="h-4 w-4" />}
+              <span>+</span> เพิ่มสินทรัพย์ใหม่
             </button>
           </div>
-          <h3 className="text-2xl font-bold text-gray-900 mt-1">
-            {hideBalances ? (
-              <span className="tracking-widest font-mono text-gray-400 select-none">฿••••••••</span>
-            ) : (
-              `฿${totalLiquidCash.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-            )}
-          </h3>
-          <p className="text-xs text-gray-400 mt-1">เงินฝากสภาพคล่องสูงเพื่อผลตอบแทน</p>
-        </div>
-
-        {totalFixedDeposit > 0 && (
-          <div className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm">
-            <p className="text-xs text-gray-500 font-medium uppercase">เงินฝากประจำ (Fixed Deposit)</p>
-            <h3 className="text-2xl font-bold text-purple-600 mt-1">
-              {hideBalances ? (
-                <span className="tracking-widest font-mono text-purple-300 select-none">฿••••••••</span>
-              ) : (
-                `฿${totalFixedDeposit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-              )}
-            </h3>
-            <p className="text-xs text-gray-400 mt-1">เงินฝากประจำระยะยาวรอครบกำหนด</p>
-          </div>
-        )}
-
-        <div className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm">
-          <p className="text-xs text-gray-500 font-medium uppercase">กองทุนสำรองเลี้ยงชีพ (PVD)</p>
-          <h3 className="text-2xl font-bold text-blue-600 mt-1">
-            {hideBalances ? (
-              <span className="tracking-widest font-mono text-blue-300 select-none">฿••••••••</span>
-            ) : (
-              `฿${totalPvd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-            )}
-          </h3>
-          <p className="text-xs text-gray-400 mt-1">สะสมส่วนตัว + สมทบจากนายจ้าง</p>
-        </div>
-
-        <div className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm">
-          <p className="text-xs text-gray-500 font-medium uppercase">ดอกเบี้ยคาดการณ์รวมต่อปี (Est. Interest)</p>
-          <h3 className="text-2xl font-bold text-emerald-600 mt-1">
-            {hideBalances ? (
-              <span className="tracking-widest font-mono text-emerald-300 select-none">฿••••••••</span>
-            ) : (
-              `฿${estimatedAnnualInterest.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-            )}
-          </h3>
-          <p className="text-xs text-gray-400 mt-1">
-            {hideBalances
-              ? 'เฉลี่ยเดือนละ ~฿••••••'
-              : `เฉลี่ยเดือนละ ~฿${(estimatedAnnualInterest / 12).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-          </p>
         </div>
       </div>
 
-      {/* 3. Account List Table */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-        <div className="p-5 border-b border-gray-100 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 bg-gray-50/50">
+      {/* 2. Top Summary Metrics Cards (4-Pillar Grid) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+        {/* Card 1: หุ้นกู้ & พันธบัตร */}
+        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between">
           <div>
-            <h2 className="text-lg font-bold text-gray-800">เงินฝาก & กองทุนสำรองเลี้ยงชีพ (Cash & PVD)</h2>
-            <p className="text-xs text-gray-500 mt-0.5">จัดการบัญชีธนาคาร ดอกเบี้ยเงินฝาก และยอดสะสมกองทุน</p>
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-medium text-slate-500 uppercase flex items-center gap-1.5">
+                <Building2 className="w-3.5 h-3.5 text-blue-600" /> หุ้นกู้ & พันธบัตร (Bonds)
+              </p>
+              <button
+                type="button"
+                onClick={toggleHideBalances}
+                title={hideBalances ? 'แสดงยอดเงิน' : 'ซ่อนยอดเงิน'}
+                className="text-slate-500 hover:text-blue-600 p-1 -mr-1 rounded-md hover:bg-blue-50 transition cursor-pointer"
+              >
+                {hideBalances ? <EyeOff className="h-4 w-4 text-blue-600" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
+            <h3 className="text-2xl font-bold font-mono tabular-nums text-slate-900 mt-2">
+              {hideBalances ? (
+                <span className="tracking-widest font-mono text-slate-400 select-none">฿••••••••</span>
+              ) : (
+                `฿${totalBonds.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+              )}
+            </h3>
           </div>
-
-          <div className="flex items-center gap-2 flex-wrap">
-            <button
-              type="button"
-              onClick={toggleHideBalances}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 bg-white hover:bg-slate-100 rounded-lg border border-slate-200 transition shadow-xs cursor-pointer"
-              title={hideBalances ? 'แสดงยอดเงิน' : 'ซ่อนยอดเงิน'}
-            >
-              {hideBalances ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5 text-slate-500" />}
-              <span>{hideBalances ? 'แสดงยอดเงิน' : 'ซ่อนยอดเงิน'}</span>
-            </button>
-
-            <button
-              onClick={handleOpenCreateModal}
-              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition"
-            >
-              <span>+</span> เพิ่มบัญชีใหม่
-            </button>
+          <div className="mt-2 pt-2 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+            <span>{bondAssets.length} รายการ</span>
+            <span className="font-semibold text-blue-700">
+              {avgBondCouponRate > 0 ? `คูปองเฉลี่ย ${avgBondCouponRate.toFixed(2)}%` : '-'}
+            </span>
           </div>
         </div>
 
+        {/* Card 2: กองทุนลดหย่อนภาษี (SSF / Thai ESG / RMF) */}
+        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between">
+          <div>
+            <p className="text-xs font-medium text-slate-500 uppercase flex items-center gap-1.5">
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" /> กองทุนลดหย่อนภาษี (SSF/ESG)
+            </p>
+            <h3 className="text-2xl font-bold font-mono tabular-nums text-slate-900 mt-2">
+              {hideBalances ? (
+                <span className="tracking-widest font-mono text-slate-400 select-none">฿••••••••</span>
+              ) : (
+                `฿${totalTaxFunds.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+              )}
+            </h3>
+          </div>
+          <div className="mt-2 pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
+            <span className="text-slate-500">ต้นทุน: {hideBalances ? '••••' : `฿${totalTaxCostBasis.toLocaleString()}`}</span>
+            <span className={`font-semibold ${taxFundsPL >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+              {hideBalances ? '••••' : `${taxFundsPL >= 0 ? '+' : ''}฿${taxFundsPL.toLocaleString()} (${taxFundsYield.toFixed(1)}%)`}
+            </span>
+          </div>
+        </div>
+
+        {/* Card 3: กองทุนสำรองเลี้ยงชีพ (PVD), เงินฝากประจำ & สินทรัพย์อื่นๆ */}
+        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between">
+          <div>
+            <p className="text-xs font-medium text-slate-500 uppercase flex items-center gap-1.5">
+              <PiggyBank className="w-3.5 h-3.5 text-purple-600" /> PVD, ฝากประจำ & อื่นๆ
+            </p>
+            <h3 className="text-2xl font-bold font-mono tabular-nums text-slate-900 mt-2">
+              {hideBalances ? (
+                <span className="tracking-widest font-mono text-slate-400 select-none">฿••••••••</span>
+              ) : (
+                `฿${(totalPvd + totalFixedDeposit + totalOther).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+              )}
+            </h3>
+          </div>
+          <div className="mt-2 pt-2 border-t border-slate-100 text-[11px] text-slate-500 truncate">
+            {[
+              totalPvd > 0 ? `PVD ฿${totalPvd.toLocaleString()}` : null,
+              totalFixedDeposit > 0 ? `ฝากประจำ ฿${totalFixedDeposit.toLocaleString()}` : null,
+              totalOther > 0 ? `อื่นๆ ฿${totalOther.toLocaleString()}` : null,
+            ].filter(Boolean).join(' • ') || 'สินทรัพย์เพื่อการเกษียณและอื่นๆ'}
+          </div>
+        </div>
+
+        {/* Card 4: ผลตอบแทนกระแสเงินสดคาดการณ์/ปี (Est. Passive Cash Yield) */}
+        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between">
+          <div>
+            <p className="text-xs font-medium text-slate-500 uppercase flex items-center gap-1.5">
+              <Sparkles className="w-3.5 h-3.5 text-amber-500" /> ดอกเบี้ย & คูปองรับต่อปี (Est.)
+            </p>
+            <h3 className="text-2xl font-bold font-mono tabular-nums text-emerald-600 mt-2">
+              {hideBalances ? (
+                <span className="tracking-widest font-mono text-emerald-400 select-none">฿••••••••</span>
+              ) : (
+                `฿${totalAnnualPassiveIncome.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+              )}
+            </h3>
+          </div>
+          <div className="mt-2 pt-2 border-t border-slate-100 text-xs text-slate-500">
+            {hideBalances
+              ? 'เฉลี่ยเดือนละ ~฿••••••'
+              : `เฉลี่ยเดือนละ ~฿${(totalAnnualPassiveIncome / 12).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+          </div>
+        </div>
+      </div>
+
+      {/* 3. Category Filter Tabs & Search Bar */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-3 rounded-2xl border border-slate-200 shadow-xs">
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0 scrollbar-none">
+          <button
+            type="button"
+            onClick={() => setSelectedFilter('ALL')}
+            className={`px-3 py-1.5 text-xs font-semibold rounded-xl transition cursor-pointer whitespace-nowrap ${
+              selectedFilter === 'ALL'
+                ? 'bg-slate-900 text-white shadow-xs'
+                : 'text-slate-600 hover:bg-slate-100'
+            }`}
+          >
+            ทั้งหมด ({assets.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setSelectedFilter('BONDS')}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-xl transition cursor-pointer whitespace-nowrap ${
+              selectedFilter === 'BONDS'
+                ? 'bg-blue-600 text-white shadow-xs'
+                : 'text-slate-600 hover:bg-slate-100'
+            }`}
+          >
+            <Building2 className="w-3.5 h-3.5" />
+            <span>หุ้นกู้ & พันธบัตร ({bondAssets.length})</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setSelectedFilter('TAX_FUNDS')}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-xl transition cursor-pointer whitespace-nowrap ${
+              selectedFilter === 'TAX_FUNDS'
+                ? 'bg-emerald-600 text-white shadow-xs'
+                : 'text-slate-600 hover:bg-slate-100'
+            }`}
+          >
+            <ShieldCheck className="w-3.5 h-3.5" />
+            <span>กองทุนลดหย่อนภาษี ({taxFundAssets.length})</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setSelectedFilter('PVD')}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-xl transition cursor-pointer whitespace-nowrap ${
+              selectedFilter === 'PVD'
+                ? 'bg-purple-600 text-white shadow-xs'
+                : 'text-slate-600 hover:bg-slate-100'
+            }`}
+          >
+            <PiggyBank className="w-3.5 h-3.5" />
+            <span>กองทุนสำรองเลี้ยงชีพ PVD ({pvdAssets.length})</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setSelectedFilter('DEPOSITS')}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-xl transition cursor-pointer whitespace-nowrap ${
+              selectedFilter === 'DEPOSITS'
+                ? 'bg-amber-600 text-white shadow-xs'
+                : 'text-slate-600 hover:bg-slate-100'
+            }`}
+          >
+            <Landmark className="w-3.5 h-3.5" />
+            <span>เงินฝากประจำ ({depositAssets.length})</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setSelectedFilter('OTHER')}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-xl transition cursor-pointer whitespace-nowrap ${
+              selectedFilter === 'OTHER'
+                ? 'bg-slate-800 text-white shadow-xs'
+                : 'text-slate-600 hover:bg-slate-100'
+            }`}
+          >
+            <Layers className="w-3.5 h-3.5" />
+            <span>สินทรัพย์อื่นๆ ({otherAssets.length})</span>
+          </button>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <div className="relative w-full sm:w-60">
+            <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input
+              type="text"
+              placeholder="ค้นหาชื่อสินทรัพย์, บลจ..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-8 pr-3 py-1.5 text-xs border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none"
+            />
+          </div>
+
+          <button
+            type="button"
+            onClick={toggleHideBalances}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-700 bg-slate-50 hover:bg-slate-100 rounded-xl border border-slate-200 transition shadow-2xs cursor-pointer whitespace-nowrap"
+            title={hideBalances ? 'แสดงยอดเงิน' : 'ซ่อนยอดเงิน'}
+          >
+            {hideBalances ? <Eye className="w-3.5 h-3.5 text-slate-500" /> : <EyeOff className="w-3.5 h-3.5 text-slate-500" />}
+            <span className="hidden md:inline">{hideBalances ? 'แสดงยอดเงิน' : 'ซ่อนยอดเงิน'}</span>
+          </button>
+        </div>
+      </div>
+
+      {/* 4. Asset List Table */}
+      <div className="bg-white rounded-2xl shadow-xs border border-slate-200 overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse text-sm">
             <thead>
-              <tr className="border-b border-gray-100 bg-gray-50/80 text-gray-500 text-xs uppercase font-medium">
-                <th className="py-3 px-4">
+              <tr className="border-b border-slate-200 bg-slate-50/70 text-slate-500 text-xs uppercase font-semibold">
+                <th className="py-3.5 px-4">
                   <div className="inline-flex items-center gap-1.5">
-                    <span>ชื่อบัญชี / ธนาคาร</span>
+                    <span>ชื่อสินทรัพย์ / สถาบันผู้ออก</span>
                     <button
                       type="button"
                       onClick={toggleHideAllAccountNumbers}
-                      title={hideAllAccountNumbers ? 'แสดงเลขที่บัญชีทั้งหมด' : 'ซ่อนเลขที่บัญชีทั้งหมด'}
-                      className="p-1 rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition cursor-pointer"
-                      aria-label={hideAllAccountNumbers ? 'แสดงเลขที่บัญชีทั้งหมด' : 'ซ่อนเลขที่บัญชีทั้งหมด'}
+                      title={hideAllAccountNumbers ? 'แสดงเลขทะเบียน/เลขที่บัญชีทั้งหมด' : 'ซ่อนเลขทั้งหมด'}
+                      className="p-1 rounded text-slate-500 hover:text-blue-600 hover:bg-blue-50 transition cursor-pointer"
                     >
-                      {hideAllAccountNumbers ? (
-                        <EyeOff className="w-3.5 h-3.5 text-blue-600" />
-                      ) : (
-                        <Eye className="w-3.5 h-3.5" />
-                      )}
+                      {hideAllAccountNumbers ? <EyeOff className="w-3.5 h-3.5 text-blue-600" /> : <Eye className="w-3.5 h-3.5" />}
                     </button>
                   </div>
                 </th>
-                <th className="py-3 px-4">ประเภท</th>
-                <th className="py-3 px-4 text-center">อัตราดอกเบี้ย</th>
-                <th className="py-3 px-4 text-center">สถานะโปรโมชัน</th>
-                <th className="py-3 px-4 text-right">
+                <th className="py-3.5 px-4">ประเภทสินทรัพย์</th>
+                <th className="py-3.5 px-4 text-center">อัตราผลตอบแทน / คูปอง</th>
+                <th className="py-3.5 px-4 text-left">เงื่อนไขการถือครอง / ครบกำหนด</th>
+                <th className="py-3.5 px-4 text-right">
                   <div className="inline-flex items-center justify-end gap-1.5 w-full">
-                    <span>ยอดคงเหลือ (บาท)</span>
-                    <button
-                      type="button"
-                      onClick={toggleHideBalances}
-                      title={hideBalances ? 'แสดงยอดเงินทั้งหมด' : 'ซ่อนยอดเงินทั้งหมด'}
-                      className="p-1 rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition cursor-pointer"
-                      aria-label={hideBalances ? 'แสดงยอดเงินทั้งหมด' : 'ซ่อนยอดเงินทั้งหมด'}
-                    >
-                      {hideBalances ? (
-                        <EyeOff className="w-3.5 h-3.5 text-blue-600" />
-                      ) : (
-                        <Eye className="w-3.5 h-3.5" />
-                      )}
-                    </button>
+                    <span>มูลค่าปัจจุบัน / เงินต้น</span>
                   </div>
                 </th>
-                <th className="py-3 px-4 text-center">จัดการ</th>
+                <th className="py-3.5 px-4 text-center">จัดการ</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-100">
-              {assets.length === 0 ? (
+            <tbody className="divide-y divide-slate-100">
+              {filteredAssets.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="py-6 text-center text-gray-400">
-                    ยังไม่มีรายการบัญชีเงินฝาก กด "+ เพิ่มบัญชีใหม่" เพื่อเริ่มต้น
+                  <td colSpan={6} className="py-12 text-center text-slate-500">
+                    <p className="text-sm">ไม่พบรายการสินทรัพย์ในหมวดหมู่นี้</p>
+                    <button
+                      type="button"
+                      onClick={() => handleOpenCreateModal('CORPORATE_BOND')}
+                      className="mt-2 text-xs font-semibold text-blue-600 hover:underline"
+                    >
+                      + เพิ่มรายการใหม่
+                    </button>
                   </td>
                 </tr>
               ) : (
-                assets.map((item) => {
-                  const daysLeft = getPromoDaysLeft(item.maturity_date);
+                filteredAssets.map((item) => {
                   const isRowHidden =
                     individualToggles[item.id] !== undefined
                       ? individualToggles[item.id]
@@ -546,75 +1030,111 @@ export default function CashAndPvdSection({ onCashPvdUpdated }: CashAndPvdSectio
                       ? individualBalanceToggles[item.id]
                       : hideBalances;
 
+                  const type = item.account_type?.toUpperCase() || '';
+                  const isBond = ['CORPORATE_BOND', 'GOV_BOND', 'BOND'].includes(type);
+                  const isTaxFund = ['SSF', 'THAI_ESG', 'THAIESG', 'RMF'].includes(type);
+                  const isPvd = type === 'PVD';
+                  const isOther = type === 'OTHER' || type === 'NORMAL_FUND';
+
+                  const cost = Number(item.cost_basis) || 0;
+                  const current = Number(item.current_balance) || 0;
+                  const pl = current - cost;
+                  const plPercent = cost > 0 ? (pl / cost) * 100 : 0;
+
                   return (
-                    <tr key={item.id} className="hover:bg-blue-50/30 transition">
-                      <td className="py-3 px-4">
-                        <div className="font-semibold text-gray-800">{item.account_name}</div>
-                        <div className="text-xs text-gray-400 flex items-center gap-1 mt-0.5">
-                          <span>{item.bank_name ?? 'ไม่ระบุ'}</span>
+                    <tr key={item.id} className="hover:bg-slate-50/70 transition">
+                      {/* 1. ชื่อสินทรัพย์ / ผู้ออก */}
+                      <td className="py-3.5 px-4">
+                        <div className="font-semibold text-slate-900">{item.account_name}</div>
+                        <div className="text-xs text-slate-500 flex items-center gap-1.5 mt-0.5">
+                          <span>{item.bank_name ?? 'ไม่ระบุผู้ออก/บลจ.'}</span>
                           {item.account_number && (
-                            <span className="inline-flex items-center gap-1 font-mono">
+                            <span className="inline-flex items-center gap-1 font-mono text-[11px] text-slate-500">
                               <span>
                                 ({isRowHidden ? maskAccountNumber(item.account_number) : item.account_number})
                               </span>
                               <button
                                 type="button"
                                 onClick={() => toggleRowAccount(item.id)}
-                                title={isRowHidden ? 'แสดงเลขที่บัญชี' : 'ซ่อนเลขที่บัญชี'}
-                                className="p-0.5 text-gray-400 hover:text-blue-600 rounded transition cursor-pointer"
-                                aria-label={isRowHidden ? 'แสดงเลขที่บัญชี' : 'ซ่อนเลขที่บัญชี'}
+                                title={isRowHidden ? 'แสดงเลขที่' : 'ซ่อนเลขที่'}
+                                className="p-0.5 text-slate-500 hover:text-blue-600 rounded transition cursor-pointer"
                               >
-                                {isRowHidden ? (
-                                  <EyeOff className="w-3 h-3 text-blue-500" />
-                                ) : (
-                                  <Eye className="w-3 h-3" />
-                                )}
+                                {isRowHidden ? <EyeOff className="w-3 h-3 text-blue-500" /> : <Eye className="w-3 h-3" />}
                               </button>
                             </span>
                           )}
                         </div>
                       </td>
-                      <td className="py-3 px-4">
-                        <span className={`inline-block px-2 py-0.5 text-xs rounded font-medium ${
-                          item.account_type === 'PVD'
-                            ? 'bg-purple-100 text-purple-700'
-                            : item.account_type === 'HIGH_YIELD'
-                            ? 'bg-blue-100 text-blue-700'
-                            : item.account_type === 'FIXED_DEPOSIT'
-                            ? 'bg-amber-100 text-amber-700'
-                            : 'bg-gray-100 text-gray-600'
-                        }`}>
-                          {item.account_type}
-                        </span>
+
+                      {/* 2. ประเภทสินทรัพย์ & Badge */}
+                      <td className="py-3.5 px-4">
+                        {renderAssetBadge(item)}
                       </td>
-                      <td className="py-3 px-4 text-center">
-                        {item.account_type === 'PVD' ? (
-                          <span className="text-gray-400 text-xs">-</span>
+
+                      {/* 3. อัตราผลตอบแทน / คูปอง */}
+                      <td className="py-3.5 px-4 text-center">
+                        {isBond ? (
+                          <div>
+                            <span className="font-semibold text-blue-700">
+                              {item.interest_rate != null ? `${Number(item.interest_rate).toFixed(2)}% ต่อปี` : '-'}
+                            </span>
+                            {item.interest_payout_frequency && (
+                              <div className="text-[11px] text-slate-500">
+                                {item.interest_payout_frequency === 'QUARTERLY'
+                                  ? 'จ่ายทุก 3 เดือน'
+                                  : item.interest_payout_frequency === 'SEMI_ANNUAL'
+                                  ? 'จ่ายทุก 6 เดือน'
+                                  : item.interest_payout_frequency === 'MONTHLY'
+                                  ? 'จ่ายรายเดือน'
+                                  : 'จ่ายรายปี'}
+                              </div>
+                            )}
+                          </div>
+                        ) : isTaxFund ? (
+                          <div>
+                            {cost > 0 ? (
+                              <span className={`text-xs font-semibold ${pl >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                                {pl >= 0 ? '+' : ''}{plPercent.toFixed(2)}%
+                              </span>
+                            ) : (
+                              <span className="text-slate-500 text-xs">กองทุนลดหย่อนภาษี</span>
+                            )}
+                          </div>
+                        ) : isPvd ? (
+                          <span className="text-xs text-slate-500">สิทธิลดหย่อนภาษี</span>
+                        ) : isOther ? (
+                          <div>
+                            {Number(item.interest_rate) > 0 ? (
+                              <span className="font-semibold text-emerald-600">
+                                {Number(item.interest_rate).toFixed(2)}% ต่อปี
+                              </span>
+                            ) : cost > 0 && cost !== current ? (
+                              <span className={`text-xs font-semibold ${pl >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                                {pl >= 0 ? '+' : ''}{plPercent.toFixed(2)}%
+                              </span>
+                            ) : (
+                              <span className="text-slate-400 text-xs">-</span>
+                            )}
+                          </div>
                         ) : (
-                          <div className="font-medium text-emerald-600">
-                            {item.promo_interest_rate ? `${item.promo_interest_rate}% (โปร)` : `${item.interest_rate ?? 0}%`}
+                          <div>
+                            <span className="font-semibold text-emerald-600">
+                              {item.promo_interest_rate ? `${item.promo_interest_rate}% (โปร)` : `${item.interest_rate ?? 0}%`}
+                            </span>
                           </div>
                         )}
                       </td>
-                      <td className="py-3 px-4 text-center">
-                        {daysLeft !== null ? (
-                          <span className={`text-xs px-2 py-0.5 rounded font-semibold ${
-                            daysLeft <= 0
-                              ? 'bg-red-100 text-red-700'
-                              : daysLeft <= 14
-                              ? 'bg-amber-100 text-amber-800'
-                              : 'bg-green-100 text-green-700'
-                          }`}>
-                            {daysLeft <= 0 ? 'หมดโปรโมชัน' : `เหลือ ${daysLeft} วัน`}
-                          </span>
-                        ) : (
-                          <span className="text-gray-400 text-xs">-</span>
-                        )}
+
+                      {/* 4. เงื่อนไขการถือครอง / ครบกำหนด */}
+                      <td className="py-3.5 px-4">
+                        {formatMaturityOrLock(item)}
                       </td>
-                      <td className="py-3 px-4 text-right font-semibold text-gray-900">
+
+                      {/* 5. มูลค่าปัจจุบัน (และ P&L) */}
+                      <td className="py-3.5 px-4 text-right font-semibold font-mono tabular-nums text-slate-900">
                         <div className="inline-flex items-center justify-end gap-1.5">
                           {isRowBalanceHidden ? (
-                            <span className="tracking-widest font-mono text-gray-400 select-none">฿••••••••</span>
+                            <span className="tracking-widest font-mono text-slate-400 select-none">฿••••••••</span>
                           ) : (
                             <span>฿{Number(item.current_balance ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                           )}
@@ -622,42 +1142,52 @@ export default function CashAndPvdSection({ onCashPvdUpdated }: CashAndPvdSectio
                             type="button"
                             onClick={() => toggleRowBalance(item.id)}
                             title={isRowBalanceHidden ? 'แสดงยอดเงิน' : 'ซ่อนยอดเงิน'}
-                            className="p-0.5 text-gray-400 hover:text-blue-600 rounded transition cursor-pointer"
-                            aria-label={isRowBalanceHidden ? 'แสดงยอดเงิน' : 'ซ่อนยอดเงิน'}
+                            className="p-0.5 text-slate-500 hover:text-blue-600 rounded transition cursor-pointer"
                           >
-                            {isRowBalanceHidden ? (
-                              <EyeOff className="w-3 h-3 text-blue-500" />
-                            ) : (
-                              <Eye className="w-3 h-3" />
-                            )}
+                            {isRowBalanceHidden ? <EyeOff className="w-3 h-3 text-blue-500" /> : <Eye className="w-3 h-3" />}
                           </button>
                         </div>
-                        {item.account_type === 'PVD' && (
-                          <div className="text-[11px] text-gray-400 font-normal">
+
+                        {/* Breakdown แสดงกำไรขาดทุน หรือ เงินสะสม PVD */}
+                        {(isTaxFund || isOther) && cost > 0 && cost !== current && (
+                          <div className="text-[11px] font-normal text-slate-500 font-mono tabular-nums">
                             {isRowBalanceHidden ? (
-                              <span className="tracking-widest font-mono text-gray-400 select-none">(ตนเอง: ฿•••••• / นายจ้าง: ฿••••••)</span>
+                              <span>ทุน: ฿••••••</span>
                             ) : (
-                              <span>(ตนเอง: ฿{Number(item.pvd_employee_contrib ?? 0).toLocaleString()} / นายจ้าง: ฿{Number(item.pvd_employer_contrib ?? 0).toLocaleString()})</span>
+                              <span>
+                                ทุน: ฿{cost.toLocaleString()} ({pl >= 0 ? '+' : ''}฿{pl.toLocaleString()})
+                              </span>
+                            )}
+                          </div>
+                        )}
+
+                        {isPvd && (
+                          <div className="text-[11px] text-slate-500 font-normal font-mono tabular-nums">
+                            {isRowBalanceHidden ? (
+                              <span>ตนเอง: ฿•••• / นายจ้าง: ฿••••</span>
+                            ) : (
+                              <span>ตนเอง: ฿{Number(item.pvd_employee_contrib ?? 0).toLocaleString()} / นายจ้าง: ฿{Number(item.pvd_employer_contrib ?? 0).toLocaleString()}</span>
                             )}
                           </div>
                         )}
                       </td>
-                      {/* 2. คอลัมน์จัดการในตาราง (tbody) */}
-                      <td className="py-3 px-4 text-center">
+
+                      {/* 6. ปุ่มจัดการ */}
+                      <td className="py-3.5 px-4 text-center">
                         <div className="flex items-center justify-center gap-1">
                           <button
                             onClick={() => handleOpenEditModal(item)}
-                            className="p-1 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded transition text-xs"
-                            title="แก้ไขบัญชีนี้"
+                            className="p-1.5 min-w-[32px] min-h-[32px] flex items-center justify-center text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition text-xs cursor-pointer"
+                            title="แก้ไขรายการนี้"
                           >
-                            ✏️
+                            <Pencil className="w-3.5 h-3.5" />
                           </button>
                           <button
                             onClick={() => handleDelete(item.id, item.account_name)}
-                            className="p-1 text-red-400 hover:text-red-600 hover:bg-red-50 rounded transition text-xs"
-                            title="ลบบัญชีนี้"
+                            className="p-1.5 min-w-[32px] min-h-[32px] flex items-center justify-center text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition text-xs cursor-pointer"
+                            title="ลบรายการนี้"
                           >
-                            🗑️
+                            <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         </div>
                       </td>
@@ -670,107 +1200,297 @@ export default function CashAndPvdSection({ onCashPvdUpdated }: CashAndPvdSectio
         </div>
       </div>
 
-      {/* 4. Modal Form สำหรับเพิ่มบัญชี */}
+      {/* 5. Modal Form สำหรับเพิ่ม / แก้ไขสินทรัพย์ */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-center border-b pb-3">
-              <h3 className="text-lg font-bold text-gray-800">
-                {editingId ? 'แก้ไขข้อมูลบัญชี' : 'เพิ่มบัญชีเงินฝาก / กองทุน'}
-              </h3>
-              <button onClick={() => setIsModalOpen(false)} className="text-gray-400 hover:text-gray-600">✕</button>
+          <div className="bg-white rounded-2xl shadow-xl max-w-xl w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+              <div>
+                <h3 className="text-lg font-bold text-slate-900">
+                  {editingId ? 'แก้ไขข้อมูลสินทรัพย์' : 'เพิ่มสินทรัพย์ระยะยาว & ผลตอบแทนคงที่'}
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  บันทึกหุ้นกู้, พันธบัตร, กองทุนลดหย่อนภาษี (SSF/Thai ESG), PVD หรือเงินฝากประจำ
+                </p>
+              </div>
+              <button
+                onClick={() => setIsModalOpen(false)}
+                className="text-slate-500 hover:text-slate-700 p-1.5 rounded-lg hover:bg-slate-100 transition cursor-pointer"
+                title="ปิดหน้าต่าง"
+              >
+                <X className="w-5 h-5" />
+              </button>
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-4 text-sm">
               <div className="grid grid-cols-2 gap-3">
+                {/* ประเภทสินทรัพย์ */}
                 <div className="col-span-2">
-                  <label className="block text-xs font-semibold text-gray-600 mb-1">ชื่อเรียกบัญชี *</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="เช่น KKP Dime! / กรุงศรี มีแต่ได้ / PVD บริษัท"
-                    value={formData.account_name}
-                    onChange={(e) => setFormData({ ...formData, account_name: e.target.value })}
-                    className="w-full border rounded-lg p-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-gray-600 mb-1">ประเภทบัญชี *</label>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">ประเภทสินทรัพย์ *</label>
                   <select
                     value={formData.account_type}
-                    onChange={(e) => setFormData({ ...formData, account_type: e.target.value })}
-                    className="w-full border rounded-lg p-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                    onChange={(e) => handleAccountTypeChange(e.target.value)}
+                    className="w-full border border-slate-300 rounded-xl p-2.5 text-sm focus:ring-2 focus:ring-indigo-500 outline-none bg-slate-50/50"
                   >
-                    <option value="HIGH_YIELD">HIGH_YIELD (เงินฝากดอกเบี้ยสูง / บัญชีพักเงิน)</option>
-                    <option value="FIXED_DEPOSIT">FIXED_DEPOSIT (เงินฝากประจำ)</option>
-                    <option value="PVD">PVD (กองทุนสำรองเลี้ยงชีพ)</option>
+                    <optgroup label="ตราสารหนี้และพันธบัตร (Bonds)">
+                      <option value="CORPORATE_BOND">หุ้นกู้ภาคเอกชน (Corporate Bond)</option>
+                      <option value="GOV_BOND">พันธบัตรรัฐบาล / พันธบัตรออมทรัพย์ (Gov Bond)</option>
+                    </optgroup>
+                    <optgroup label="กองทุนลดหย่อนภาษี (Tax-Saving Funds)">
+                      <option value="THAI_ESG">Thai ESG (กองทุนรวมไทยเพื่อความยั่งยืน - ถือ 5 ปี)</option>
+                      <option value="SSF">SSF (กองทุนรวมเพื่อการออม - ถือ 10 ปีปฏิทิน)</option>
+                      <option value="RMF">RMF (กองทุนรวมเพื่อการเลี้ยงชีพ - อายุ 55 ปี)</option>
+                    </optgroup>
+                    <optgroup label="กองทุนสำรองเลี้ยงชีพ (Provident Fund)">
+                      <option value="PVD">PVD (กองทุนสำรองเลี้ยงชีพ)</option>
+                    </optgroup>
+                    <optgroup label="เงินฝากธนาคาร (Bank Deposits)">
+                      <option value="FIXED_DEPOSIT">เงินฝากประจำ (Fixed Deposit)</option>
+                      <option value="HIGH_YIELD">เงินฝากดอกเบี้ยสูง / บัญชีพักเงิน (High-Yield Cash)</option>
+                    </optgroup>
+                    <optgroup label="สินทรัพย์อื่นๆ (Other Assets)">
+                      <option value="OTHER">สินทรัพย์อื่นๆ (Other Asset - ไม่มีกำหนดถือครอง)</option>
+                    </optgroup>
                   </select>
                 </div>
 
-                <div>
-                  <label className="block text-xs font-semibold text-gray-600 mb-1">ชื่อธนาคาร / บลจ.</label>
+                {/* ชื่อเรียกสินทรัพย์ */}
+                <div className="col-span-2">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    {['CORPORATE_BOND', 'GOV_BOND'].includes(formData.account_type)
+                      ? 'ชื่อรุ่นหุ้นกู้ / ตราสาร *'
+                      : ['SSF', 'THAI_ESG', 'RMF'].includes(formData.account_type)
+                      ? 'ชื่อกองทุนรวม *'
+                      : formData.account_type === 'OTHER'
+                      ? 'ชื่อสินทรัพย์ *'
+                      : 'ชื่อเรียกบัญชี *'}
+                  </label>
                   <input
                     type="text"
-                    placeholder="เช่น SCB, KBank, KKP, TTB"
-                    value={formData.bank_name}
-                    onChange={(e) => setFormData({ ...formData, bank_name: e.target.value })}
-                    className="w-full border rounded-lg p-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                    required
+                    placeholder={
+                      ['CORPORATE_BOND', 'GOV_BOND'].includes(formData.account_type)
+                        ? 'เช่น CPALL275A / หุ้นกู้ทรูมูฟ เอช'
+                        : ['SSF', 'THAI_ESG', 'RMF'].includes(formData.account_type)
+                        ? 'เช่น K-PRO-ThaiESG / SCBAM SSF'
+                        : 'เช่น เงินฝากประจำ 12 เดือน KBank / PVD บริษัท'
+                    }
+                    value={formData.account_name}
+                    onChange={(e) => setFormData({ ...formData, account_name: e.target.value })}
+                    className="w-full border border-slate-300 rounded-xl p-2.5 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
                   />
                 </div>
 
-                <div className="col-span-2">
-                  <p className="text-[11px] text-slate-500 bg-slate-50 p-2.5 rounded-xl border border-slate-200/80">
-                    💡 <strong>คำแนะนำการแบ่งหมวดหมู่:</strong> หน้านี้สำหรับสินทรัพย์ล็อก/พักเงินเพื่อผลตอบแทน หากเป็นบัญชีออมทรัพย์ที่ใช้จ่ายในชีวิตประจำวัน/บัตรเครดิต ให้บันทึกในแท็บ <strong>&quot;รับ-จ่าย (Cash Flow)&quot;</strong> เพื่อติดตามกระแสเงินสด
-                  </p>
-                </div>
-
-                <div className="col-span-2">
-                  <label className="block text-xs font-semibold text-gray-600 mb-1">เลขที่บัญชี (ไม่บังคับ)</label>
+                {/* สถาบันผู้ออก / บลจ. */}
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    {['CORPORATE_BOND', 'GOV_BOND'].includes(formData.account_type)
+                      ? 'บริษัทผู้ออกตราสาร (Issuer)'
+                      : ['SSF', 'THAI_ESG', 'RMF'].includes(formData.account_type)
+                      ? 'บริษัทหลักทรัพย์จัดการกองทุน (บลจ.)'
+                      : 'ชื่อธนาคาร / องค์กร'}
+                  </label>
                   <input
                     type="text"
-                    placeholder="เช่น 123-4-56789-0"
+                    placeholder="เช่น CPALL, PTT, SCBAM, บลจ.กสิกรไทย"
+                    value={formData.bank_name}
+                    onChange={(e) => setFormData({ ...formData, bank_name: e.target.value })}
+                    className="w-full border border-slate-300 rounded-xl p-2.5 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                  />
+                </div>
+
+                {/* เลขทะเบียน / เลขที่บัญชี */}
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    {['CORPORATE_BOND', 'GOV_BOND'].includes(formData.account_type)
+                      ? 'เลขอ้างอิงนายทะเบียน / พอร์ต'
+                      : 'เลขที่บัญชี / เลขผู้ถือหน่วย'}
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="เช่น 123-456-7890 (ไม่บังคับ)"
                     value={formData.account_number}
                     onChange={(e) => setFormData({ ...formData, account_number: e.target.value })}
-                    className="w-full border rounded-lg p-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                    className="w-full border border-slate-300 rounded-xl p-2.5 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
                   />
                 </div>
               </div>
 
-              {/* แสดงฟิลด์เฉพาะ PVD */}
-              {formData.account_type === 'PVD' ? (
-                <div className="p-3 bg-purple-50 rounded-xl space-y-3 border border-purple-100">
-                  <p className="text-xs font-bold text-purple-800">ข้อมูลกองทุนสำรองเลี้ยงชีพ (PVD)</p>
+              {/* ฟิลด์เฉพาะ: หุ้นกู้ & พันธบัตร */}
+              {['CORPORATE_BOND', 'GOV_BOND'].includes(formData.account_type) && (
+                <div className="p-4 bg-blue-50/60 rounded-2xl space-y-3 border border-blue-100">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-blue-900">
+                    <Building2 className="w-4 h-4 text-blue-700" />
+                    <span>ข้อมูลหุ้นกู้และอัตราคูปอง</span>
+                  </div>
+
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-xs font-semibold text-gray-600 mb-1">เงินสะสมส่วนตัว (บาท)</label>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">มูลค่าหน้าตั๋ว / เงินต้น (บาท) *</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        required
+                        placeholder="เช่น 100000"
+                        value={formData.current_balance}
+                        onChange={(e) => setFormData({ ...formData, current_balance: e.target.value })}
+                        className="w-full border border-slate-300 rounded-xl p-2 text-sm bg-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">อัตราดอกเบี้ยคูปอง (% ต่อปี) *</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        required
+                        placeholder="เช่น 4.25"
+                        value={formData.interest_rate}
+                        onChange={(e) => setFormData({ ...formData, interest_rate: e.target.value })}
+                        className="w-full border border-slate-300 rounded-xl p-2 text-sm bg-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">รอบการจ่ายคูปอง</label>
+                      <select
+                        value={formData.interest_payout_frequency}
+                        onChange={(e) => setFormData({ ...formData, interest_payout_frequency: e.target.value })}
+                        className="w-full border border-slate-300 rounded-xl p-2 text-xs bg-white"
+                      >
+                        <option value="SEMI_ANNUAL">จ่ายทุก 6 เดือน (ปีละ 2 ครั้ง)</option>
+                        <option value="QUARTERLY">จ่ายทุก 3 เดือน (ปีละ 4 ครั้ง)</option>
+                        <option value="ANNUAL">จ่ายรายปี (ปีละ 1 ครั้ง)</option>
+                        <option value="MONTHLY">จ่ายรายเดือน</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">วันครบกำหนดไถ่ถอน (Maturity)</label>
+                      <input
+                        type="date"
+                        value={formData.maturity_date}
+                        onChange={(e) => setFormData({ ...formData, maturity_date: e.target.value })}
+                        className="w-full border border-slate-300 rounded-xl p-2 text-xs bg-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">วันจ่ายคูปองงวดถัดไป</label>
+                      <input
+                        type="date"
+                        value={formData.next_interest_payout_date}
+                        onChange={(e) => setFormData({ ...formData, next_interest_payout_date: e.target.value })}
+                        className="w-full border border-slate-300 rounded-xl p-2 text-xs bg-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">อันดับความน่าเชื่อถือ (Credit Rating)</label>
+                      <input
+                        type="text"
+                        placeholder="เช่น TRIS: A+ หรือ BBB+"
+                        value={formData.notes}
+                        onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                        className="w-full border border-slate-300 rounded-xl p-2 text-xs bg-white"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* ฟิลด์เฉพาะ: กองทุนลดหย่อนภาษี (SSF, Thai ESG, RMF) */}
+              {['SSF', 'THAI_ESG', 'RMF'].includes(formData.account_type) && (
+                <div className="p-4 bg-emerald-50/60 rounded-2xl space-y-3 border border-emerald-100">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-900">
+                    <ShieldCheck className="w-4 h-4 text-emerald-700" />
+                    <span>ข้อมูลกองทุนลดหย่อนภาษี & ระยะเวลาถือครอง</span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">มูลค่าประเมินปัจจุบัน (บาท) *</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        required
+                        placeholder="0.00"
+                        value={formData.current_balance}
+                        onChange={(e) => setFormData({ ...formData, current_balance: e.target.value })}
+                        className="w-full border border-slate-300 rounded-xl p-2 text-sm bg-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">เงินต้นที่ซื้อ (Cost Basis บาท)</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        placeholder="เช่น 100000"
+                        value={formData.cost_basis}
+                        onChange={(e) => setFormData({ ...formData, cost_basis: e.target.value })}
+                        className="w-full border border-slate-300 rounded-xl p-2 text-sm bg-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">วันที่เริ่มซื้อ / ปีภาษีที่ซื้อ</label>
+                      <input
+                        type="date"
+                        value={formData.deposit_start_date}
+                        onChange={(e) => handleTaxStartDateChange(e.target.value)}
+                        className="w-full border border-slate-300 rounded-xl p-2 text-xs bg-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">วันที่ครบกำหนดขายได้ตามกฎหมาย</label>
+                      <input
+                        type="date"
+                        value={formData.maturity_date}
+                        onChange={(e) => setFormData({ ...formData, maturity_date: e.target.value })}
+                        className="w-full border border-slate-300 rounded-xl p-2 text-xs bg-white"
+                      />
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-emerald-800 flex items-center gap-1.5">
+                    <Info className="w-3.5 h-3.5 shrink-0 text-emerald-700" />
+                    <span><strong>เงื่อนไขภาษี:</strong> Thai ESG ต้องถือ 5 ปีวันชนวัน • SSF ต้องถือ 10 ปีปฏิทิน • RMF ถือจนถึงอายุ 55 ปีบริบูรณ์และไม่น้อยกว่า 5 ปี</span>
+                  </p>
+                </div>
+              )}
+
+              {/* ฟิลด์เฉพาะ: PVD */}
+              {formData.account_type === 'PVD' && (
+                <div className="p-4 bg-purple-50/60 rounded-2xl space-y-3 border border-purple-100">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-purple-900">
+                    <PiggyBank className="w-4 h-4 text-purple-700" />
+                    <span>ข้อมูลกองทุนสำรองเลี้ยงชีพ (PVD)</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">เงินสะสมส่วนตัว (บาท)</label>
                       <input
                         type="number"
                         step="0.01"
                         placeholder="0.00"
                         value={formData.pvd_employee_contrib}
                         onChange={(e) => setFormData({ ...formData, pvd_employee_contrib: e.target.value })}
-                        className="w-full border rounded-lg p-2 text-sm bg-white"
+                        className="w-full border border-slate-300 rounded-xl p-2 text-sm bg-white"
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-semibold text-gray-600 mb-1">เงินสมทบนายจ้าง (บาท)</label>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">เงินสมทบนายจ้าง (บาท)</label>
                       <input
                         type="number"
                         step="0.01"
                         placeholder="0.00"
                         value={formData.pvd_employer_contrib}
                         onChange={(e) => setFormData({ ...formData, pvd_employer_contrib: e.target.value })}
-                        className="w-full border rounded-lg p-2 text-sm bg-white"
+                        className="w-full border border-slate-300 rounded-xl p-2 text-sm bg-white"
                       />
                     </div>
                   </div>
                 </div>
-              ) : (
-                /* บัญชีเงินฝากปกติ */
+              )}
+
+              {/* ฟิลด์เฉพาะ: เงินฝากประจำ และ เงินฝากดอกเบี้ยสูง */}
+              {['FIXED_DEPOSIT', 'HIGH_YIELD'].includes(formData.account_type) && (
                 <div className="space-y-3">
                   <div>
-                    <label className="block text-xs font-semibold text-gray-600 mb-1">ยอดเงินฝากปัจจุบัน (บาท) *</label>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">ยอดเงินฝากปัจจุบัน (บาท) *</label>
                     <input
                       type="number"
                       step="0.01"
@@ -778,87 +1498,147 @@ export default function CashAndPvdSection({ onCashPvdUpdated }: CashAndPvdSectio
                       placeholder="0.00"
                       value={formData.current_balance}
                       onChange={(e) => setFormData({ ...formData, current_balance: e.target.value })}
-                      className="w-full border rounded-lg p-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                      className="w-full border border-slate-300 rounded-xl p-2.5 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
                     />
                   </div>
 
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-xs font-semibold text-gray-600 mb-1">อัตราดอกเบี้ยปกติ (% ต่อปี)</label>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">อัตราดอกเบี้ยปกติ (% ต่อปี)</label>
                       <input
                         type="number"
                         step="0.01"
                         placeholder="1.50"
                         value={formData.interest_rate}
                         onChange={(e) => setFormData({ ...formData, interest_rate: e.target.value })}
-                        className="w-full border rounded-lg p-2 text-sm"
+                        className="w-full border border-slate-300 rounded-xl p-2 text-sm"
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-semibold text-gray-600 mb-1">ดอกเบี้ยโปรโมชัน (% ต่อปี)</label>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">ดอกเบี้ยโปรโมชัน (% ต่อปี)</label>
                       <input
                         type="number"
                         step="0.01"
                         placeholder="เช่น 2.50"
                         value={formData.promo_interest_rate}
                         onChange={(e) => setFormData({ ...formData, promo_interest_rate: e.target.value })}
-                        className="w-full border rounded-lg p-2 text-sm"
+                        className="w-full border border-slate-300 rounded-xl p-2 text-sm"
                       />
                     </div>
                   </div>
 
-                  {/* ส่วนโปรโมชัน 90 วัน */}
-                  <div className="p-3 bg-amber-50 rounded-xl space-y-3 border border-amber-100">
-                    <p className="text-xs font-bold text-amber-800">ตั้งค่าโปรโมชันดอกเบี้ยพิเศษ / ฝากประจำ</p>
+                  {/* โปรโมชัน / เงินฝากประจำ */}
+                  <div className="p-3 bg-amber-50/70 rounded-xl space-y-3 border border-amber-100">
+                    <p className="text-xs font-bold text-amber-900">ระยะเวลาโปรโมชัน / เงินฝากประจำ</p>
                     <div className="grid grid-cols-2 gap-3">
                       <div>
-                        <label className="block text-xs font-semibold text-gray-600 mb-1">วันที่เริ่มฝาก</label>
+                        <label className="block text-xs font-semibold text-slate-700 mb-1">วันที่เริ่มฝาก</label>
                         <input
                           type="date"
                           value={formData.deposit_start_date}
                           onChange={(e) => handlePromoDateChange(e.target.value, formData.promo_duration_days)}
-                          className="w-full border rounded-lg p-2 text-xs bg-white"
+                          className="w-full border border-slate-300 rounded-xl p-2 text-xs bg-white"
                         />
                       </div>
                       <div>
-                        <label className="block text-xs font-semibold text-gray-600 mb-1">ระยะเวลาโปรโมชัน (วัน)</label>
+                        <label className="block text-xs font-semibold text-slate-700 mb-1">ระยะเวลาโปรโมชัน (วัน)</label>
                         <input
                           type="number"
-                          placeholder="เช่น 90"
+                          placeholder="เช่น 90 หรือ 365"
                           value={formData.promo_duration_days}
                           onChange={(e) => handlePromoDateChange(formData.deposit_start_date, e.target.value)}
-                          className="w-full border rounded-lg p-2 text-xs bg-white"
+                          className="w-full border border-slate-300 rounded-xl p-2 text-xs bg-white"
                         />
                       </div>
                     </div>
                     <div>
-                      <label className="block text-xs font-semibold text-gray-600 mb-1">วันครบกำหนด (Maturity Date)</label>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">วันครบกำหนด (Maturity Date)</label>
                       <input
                         type="date"
                         value={formData.maturity_date}
                         onChange={(e) => setFormData({ ...formData, maturity_date: e.target.value })}
-                        className="w-full border rounded-lg p-2 text-xs bg-white"
+                        className="w-full border border-slate-300 rounded-xl p-2 text-xs bg-white"
                       />
                     </div>
                   </div>
                 </div>
               )}
 
-              <div className="flex justify-end gap-2 pt-3 border-t">
+              {/* ฟิลด์เฉพาะ: สินทรัพย์อื่นๆ (ไม่จำกัดเวลาถือครอง) */}
+              {formData.account_type === 'OTHER' && (
+                <div className="p-4 bg-slate-50/80 rounded-2xl space-y-3 border border-slate-200">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800">
+                    <Landmark className="w-4 h-4 text-slate-700" />
+                    <span>ข้อมูลสินทรัพย์อื่นๆ (ไม่จำกัดเวลาถือครอง / No Lock)</span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">มูลค่าประเมินปัจจุบัน (บาท) *</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        required
+                        placeholder="0.00"
+                        value={formData.current_balance}
+                        onChange={(e) => setFormData({ ...formData, current_balance: e.target.value })}
+                        className="w-full border border-slate-300 rounded-xl p-2 text-sm bg-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">ต้นทุนเงินลงทุนเริ่มต้น (Cost Basis บาท)</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        placeholder="0.00 (ไม่บังคับ)"
+                        value={formData.cost_basis}
+                        onChange={(e) => setFormData({ ...formData, cost_basis: e.target.value })}
+                        className="w-full border border-slate-300 rounded-xl p-2 text-sm bg-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">ผลตอบแทนคาดการณ์ / ปันผล (% ต่อปี)</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        placeholder="เช่น 3.00 (ไม่บังคับ)"
+                        value={formData.interest_rate}
+                        onChange={(e) => setFormData({ ...formData, interest_rate: e.target.value })}
+                        className="w-full border border-slate-300 rounded-xl p-2 text-xs bg-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">บันทึกเพิ่มเติม / หมวดหมู่</label>
+                      <input
+                        type="text"
+                        placeholder="เช่น หุ้นสหกรณ์, ทองคำแท่ง, ของสะสม, ที่ดิน"
+                        value={formData.notes}
+                        onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                        className="w-full border border-slate-300 rounded-xl p-2 text-xs bg-white"
+                      />
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-slate-500 flex items-center gap-1.5">
+                    <Info className="w-3.5 h-3.5 shrink-0 text-slate-500" />
+                    <span><strong>ไม่มีกำหนดระยะเวลาถือครอง:</strong> สินทรัพย์กลุ่มนี้ไม่มีกำหนดอายุหรือระยะเวลาล็อก (No holding period) สามารถถือครองเพื่อการลงทุนระยะยาวและประเมินมูลค่าได้ตามต้องการ</span>
+                  </p>
+                </div>
+              )}
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
                 <button
                   type="button"
                   onClick={() => setIsModalOpen(false)}
-                  className="px-4 py-2 border rounded-lg text-xs font-medium text-gray-600 hover:bg-gray-50"
+                  className="px-4 py-2 border border-slate-200 rounded-xl text-xs font-medium text-slate-600 hover:bg-slate-50 transition"
                 >
                   ยกเลิก
                 </button>
-                {/* ...ปุ่ม Submit ด้านล่างสุด... */}
                 <button
                   type="submit"
                   disabled={isSubmitting}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg text-xs font-medium hover:bg-blue-700 disabled:opacity-50"
+                  className="px-5 py-2 bg-indigo-600 text-white rounded-xl text-xs font-semibold hover:bg-indigo-700 disabled:opacity-50 transition shadow-xs cursor-pointer"
                 >
-                  {isSubmitting ? 'กำลังบันทึก...' : editingId ? 'บันทึกการแก้ไข' : 'เพิ่มบัญชี'}
+                  {isSubmitting ? 'กำลังบันทึก...' : editingId ? 'บันทึกการแก้ไข' : 'เพิ่มสินทรัพย์'}
                 </button>
               </div>
             </form>

@@ -221,11 +221,18 @@ export default function OverviewSection({
     }
 
     // High-level: All Assets breakdown
+    const bondsVal = summary.totalBonds ?? 0;
+    const taxFundsVal = summary.totalTaxSavingFunds ?? 0;
+    const otherVal = summary.totalOtherAssets ?? 0;
+
     const totalAssets =
       summary.totalLiquidCash +
       summary.totalHoldingsValueTHB +
       summary.totalFixedDeposit +
-      summary.totalPVD;
+      summary.totalPVD +
+      bondsVal +
+      taxFundsVal +
+      otherVal;
 
     const items = [
       {
@@ -251,6 +258,28 @@ export default function OverviewSection({
         targetTab: 'holdings' as const,
       },
       {
+        id: 'bonds',
+        name: 'หุ้นกู้ & พันธบัตร (Bonds)',
+        value: bondsVal,
+        color: '#0284c7', // sky-600
+        bgColor: 'bg-sky-600',
+        textColor: 'text-sky-600',
+        count: cashPvd.filter((c) => ['CORPORATE_BOND', 'GOV_BOND', 'BOND'].includes((c.account_type || '').toUpperCase())).length,
+        description: 'หุ้นกู้ภาคเอกชนและพันธบัตรรัฐบาล',
+        targetTab: 'cash_pvd' as const,
+      },
+      {
+        id: 'tax_saving_funds',
+        name: 'กองทุนลดหย่อนภาษี (SSF / Thai ESG)',
+        value: taxFundsVal,
+        color: '#059669', // emerald-600
+        bgColor: 'bg-emerald-600',
+        textColor: 'text-emerald-600',
+        count: cashPvd.filter((c) => ['SSF', 'THAI_ESG', 'THAIESG', 'RMF'].includes((c.account_type || '').toUpperCase())).length,
+        description: 'กองทุน SSF, Thai ESG, RMF ล็อกระยะยาว',
+        targetTab: 'cash_pvd' as const,
+      },
+      {
         id: 'fixed_deposit',
         name: 'เงินฝากประจำ (Fixed Deposits)',
         value: summary.totalFixedDeposit,
@@ -270,6 +299,17 @@ export default function OverviewSection({
         textColor: 'text-emerald-600',
         count: cashPvd.filter((c) => (c.account_type || '').toUpperCase() === 'PVD').length,
         description: 'สินทรัพย์เพื่อการเกษียณอายุ',
+        targetTab: 'cash_pvd' as const,
+      },
+      {
+        id: 'other_assets',
+        name: 'สินทรัพย์อื่นๆ (Other Assets)',
+        value: otherVal,
+        color: '#64748b', // slate-500
+        bgColor: 'bg-slate-500',
+        textColor: 'text-slate-600',
+        count: cashPvd.filter((c) => (c.account_type || '').toUpperCase() === 'OTHER').length,
+        description: 'สินทรัพย์ระยะยาวอื่นๆ ไม่จำกัดเวลาถือครอง',
         targetTab: 'cash_pvd' as const,
       },
     ]
@@ -412,7 +452,7 @@ export default function OverviewSection({
         <span className="inline-flex items-center gap-1.5">
           <span>{`${day}/${m}/${y}`}</span>
           {hasTime && (
-            <span className="inline-flex items-center gap-0.5 text-slate-400 font-mono text-[11px]">
+            <span className="inline-flex items-center gap-0.5 text-slate-500 font-mono text-[11px]">
               <Clock className="w-2.5 h-2.5" />
               <span>{`${hh}:${mm} น.`}</span>
             </span>
@@ -445,7 +485,7 @@ export default function OverviewSection({
                     สัดส่วนสินทรัพย์ & พอร์ตลงทุน
                   </h2>
                 </div>
-                <p className="text-xs text-slate-400 mt-0.5">
+                <p className="text-xs text-slate-500 mt-0.5">
                   Asset Allocation Breakdown & Portfolio Ratio
                 </p>
               </div>
@@ -511,7 +551,7 @@ export default function OverviewSection({
             {/* Total Assets / Portfolio Heading Value */}
             <div className="py-4 flex items-center justify-between">
               <div>
-                <span className="text-xs font-medium text-slate-400">
+                <span className="text-xs font-medium text-slate-500">
                   {assetAllocationData.label}
                 </span>
                 <p className="text-2xl font-bold text-slate-900 tracking-tight">
@@ -533,7 +573,7 @@ export default function OverviewSection({
 
             {/* Chart Area */}
             {assetAllocationData.items.length === 0 ? (
-              <div className="py-12 text-center text-slate-400 text-sm">
+              <div className="py-12 text-center text-slate-500 text-sm">
                 ยังไม่มีข้อมูลสินทรัพย์ในหมวดหมู่นี้
               </div>
             ) : chartMode === 'donut' ? (
@@ -572,7 +612,7 @@ export default function OverviewSection({
                             strokeWidth={isHovered ? 20 : 16}
                             strokeDasharray={`${dashLength} ${donutCircumference}`}
                             strokeDashoffset={-strokeOffset}
-                            className="transition-all duration-300 cursor-pointer"
+                            className="transition-[stroke-width,opacity] duration-200 ease-out cursor-pointer"
                             onMouseEnter={() => setHoveredIdx(idx)}
                             onMouseLeave={() => setHoveredIdx(null)}
                           />
@@ -585,7 +625,7 @@ export default function OverviewSection({
                   <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-2 pointer-events-none">
                     {hoveredIdx !== null && assetAllocationData.items[hoveredIdx] ? (
                       <div className="animate-in fade-in duration-200">
-                        <span className="text-[10px] font-semibold text-slate-400 block truncate max-w-[100px]">
+                        <span className="text-[10px] font-semibold text-slate-500 block truncate max-w-[100px]">
                           {assetAllocationData.items[hoveredIdx].name.split('(')[0]}
                         </span>
                         <span className="text-base font-extrabold text-slate-900 block leading-tight">
@@ -597,7 +637,7 @@ export default function OverviewSection({
                       </div>
                     ) : (
                       <div>
-                        <span className="text-[10px] font-medium text-slate-400 block uppercase tracking-wider">
+                        <span className="text-[10px] font-semibold text-slate-500 block uppercase tracking-wider">
                           สัดส่วน
                         </span>
                         <span className="text-sm font-bold text-slate-800 block">
@@ -687,7 +727,7 @@ export default function OverviewSection({
                         />
                         <span className="text-slate-800 truncate">{item.name}</span>
                         {item.count > 0 && (
-                          <span className="text-[10px] text-slate-400 bg-slate-100 px-1.5 py-0.2 rounded-full">
+                          <span className="text-[10px] text-slate-500 bg-slate-100 px-1.5 py-0.2 rounded-full font-medium">
                             {item.count} รายการ
                           </span>
                         )}
@@ -709,7 +749,7 @@ export default function OverviewSection({
 
           {/* Left Column Footer */}
           <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
-            <span className="text-slate-400 text-[11px]">
+            <span className="text-slate-500 text-[11px]">
               {allocationScope === 'portfolio' ? 'สัดส่วนสินทรัพย์เสี่ยงเพื่อสร้างผลตอบแทน' : 'สัดส่วนสินทรัพย์ตามแผนความมั่งคั่งสุทธิ'}
             </span>
             <button
@@ -738,7 +778,7 @@ export default function OverviewSection({
                   <h2 className="text-base font-bold text-slate-800 tracking-tight">
                     สรุปรายรับ - รายจ่ายประจำเดือน
                   </h2>
-                  <p className="text-xs text-slate-400">
+                  <p className="text-xs text-slate-500">
                     Monthly Spending & Cash Flow Summary
                   </p>
                 </div>
@@ -799,7 +839,7 @@ export default function OverviewSection({
                   </span>
                 </div>
                 <div className="mt-2">
-                  <p className="text-lg sm:text-xl font-bold text-emerald-800 tracking-tight leading-tight">
+                  <p className="text-lg sm:text-xl font-bold font-mono tabular-nums text-emerald-800 tracking-tight leading-tight">
                     {formatMoney(monthlyMetrics.income, '+฿')}
                   </p>
                 </div>
@@ -817,7 +857,7 @@ export default function OverviewSection({
                   </span>
                 </div>
                 <div className="mt-2">
-                  <p className="text-lg sm:text-xl font-bold text-rose-800 tracking-tight leading-tight">
+                  <p className="text-lg sm:text-xl font-bold font-mono tabular-nums text-rose-800 tracking-tight leading-tight">
                     {formatMoney(monthlyMetrics.expense, '-฿')}
                   </p>
                 </div>
@@ -852,7 +892,7 @@ export default function OverviewSection({
                 </div>
                 <div className="mt-2">
                   <p
-                    className={`text-lg sm:text-xl font-bold tracking-tight leading-tight ${
+                    className={`text-lg sm:text-xl font-bold font-mono tabular-nums tracking-tight leading-tight ${
                       monthlyMetrics.remain >= 0 ? 'text-blue-900' : 'text-amber-900'
                     }`}
                   >
@@ -906,7 +946,7 @@ export default function OverviewSection({
                   <span>ใช้จ่าย {monthlyMetrics.spentRate.toFixed(1)}%</span>
                 </span>
                 {monthlyMetrics.avgDailyExpense > 0 && (
-                  <span className="text-slate-400">
+                  <span className="text-slate-500">
                     เฉลี่ย ฿{Math.round(monthlyMetrics.avgDailyExpense).toLocaleString()}/วัน
                   </span>
                 )}
@@ -919,12 +959,12 @@ export default function OverviewSection({
 
             {/* Top 3 Spending Categories Mini List */}
             <div className="pt-3">
-              <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block mb-2">
+              <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block mb-2">
                 หมวดหมู่รายจ่ายสูงสุด 3 อันดับแรก
               </span>
 
               {monthlyMetrics.topCategories.length === 0 ? (
-                <p className="text-xs text-slate-400 text-center py-2 bg-slate-50/50 rounded-lg">
+                <p className="text-xs text-slate-500 text-center py-2 bg-slate-50/50 rounded-lg">
                   ยังไม่มีการบันทึกรายจ่ายในเดือนนี้
                 </p>
               ) : (
@@ -939,7 +979,7 @@ export default function OverviewSection({
                           <span className="font-semibold text-slate-900">
                             {formatMoney(item.amount)}
                           </span>
-                          <span className="text-[11px] text-slate-400 font-mono">
+                          <span className="text-[11px] text-slate-500 font-mono">
                             ({item.percent.toFixed(0)}%)
                           </span>
                         </div>
@@ -965,7 +1005,7 @@ export default function OverviewSection({
 
           {/* Right Column Footer */}
           <div className="pt-3 mt-3 border-t border-slate-100 flex items-center justify-between text-xs">
-            <span className="text-slate-400 text-[11px]">
+            <span className="text-slate-500 text-[11px]">
               {monthlyMetrics.transfer > 0
                 ? `(มีการโอน/ชำระบัตร ฿${monthlyMetrics.transfer.toLocaleString()})`
                 : 'บันทึกรายรับ-รายจ่ายเพื่อติดตามกระแสเงินสด'}
@@ -992,7 +1032,7 @@ export default function OverviewSection({
             <h2 className="text-base font-bold text-slate-800 tracking-tight">
               รายการบันทึกล่าสุด
             </h2>
-            <p className="text-xs text-slate-400">
+            <p className="text-xs text-slate-500">
               ธุรกรรมรับ-จ่าย และโอนเงินล่าสุดในระบบ
             </p>
           </div>
@@ -1008,7 +1048,7 @@ export default function OverviewSection({
 
         <div className="divide-y divide-slate-100">
           {recentTransactions.length === 0 ? (
-            <p className="text-sm text-slate-400 py-6 text-center">
+            <p className="text-sm text-slate-500 py-6 text-center">
               ยังไม่มีรายการบันทึก
             </p>
           ) : (
@@ -1038,14 +1078,14 @@ export default function OverviewSection({
                         </span>
                       )}
                     </div>
-                    <div className="text-xs text-slate-400 mt-0.5 flex items-center flex-wrap gap-x-1.5">
+                    <div className="text-xs text-slate-500 mt-0.5 flex items-center flex-wrap gap-x-1.5">
                       {formatRecentTxDateTime(tx.transaction_date)}
                       {tx.note && <span className="truncate max-w-[250px]">• {tx.note}</span>}
                     </div>
                   </div>
 
                   <span
-                    className={`font-bold text-sm shrink-0 ${
+                    className={`font-bold font-mono tabular-nums text-sm shrink-0 ${
                       isTransfer
                         ? 'text-indigo-600'
                         : isIncome

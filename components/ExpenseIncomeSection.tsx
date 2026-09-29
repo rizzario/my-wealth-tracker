@@ -194,7 +194,7 @@ function CategoryCombobox({
           type="button"
           tabIndex={-1}
           onClick={() => setIsOpen(!isOpen)}
-          className="p-2 text-slate-400 hover:text-slate-600 transition cursor-pointer"
+          className="p-2 text-slate-500 hover:text-slate-700 transition cursor-pointer"
           title="เลือกหมวดหมู่ยอดนิยม"
         >
           <ChevronDown
@@ -208,7 +208,7 @@ function CategoryCombobox({
       {isOpen && (
         <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-lg z-50 max-h-56 overflow-y-auto divide-y divide-slate-100 animate-in fade-in zoom-in-95 duration-100">
           {/* Header */}
-          <div className="px-3 py-1.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wider flex items-center justify-between bg-slate-50/80 sticky top-0 z-10 backdrop-blur-xs">
+          <div className="px-3 py-1.5 text-[10px] font-semibold text-slate-500 uppercase tracking-wider flex items-center justify-between bg-slate-50/80 sticky top-0 z-10 backdrop-blur-xs">
             <span>หมวดหมู่ยอดนิยม ({filteredCategories.length})</span>
             {value && (
               <button
@@ -216,7 +216,7 @@ function CategoryCombobox({
                 onClick={() => {
                   onChange('');
                 }}
-                className="text-[10px] text-slate-400 hover:text-rose-600 cursor-pointer"
+                className="text-[10px] text-slate-500 hover:text-rose-600 cursor-pointer"
               >
                 ล้าง
               </button>
@@ -246,7 +246,7 @@ function CategoryCombobox({
                 );
               })
             ) : (
-              <div className="px-3 py-2 text-xs text-slate-400 text-center">
+              <div className="px-3 py-2 text-xs text-slate-500 text-center">
                 ไม่พบหมวดหมู่ที่ตรงกัน
               </div>
             )}
@@ -926,8 +926,8 @@ export default function ExpenseIncomeSection({
         <div className="flex flex-col">
           <span className="font-semibold text-slate-800">{`${day}/${m}/${y}`}</span>
           {hasTime && (
-            <span className="text-[11px] text-slate-400 font-mono flex items-center gap-0.5 mt-0.5">
-              <Clock className="w-2.5 h-2.5 text-slate-400" />
+            <span className="text-[11px] text-slate-500 font-mono flex items-center gap-0.5 mt-0.5">
+              <Clock className="w-2.5 h-2.5 text-slate-500" />
               <span>{`${hh}:${mm} น.`}</span>
             </span>
           )}
@@ -957,8 +957,7 @@ export default function ExpenseIncomeSection({
   };
 
   return (
-    <div className="min-h-screen bg-slate-50/60 p-4 sm:p-6 md:p-8">
-      <div className="max-w-6xl mx-auto space-y-6">
+    <div className="space-y-6">
         
         {/* หัวข้อหน้าหลัก */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -1071,10 +1070,10 @@ export default function ExpenseIncomeSection({
                 รวมรายรับ (Income)
               </span>
             </div>
-            <p className="text-xl font-bold text-emerald-600 mt-2">
+            <p className="text-xl font-bold font-mono tabular-nums text-emerald-600 mt-2">
               {formatMoney(summaryMetrics.income)}
             </p>
-            <p className="text-[11px] text-slate-400 mt-0.5">ในรอบเวลาที่เลือก</p>
+            <p className="text-[11px] text-slate-500 mt-0.5">ในรอบเวลาที่เลือก</p>
           </div>
 
           {/* 2. รวมรายจ่าย */}
@@ -1087,10 +1086,10 @@ export default function ExpenseIncomeSection({
                 รวมรายจ่าย (Expenses)
               </span>
             </div>
-            <p className="text-xl font-bold text-rose-600 mt-2">
+            <p className="text-xl font-bold font-mono tabular-nums text-rose-600 mt-2">
               {formatMoney(summaryMetrics.expense)}
             </p>
-            <p className="text-[11px] text-slate-400 mt-0.5">ในรอบเวลาที่เลือก</p>
+            <p className="text-[11px] text-slate-500 mt-0.5">ในรอบเวลาที่เลือก</p>
           </div>
 
           {/* 3. ยอดโอนเงิน & ชำระบัตร */}
@@ -1103,10 +1102,10 @@ export default function ExpenseIncomeSection({
                 โอน & ชำระบัตร (Transfer)
               </span>
             </div>
-            <p className="text-xl font-bold text-indigo-600 mt-2">
+            <p className="text-xl font-bold font-mono tabular-nums text-indigo-600 mt-2">
               {formatMoney(summaryMetrics.transfer)}
             </p>
-            <p className="text-[11px] text-slate-400 mt-0.5">เงินหมุนเวียน ไม่นับเป็นรายจ่าย</p>
+            <p className="text-[11px] text-slate-500 mt-0.5">เงินหมุนเวียน ไม่นับเป็นรายจ่าย</p>
           </div>
 
           {/* 4. กระแสเงินสดสุทธิ (Net Savings) */}
@@ -1119,10 +1118,10 @@ export default function ExpenseIncomeSection({
                 คงเหลือสุทธิ (Net Cash Flow)
               </span>
             </div>
-            <p className={`text-xl font-bold mt-2 ${summaryMetrics.net >= 0 ? 'text-sky-600' : 'text-rose-600'}`}>
+            <p className={`text-xl font-bold font-mono tabular-nums mt-2 ${summaryMetrics.net >= 0 ? 'text-sky-600' : 'text-rose-600'}`}>
               {summaryMetrics.net > 0 && !hideValues ? '+' : ''}{formatMoney(summaryMetrics.net)}
             </p>
-            <p className="text-[11px] text-slate-400 mt-0.5">
+            <p className="text-[11px] text-slate-500 mt-0.5">
               {summaryMetrics.net >= 0 ? 'เงินเก็บคงเหลือ' : 'ใช้จ่ายเกินรายรับ'}
             </p>
           </div>
@@ -1137,10 +1136,10 @@ export default function ExpenseIncomeSection({
                 อัตราการออม (Savings Rate)
               </span>
             </div>
-            <p className="text-xl font-bold text-purple-600 mt-2">
+            <p className="text-xl font-bold font-mono tabular-nums text-purple-600 mt-2">
               {hideValues ? '••%' : `${summaryMetrics.savingsRate.toFixed(1)}%`}
             </p>
-            <p className="text-[11px] text-slate-400 mt-0.5">คิดเป็น % ของรายรับทั้งหมด</p>
+            <p className="text-[11px] text-slate-500 mt-0.5">คิดเป็น % ของรายรับทั้งหมด</p>
           </div>
         </div>
 
@@ -1155,7 +1154,7 @@ export default function ExpenseIncomeSection({
                   <Plus className="w-4 h-4 text-emerald-600" />
                   <span>บันทึกรายการ</span>
                 </h2>
-                <span className="text-xs text-slate-400">บันทึกลงบัญชีของคุณ</span>
+                <span className="text-xs text-slate-500">บันทึกลงบัญชีของคุณ</span>
               </div>
 
               {/* ปุ่มสลับประเภท รายจ่าย vs รายรับ vs โอนเงิน/ชำระบัตร */}
@@ -1284,7 +1283,7 @@ export default function ExpenseIncomeSection({
                               const isLiab = acc.is_liability;
                               return (
                                 <option key={acc.id} value={acc.id}>
-                                  {isLiab ? '💳 ' : '🏦 '}
+                                  {isLiab ? '[บัตร/สินเชื่อ] ' : ''}
                                   {acc.bank_name ? `[${acc.bank_name}] ` : ''}{acc.account_name} {isLiab ? `(หนี้: ${formatMoney(acc.current_balance)})` : `(${formatMoney(acc.current_balance, { prefix: getCurrencySymbol(curr) })})`}
                                 </option>
                               );
@@ -1449,17 +1448,17 @@ export default function ExpenseIncomeSection({
                   <PieChart className="w-4 h-4 text-indigo-600" />
                   <span>รายงานสัดส่วนรายจ่าย (Spending Breakdown)</span>
                 </h2>
-                <p className="text-xs text-slate-400 mt-0.5">
+                <p className="text-xs text-slate-500 mt-0.5">
                   รวมรายจ่าย {formatMoney(categoryBreakdown.totalExpense)} ในรอบเวลาที่เลือก
                 </p>
               </div>
             </div>
 
             {categoryBreakdown.items.length === 0 ? (
-              <div className="py-12 text-center text-slate-400 space-y-1">
+              <div className="py-12 text-center text-slate-500 space-y-1">
                 <AlertCircle className="w-8 h-8 mx-auto text-slate-300" />
                 <p className="text-sm font-medium">ยังไม่มีข้อมูลรายจ่ายในรอบเวลานี้</p>
-                <p className="text-xs text-slate-400">บันทึกรายจ่ายเพื่อดูการกระจายตัวของค่าใช้จ่ายตามหมวดหมู่</p>
+                <p className="text-xs text-slate-500">บันทึกรายจ่ายเพื่อดูการกระจายตัวของค่าใช้จ่ายตามหมวดหมู่</p>
               </div>
             ) : (
               <div className="space-y-3 pt-1">
@@ -1472,7 +1471,7 @@ export default function ExpenseIncomeSection({
                       </span>
                       <div className="flex items-center gap-2 font-mono text-xs shrink-0">
                         <span className="font-bold text-slate-800">{formatMoney(item.amount)}</span>
-                        <span className="text-slate-400 w-12 text-right">
+                        <span className="text-slate-500 w-12 text-right">
                           {hideValues ? '••%' : `${item.percent.toFixed(1)}%`}
                         </span>
                       </div>
@@ -1578,7 +1577,7 @@ export default function ExpenseIncomeSection({
                   <button
                     type="button"
                     onClick={() => setSearchQuery('')}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5 cursor-pointer"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-700 p-0.5 cursor-pointer"
                   >
                     <X className="w-3 h-3" />
                   </button>
@@ -1616,14 +1615,14 @@ export default function ExpenseIncomeSection({
 
           {/* รายการธุรกรรม (Table / List) */}
           {loading ? (
-            <div className="py-12 text-center text-sm text-slate-400">
+            <div className="py-12 text-center text-sm text-slate-500">
               กำลังโหลดข้อมูลธุรกรรม...
             </div>
           ) : displayedTransactions.length === 0 ? (
-            <div className="py-12 text-center text-slate-400 space-y-2">
+            <div className="py-12 text-center text-slate-500 space-y-2">
               <AlertCircle className="w-8 h-8 mx-auto text-slate-300" />
               <p className="text-sm font-medium text-slate-600">ไม่พบรายการธุรกรรมที่ตรงกับเงื่อนไข</p>
-              <p className="text-xs text-slate-400">ลองเปลี่ยนช่วงเวลา ล้างคำค้นหา หรือบันทึกรายการใหม่</p>
+              <p className="text-xs text-slate-500">ลองเปลี่ยนช่วงเวลา ล้างคำค้นหา หรือบันทึกรายการใหม่</p>
             </div>
           ) : (
             <div className="space-y-3">
@@ -1668,7 +1667,7 @@ export default function ExpenseIncomeSection({
                       <th className="relative py-3 px-3 group">
                         <div className="flex items-center justify-between pr-2">
                           <span className="truncate">บันทึกช่วยจำ</span>
-                          <span className="text-[10px] text-slate-400 opacity-0 group-hover:opacity-100 transition font-normal hidden sm:inline shrink-0">
+                          <span className="text-[10px] text-slate-500 opacity-0 group-hover:opacity-100 transition font-normal hidden sm:inline shrink-0">
                             ⇹ ลากขยาย
                           </span>
                         </div>
@@ -1683,7 +1682,7 @@ export default function ExpenseIncomeSection({
                       <th className="relative py-3 px-3 group">
                         <div className="flex items-center justify-between pr-2">
                           <span className="truncate">บัญชีที่ใช้</span>
-                          <span className="text-[10px] text-slate-400 opacity-0 group-hover:opacity-100 transition font-normal hidden sm:inline shrink-0">
+                          <span className="text-[10px] text-slate-500 opacity-0 group-hover:opacity-100 transition font-normal hidden sm:inline shrink-0">
                             ⇹ ลากขยาย
                           </span>
                         </div>
@@ -1762,7 +1761,7 @@ export default function ExpenseIncomeSection({
                           </td>
 
                           <td className="py-2.5 px-3 text-right whitespace-nowrap">
-                            <span className={`font-bold text-xs sm:text-sm ${isTransfer ? 'text-indigo-600' : isIncome ? 'text-emerald-600' : 'text-slate-900'}`}>
+                            <span className={`font-bold font-mono tabular-nums text-xs sm:text-sm ${isTransfer ? 'text-indigo-600' : isIncome ? 'text-emerald-600' : 'text-slate-900'}`}>
                               {hideValues ? (
                                 <span className="tracking-widest font-mono text-slate-400 select-none">฿••••••</span>
                               ) : (
@@ -1776,7 +1775,7 @@ export default function ExpenseIncomeSection({
                               <button
                                 type="button"
                                 onClick={() => handleOpenEditModal(tx)}
-                                className="p-1 text-slate-400 hover:text-sky-600 hover:bg-sky-50 rounded-lg transition cursor-pointer"
+                                className="p-1 min-w-[32px] min-h-[32px] flex items-center justify-center text-slate-500 hover:text-sky-600 hover:bg-sky-50 rounded-lg transition cursor-pointer"
                                 title="แก้ไขรายการ"
                               >
                                 <Pencil className="w-3.5 h-3.5" />
@@ -1784,7 +1783,7 @@ export default function ExpenseIncomeSection({
                               <button
                                 type="button"
                                 onClick={() => handleDeleteTransaction(tx.id, tx.category)}
-                                className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
+                                className="p-1 min-w-[32px] min-h-[32px] flex items-center justify-center text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
                                 title="ลบรายการนี้"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
@@ -1807,7 +1806,7 @@ export default function ExpenseIncomeSection({
                     <span className="font-semibold text-slate-800">{endIndex}</span> จากทั้งหมด{' '}
                     <span className="font-semibold text-slate-800">{totalRecords}</span> รายการ
                     {totalPages > 1 && (
-                      <span className="ml-1 text-slate-400">(หน้า {safeCurrentPage}/{totalPages})</span>
+                      <span className="ml-1 text-slate-500">(หน้า {safeCurrentPage}/{totalPages})</span>
                     )}
                   </div>
 
@@ -1893,8 +1892,6 @@ export default function ExpenseIncomeSection({
           )}
         </div>
 
-      </div>
-
       {/* Modal Pop-up: แก้ไขรายการธุรกรรม */}
       {isEditModalOpen && editingTx && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
@@ -1912,7 +1909,7 @@ export default function ExpenseIncomeSection({
               <button
                 type="button"
                 onClick={() => setIsEditModalOpen(false)}
-                className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg transition cursor-pointer"
+                className="p-1.5 text-slate-500 hover:text-slate-700 rounded-lg transition cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -2026,7 +2023,7 @@ export default function ExpenseIncomeSection({
                         <option value="">-- เลือกบัญชีปลายทาง --</option>
                         {accounts.map((a) => (
                           <option key={a.id} value={a.id}>
-                            {a.is_liability ? '💳 ' : '🏦 '}
+                            {a.is_liability ? '[บัตร/สินเชื่อ] ' : ''}
                             {a.bank_name ? `[${a.bank_name}] ` : ''}{a.account_name}
                           </option>
                         ))}
