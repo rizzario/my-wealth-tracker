@@ -2,6 +2,7 @@
 'use client';
 
 import { useState } from 'react';
+import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import type { Provider } from '@supabase/supabase-js';
@@ -96,8 +97,18 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
       <div className="max-w-md w-full bg-white rounded-2xl shadow-sm border border-gray-100 p-8 space-y-6">
-        <div className="text-center space-y-1">
-          <h1 className="text-2xl font-bold text-gray-900">Personal Wealth Tracker</h1>
+        <div className="text-center space-y-2">
+          <div className="mx-auto w-16 h-16 flex items-center justify-center p-2 rounded-2xl bg-emerald-50 border border-emerald-100 shadow-xs mb-3">
+            <Image
+              src="/MRW_no_background.png"
+              alt="Personal Wealth Hub Logo"
+              width={56}
+              height={56}
+              className="h-12 w-12 object-contain"
+              priority
+            />
+          </div>
+          <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Personal Wealth Hub</h1>
           <p className="text-sm text-gray-500">
             เข้าสู่ระบบเพื่อจัดการพอร์ตของคุณ
           </p>

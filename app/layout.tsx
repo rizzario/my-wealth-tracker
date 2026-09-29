@@ -15,6 +15,15 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Personal Wealth Hub — ติดตามความมั่งคั่งและกระแสเงินสด",
   description: "ระบบติดตามความมั่งคั่งสุทธิ พอร์ตลงทุน และกระแสเงินสดส่วนบุคคล",
+  icons: {
+    icon: [
+      { url: '/favicon.ico', sizes: 'any' },
+      { url: '/icon.png', type: 'image/png' },
+    ],
+    apple: [
+      { url: '/apple-icon.png', type: 'image/png' },
+    ],
+  },
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
