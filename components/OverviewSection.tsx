@@ -23,6 +23,7 @@ import {
   AlertCircle,
 } from 'lucide-react';
 import { NetWorthSummary } from '@/lib/networth';
+import { calculatePendingLiabilities } from '@/lib/recurringCommitments';
 
 export interface FinancialTransaction {
   id: number | string;
@@ -60,6 +61,7 @@ interface OverviewSectionProps {
   financialAccounts: any[];
   transactions: FinancialTransaction[];
   recentTransactions: FinancialTransaction[];
+  recurringCommitments?: any[];
   hideValues: boolean;
   onNavigateTab: (tab: 'overview' | 'holdings' | 'trades' | 'cash_pvd' | 'cashflow' | 'expenses') => void;
 }
@@ -81,9 +83,17 @@ export default function OverviewSection({
   financialAccounts,
   transactions,
   recentTransactions,
+  recurringCommitments,
   hideValues,
   onNavigateTab,
 }: OverviewSectionProps) {
+  const liabilitiesProjection = useMemo(() => {
+    return calculatePendingLiabilities(
+      financialAccounts,
+      recurringCommitments || [],
+      transactions
+    );
+  }, [financialAccounts, recurringCommitments, transactions]);
   // Chart Display Mode for Asset Allocation: 'donut' | 'stackbar'
   const [chartMode, setChartMode] = useState<'donut' | 'stackbar'>(() => {
     try {
@@ -466,6 +476,46 @@ export default function OverviewSection({
 
   return (
     <div className="space-y-6">
+      {/* Pending Commitments Alert Banner */}
+      {liabilitiesProjection.totalPendingLiabilities > 0 && (
+        <div className="bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent border border-amber-300/80 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
+          <div className="flex items-start sm:items-center gap-3">
+            <div className="p-2.5 rounded-xl bg-amber-500 text-white shrink-0 shadow-xs">
+              <Clock className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-amber-900 uppercase tracking-wider">
+                  ภาระประจำรอตัดรอบเดือนนี้ (Pending Liabilities)
+                </span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-200 text-amber-900">
+                  {liabilitiesProjection.allPendingCommitmentsThisMonth.length} รายการ
+                </span>
+              </div>
+              <p className="text-xs sm:text-sm text-slate-700 mt-0.5">
+                มียอดรอตัดรอบบิลรวม{' '}
+                <span className="font-bold font-mono text-amber-900">
+                  {formatMoney(liabilitiesProjection.totalPendingLiabilities)}
+                </span>{' '}
+                บนบัตรเครดิต/สินเชื่อ (ประมาณการหนี้สิ้นรอบ:{' '}
+                <span className="font-semibold font-mono text-rose-700">
+                  {formatMoney(liabilitiesProjection.totalProjectedLiabilities)}
+                </span>
+                )
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => onNavigateTab('cashflow')}
+            className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-amber-900 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-xl transition shadow-2xs cursor-pointer shrink-0 self-start sm:self-auto"
+          >
+            <span>จัดการยอดรอตัด</span>
+            <ArrowRight className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
       {/* 2-Column Responsive Layout: Port Ratio (Left) & Monthly Spent (Right) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 sm:gap-6 items-stretch">
         

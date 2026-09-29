@@ -38,8 +38,8 @@
 
 ## 3. Data Model
 
-Seven tables: `profiles`, `portfolio_holdings`, `trade_transactions`, `cash_and_pvd_assets`,
-`financial_accounts`, `expense_income_transactions`.
+Eight tables: `profiles`, `portfolio_holdings`, `trade_transactions`, `cash_and_pvd_assets`,
+`financial_accounts`, `expense_income_transactions`, `currency_exchange_rates`, `recurring_commitments`.
 
 ### 3.0 Table boundary rule — read before touching any balance
 
@@ -275,6 +275,57 @@ Because this table is a global market reference table without a `user_id` column
 - `SELECT`: Allowed for `authenticated` and `anon` (`USING (true)`).
 - `INSERT` / `UPDATE`: Allowed for `authenticated` (and service role) so user-triggered syncs succeed (`WITH CHECK (true)`).
 
+---
+
+### 3.10 `recurring_commitments`
+
+Scheduled recurring payments (Monthly, Quarterly, and Annual commitments like Health Insurance, 0% Installment Plans, and Subscriptions).
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | UUID, PK, default `gen_random_uuid()` | |
+| `user_id` | UUID, nullable, default `auth.uid()`, FK → `auth.users(id)` CASCADE | |
+| `name` | VARCHAR(100), NOT NULL | e.g. `'AIA Health Insurance'`, `'iPhone 16 Pro 0%'` |
+| `amount` | NUMERIC(18,4), NOT NULL, CHECK `> 0` | Positive recurring amount |
+| `frequency` | VARCHAR(20), NOT NULL, default `'MONTHLY'` | CHECK `MONTHLY` \| `QUARTERLY` \| `ANNUAL` |
+| `due_day` | INTEGER, NOT NULL, CHECK `1..31` | Day of month payment is due |
+| `due_month` | INTEGER, nullable, CHECK `1..12` | Required / used when `frequency = 'ANNUAL'` |
+| `start_date` | DATE, NOT NULL | Effective start date |
+| `end_date` | DATE, nullable | NULL indicates ongoing / continuous commitment |
+| `is_active` | BOOLEAN, NOT NULL, default `true` | Toggle to pause or disable commitment |
+| `payment_account_id` | UUID, nullable, FK → `financial_accounts(id)` ON DELETE SET NULL | Linked credit card or bank account |
+| `category` | VARCHAR(50), NOT NULL, default `'Other'` | e.g. `'Insurance'`, `'Installment'`, `'Subscription'` |
+| `notes` | TEXT, nullable | |
+| `created_at` | TIMESTAMPTZ, default `now()` | |
+| `updated_at` | TIMESTAMPTZ, default `now()` | |
+
+**RLS & Indexes:**
+- RLS enabled: `auth.uid() = user_id` for `ALL` operations (`USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id)`).
+- Indexes: `idx_recurring_commitments_user` on `user_id`, `idx_recurring_commitments_acc` on `payment_account_id`.
+
+---
+
+### 3.11 Pending Liabilities & Projected Statement Balance
+
+Commitments represent future obligations. To preserve ledger integrity and prevent false premature liabilities:
+
+1. **Non-destructive projection**: Scheduled commitments do **not** mutate `financial_accounts.current_balance` directly and do **not** alter the canonical Net Worth formula (§3.8) ahead of time.
+2. **Projected Statement Balance**: For credit card and liability accounts (`is_liability = true`), the UI calculates:
+   ```
+   Projected Statement Balance = actual current_balance + pending_commitments_total
+   ```
+3. **Active Commitment Evaluation (`lib/recurringCommitments.ts`)**:
+   - `is_active === true`
+   - `start_date` <= end of target month
+   - `end_date === null` OR `end_date` >= start of target month
+   - Frequency match: `MONTHLY` (every month), `QUARTERLY` (every 3 months from start date), `ANNUAL` (`targetMonth === due_month`).
+4. **Reconciliation Workflow**:
+   - The user can click `[⚡ บันทึกตัดเงินจริง]` on an upcoming commitment in the Cash Flow tab.
+   - This records an `EXPENSE` transaction in `expense_income_transactions` referencing the commitment (`note: '[Recurring] ' + name + ' [rc:' + id + ']'`).
+   - The database trigger `on_transaction_changed` automatically increments `financial_accounts.current_balance` for liabilities without any custom balance manipulation in application code.
+   - Confirmed transactions in the current cycle are excluded from future pending liability projections to eliminate double-counting.
+
+---
 
 ## 4. Architecture & Data Flow
 
@@ -316,9 +367,15 @@ Scheduled by `vercel.json` Cron — e.g. `30 10 * * 1-5` = 17:30 ICT, weekdays.
 
 | File | Kind | Responsibility |
 |---|---|---|
-| `app/page.tsx` | Client Component (`'use client'`) | Dashboard shell. Tabs `'ภาพรวม' \| 'พอร์ตลงทุน' \| 'เงินฝาก & PVD' \| 'รับ-จ่าย'`, net worth aggregation (§3.8), Privacy Mode. |
-| `components/PortfolioTable.tsx` | Client | Positions table. State: `holdings`, `loadingData`, `isBulkUpdating`, `updatingRowId`. Row-level and bulk refresh re-fetch from Supabase — no page reload. |
-| `components/CashAndPvdSection.tsx` | Client | Fixed deposits + PVD. Dual-mode create/edit modal, promo countdown badges. |
+| `app/page.tsx` | Client Component (`'use client'`) | Dashboard shell with navigation tabs & dropdown groups (Overview, Investment, Assets, Expenses), Net Worth aggregation (§3.8), Privacy Mode, and idle session auto-lock. |
+| `components/OverviewSection.tsx` | Client | Executive summary dashboard: Net Worth breakdown, asset allocation, portfolio performance, and pending recurring commitments alert banner. |
+| `components/PortfolioTable.tsx` | Client | Positions table for stocks, crypto, and mutual funds. Row-level and bulk price refresh from Supabase without page reload. |
+| `components/TradeTransactionsSection.tsx` | Client | Buy/sell trade ledger for tax and historical tracking. |
+| `components/CashAndPvdSection.tsx` | Client | Fixed deposits, Provident Fund (PVD), and long-term bonds with promo countdown badges. |
+| `components/CashFlowSection.tsx` | Client | Debt & cash flow manager: operating accounts, credit cards, projected statement balances, pending commitments accordion, one-click reconciliation (`[⚡ บันทึกตัดเงินจริง]`), and recurring commitments CRUD modal. |
+| `components/ExpenseIncomeSection.tsx` | Client | Daily income, expense, and internal transfer tracking with category breakdowns. |
+| `lib/recurringCommitments.ts` | Shared Utility | Pure functions for recurring commitments eligibility, due-date calculations, confirmed transaction matching, and pending liability calculations. |
+| `lib/networth.ts` | Shared Utility | Canonical net worth calculation helper (§3.8). |
 
 > The dashboard is a **Client Component**. Auth is enforced upstream in `middleware.ts`, so no
 > server wrapper is needed. (An earlier draft called it a Server Component — obsolete.)
@@ -376,11 +433,11 @@ before arithmetic, or `'100' + 50` becomes `'10050'`.
 
 ## 6. Naming inconsistencies (cosmetic, but they cause agent errors)
 
-| Concern | `portfolio_holdings` / `cash_and_pvd_assets` / `trade_transactions` | `financial_accounts` |
-|---|---|---|
-| PK type | `bigserial` | `uuid` |
-| `account_name` type | `varchar` | `text` |
-| `user_id` default | `auth.uid()` | *(none)* |
+| Concern | `portfolio_holdings` / `cash_and_pvd_assets` / `trade_transactions` | `financial_accounts` | `recurring_commitments` |
+|---|---|---|---|
+| PK type | `bigserial` | `uuid` | `uuid` |
+| `name` / `account_name` type | `varchar` | `text` | `varchar` |
+| `user_id` default | `auth.uid()` | *(none)* — §7.3 | `auth.uid()` |
 
 Agents writing shared helpers should not assume a uniform ID type across tables.
 

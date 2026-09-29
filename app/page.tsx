@@ -142,6 +142,7 @@ export default function Home() {
   const [financialAccounts, setFinancialAccounts] = useState<any[]>([]);
   const [recentTransactions, setRecentTransactions] = useState<any[]>([]);
   const [allTransactions, setAllTransactions] = useState<any[]>([]);
+  const [recurringCommitments, setRecurringCommitments] = useState<any[]>([]);
   const [hideValues, setHideValues] = useState<boolean>(false);
 
   // Close desktop dropdown and mobile drawer on Escape key or click outside
@@ -216,6 +217,10 @@ export default function Home() {
       setAllTransactions(tData);
       setRecentTransactions(tData.slice(0, 5));
     }
+
+    // 5. ดึงภาระประจำ (Recurring Commitments)
+    const { data: rcData } = await supabase.from('recurring_commitments').select('*');
+    if (rcData) setRecurringCommitments(rcData);
   }, [supabase]);
 
   useEffect(() => {
@@ -755,6 +760,7 @@ export default function Home() {
             financialAccounts={financialAccounts}
             transactions={allTransactions}
             recentTransactions={recentTransactions}
+            recurringCommitments={recurringCommitments}
             hideValues={hideValues}
             onNavigateTab={(tab) => setActiveTab(tab)}
           />

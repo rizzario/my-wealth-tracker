@@ -562,7 +562,16 @@ export default function TradeTransactionsSection({ onTradesUpdated }: TradeTrans
       if (formSyncBalance && formAccountId) {
         const targetAcc = accounts.find((a) => a.id === formAccountId);
         if (targetAcc) {
-          const delta = formSide === 'BUY' ? -formCalculations.netThb : formSide === 'SELL' ? formCalculations.netThb : 0;
+          const accCurr = (targetAcc.currency || 'THB').toUpperCase();
+          const tradeCurr = (formCurrency || 'THB').toUpperCase();
+          let amountToSync = formCalculations.netThb;
+          if (accCurr === tradeCurr) {
+            amountToSync = formCalculations.net;
+          } else if (accCurr !== 'THB') {
+            const accRate = exchangeRates[accCurr] || 1.0;
+            amountToSync = accRate > 0 ? formCalculations.netThb / accRate : formCalculations.netThb;
+          }
+          const delta = formSide === 'BUY' ? -amountToSync : formSide === 'SELL' ? amountToSync : 0;
           if (delta !== 0) {
             const newBal = (Number(targetAcc.current_balance) || 0) + delta;
             await supabase

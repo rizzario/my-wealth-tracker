@@ -17,6 +17,10 @@ import {
   AlertCircle,
   Building2,
   Wallet,
+  TrendingDown,
+  TrendingUp,
+  Coins,
+  CheckCircle2,
 } from 'lucide-react';
 import { CURRENCY_OPTIONS, getCurrencySymbol } from '@/lib/currency';
 import { POPULAR_BROKERS } from './TradeTransactionsSection';
@@ -125,6 +129,17 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
 
   const [recordSellTrade, setRecordSellTrade] = useState(true);
   const [pendingSellTrade, setPendingSellTrade] = useState<{ units: number } | null>(null);
+
+  // Dedicated Sell Modal states (สำหรับขายสินทรัพย์ / ขายทั้งหมด 100%)
+  const [isSellModalOpen, setIsSellModalOpen] = useState(false);
+  const [sellTargetHolding, setSellTargetHolding] = useState<Holding | null>(null);
+  const [sellVolumeInput, setSellVolumeInput] = useState('');
+  const [sellPriceInput, setSellPriceInput] = useState('');
+  const [sellFeeInput, setSellFeeInput] = useState('0');
+  const [sellAccountId, setSellAccountId] = useState('');
+  const [sellDate, setSellDate] = useState('');
+  const [sellNote, setSellNote] = useState('');
+  const [submittingSell, setSubmittingSell] = useState(false);
 
   const supabase = createClient();
 
@@ -315,7 +330,12 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
   const handleOpenAddModal = () => {
     setModalMode('add');
     setSelectedHolding(null);
+    fetchAccounts();
     const defaultBroker = 'BLS';
+    const savedMapped = brokerAccountMap[defaultBroker];
+    const defaultCashAcc = accounts.find((a) => !a.is_liability) || accounts[0];
+    const initialAccId = savedMapped || defaultCashAcc?.id || '';
+
     setFormData({
       symbol: '',
       broker: defaultBroker,
@@ -323,7 +343,7 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
       volume: '',
       initial_cost: '',
       present_price: '',
-      accountId: brokerAccountMap[defaultBroker] || '',
+      accountId: initialAccId,
       recordTrade: true,
     });
     setCalcMode('dip');
@@ -339,7 +359,12 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
   const handleOpenEditModal = (holding: Holding) => {
     setModalMode('edit');
     setSelectedHolding(holding);
+    fetchAccounts();
     const holdingBroker = holding.broker || 'BLS';
+    const savedMapped = brokerAccountMap[holdingBroker];
+    const defaultCashAcc = accounts.find((a) => !a.is_liability) || accounts[0];
+    const initialAccId = savedMapped || defaultCashAcc?.id || '';
+
     setFormData({
       symbol: holding.symbol,
       broker: holdingBroker,
@@ -347,7 +372,7 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
       volume: holding.volume != null ? String(holding.volume) : '',
       initial_cost: holding.initial_cost != null ? String(holding.initial_cost) : '',
       present_price: holding.present_price != null ? String(holding.present_price) : '',
-      accountId: brokerAccountMap[holdingBroker] || '',
+      accountId: initialAccId,
       recordTrade: false,
     });
     setCalcMode('dip');
@@ -374,8 +399,44 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
     setFormData((prev) => ({
       ...prev,
       broker: newBroker,
-      accountId: boundAccId || prev.accountId,
+      accountId: boundAccId !== undefined ? boundAccId : prev.accountId,
     }));
+  };
+
+  // --- Dedicated Sell Modal Handlers (สำหรับขายสินทรัพย์ / ขายทั้งหมด 100%) ---
+  const handleOpenSellModal = (holding: Holding) => {
+    setSellTargetHolding(holding);
+    fetchAccounts();
+    const holdingBroker = holding.broker || 'BLS';
+    const mappedAccId = brokerAccountMap[holdingBroker];
+    const defaultCashAcc = accounts.find((a) => !a.is_liability) || accounts[0];
+    const initialAccId = mappedAccId || defaultCashAcc?.id || '';
+
+    // ตั้งค่าเริ่มต้นเป็นการขายทั้งหมด (100%)
+    setSellVolumeInput(holding.volume != null ? String(holding.volume) : '');
+    setSellPriceInput(
+      holding.present_price != null && Number(holding.present_price) > 0
+        ? String(holding.present_price)
+        : holding.initial_cost != null
+        ? String(holding.initial_cost)
+        : ''
+    );
+    setSellFeeInput('0');
+    setSellAccountId(initialAccId);
+    setSellDate(new Date().toISOString().split('T')[0]);
+    setSellNote('ขายทำกำไร / ขายปิดสถานะ');
+    setIsSellModalOpen(true);
+  };
+
+  const handleCloseSellModal = () => {
+    setIsSellModalOpen(false);
+    setSellTargetHolding(null);
+    setSellVolumeInput('');
+    setSellPriceInput('');
+    setSellFeeInput('0');
+    setSellAccountId('');
+    setSellDate('');
+    setSellNote('');
   };
 
   // คำนวณซื้อถัวเฉลี่ย (Buy on Dip Calculator)
@@ -526,6 +587,19 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
           inserted = insData;
         }
 
+        // ตรวจสอบกรณีไม่ได้เลือกบัญชีการเงินสำหรับตัดเงินสด
+        if (formData.recordTrade && !formData.accountId && accounts.length > 0) {
+          const proceedWithoutAccount = window.confirm(
+            '⚠️ คุณยังไม่ได้เลือก "บัญชีการเงินที่ใช้ซื้อ"\n\n' +
+            '• หากต้องการให้ระบบ "หักเงินสดออกจากกระเป๋า/บัญชีธนาคาร" กรุณากด "ยกเลิก" แล้วเลือกบัญชีการเงิน\n' +
+            '• หากต้องการบันทึกพอร์ตโดย "ไม่หักเงินสด" (กรณีบันทึกข้อมูลย้อนหลัง) กด "ตกลง" เพื่อดำเนินการต่อ'
+          );
+          if (!proceedWithoutAccount) {
+            setSubmittingHolding(false);
+            return;
+          }
+        }
+
         // บันทึกรายการลงใน trade_transactions และหักเงินสดจาก financial_accounts
         if (formData.recordTrade && vol > 0) {
           const gross = vol * cost;
@@ -563,15 +637,29 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
             }
           }
 
-          // ลดเงินสดคงเหลือใน financial_accounts
+          // ลดเงินสดคงเหลือใน financial_accounts พร้อมแปลงสกุลเงินให้ถูกต้อง
           if (formData.accountId) {
             const targetAcc = accounts.find((a) => a.id === formData.accountId);
             if (targetAcc) {
-              const newBal = (Number(targetAcc.current_balance) || 0) - netThb;
-              await supabase
+              const accCurr = (targetAcc.currency || 'THB').toUpperCase();
+              let deductAmount = netThb;
+              if (accCurr === curr) {
+                deductAmount = gross;
+              } else if (accCurr !== 'THB') {
+                const accRateToThb = fxRates[accCurr] || 1.0;
+                deductAmount = accRateToThb > 0 ? netThb / accRateToThb : netThb;
+              }
+
+              const newBal = (Number(targetAcc.current_balance) || 0) - deductAmount;
+              const { error: accErr } = await supabase
                 .from('financial_accounts')
                 .update({ current_balance: newBal, updated_at: new Date().toISOString() })
                 .eq('id', formData.accountId);
+
+              if (accErr) {
+                console.error('Failed to deduct financial account balance:', accErr);
+                alert(`แจ้งเตือน: บันทึกสินทรัพย์สำเร็จ แต่ไม่สามารถหักเงินจากบัญชีได้: ${accErr.message}`);
+              }
             }
           }
         }
@@ -657,15 +745,28 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
             await supabase.from('trade_transactions').insert(dipTradePayload);
           }
 
-          // ลดเงินสดใน financial_accounts
+          // ลดเงินสดใน financial_accounts พร้อมแปลงสกุลเงินให้ถูกต้อง
           if (formData.accountId) {
             const targetAcc = accounts.find((a) => a.id === formData.accountId);
             if (targetAcc) {
-              const newBal = (Number(targetAcc.current_balance) || 0) - grossThb;
-              await supabase
+              const accCurr = (targetAcc.currency || 'THB').toUpperCase();
+              let deductAmount = grossThb;
+              if (accCurr === curr) {
+                deductAmount = gross;
+              } else if (accCurr !== 'THB') {
+                const accRateToThb = fxRates[accCurr] || 1.0;
+                deductAmount = accRateToThb > 0 ? grossThb / accRateToThb : grossThb;
+              }
+
+              const newBal = (Number(targetAcc.current_balance) || 0) - deductAmount;
+              const { error: accErr } = await supabase
                 .from('financial_accounts')
                 .update({ current_balance: newBal, updated_at: new Date().toISOString() })
                 .eq('id', formData.accountId);
+
+              if (accErr) {
+                console.error('Failed to deduct financial account balance:', accErr);
+              }
             }
           }
         }
@@ -702,15 +803,28 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
             await supabase.from('trade_transactions').insert(sellTradePayload);
           }
 
-          // เพิ่มเงินสดเข้า financial_accounts
+          // เพิ่มเงินสดเข้า financial_accounts พร้อมแปลงสกุลเงินให้ถูกต้อง
           if (formData.accountId) {
             const targetAcc = accounts.find((a) => a.id === formData.accountId);
             if (targetAcc) {
-              const newBal = (Number(targetAcc.current_balance) || 0) + grossThb;
-              await supabase
+              const accCurr = (targetAcc.currency || 'THB').toUpperCase();
+              let creditAmount = grossThb;
+              if (accCurr === curr) {
+                creditAmount = gross;
+              } else if (accCurr !== 'THB') {
+                const accRateToThb = fxRates[accCurr] || 1.0;
+                creditAmount = accRateToThb > 0 ? grossThb / accRateToThb : grossThb;
+              }
+
+              const newBal = (Number(targetAcc.current_balance) || 0) + creditAmount;
+              const { error: accErr } = await supabase
                 .from('financial_accounts')
                 .update({ current_balance: newBal, updated_at: new Date().toISOString() })
                 .eq('id', formData.accountId);
+
+              if (accErr) {
+                console.error('Failed to credit financial account balance:', accErr);
+              }
             }
           }
         }
@@ -729,6 +843,140 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
       alert(`ไม่สามารถบันทึกข้อมูลสินทรัพย์ได้: ${err?.message || 'เกิดข้อผิดพลาด'}`);
     } finally {
       setSubmittingHolding(false);
+    }
+  };
+
+  // ดำเนินการขายสินทรัพย์ (Sell Modal Handler - รองรับทั้งขายบางส่วน และขายทั้งหมด 100%)
+  const handleConfirmSell = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!sellTargetHolding) return;
+
+    const holdingVol = Number(sellTargetHolding.volume) || 0;
+    const units = parseFloat(sellVolumeInput);
+    if (isNaN(units) || units <= 0) {
+      alert('กรุณาระบุจำนวนหน่วยที่ต้องการขายที่ถูกต้อง (> 0)');
+      return;
+    }
+    if (units > holdingVol) {
+      alert(`จำนวนที่ต้องการขาย (${units.toLocaleString()}) มากกว่าจำนวนที่ถือครองอยู่ (${holdingVol.toLocaleString()})`);
+      return;
+    }
+
+    const price = parseFloat(sellPriceInput);
+    if (isNaN(price) || price < 0) {
+      alert('กรุณาระบุราคาขายที่ถูกต้อง (>= 0)');
+      return;
+    }
+
+    const fee = parseFloat(sellFeeInput) || 0;
+    const curr = (sellTargetHolding.currency || 'THB').toUpperCase();
+    const rateToThb = fxRates[curr] || Number(sellTargetHolding.exchange_rate) || 1.0;
+    const grossAmount = units * price;
+    const netAmount = Math.max(0, grossAmount - fee);
+    const grossAmountThb = grossAmount * rateToThb;
+    const netAmountThb = netAmount * rateToThb;
+    const isFullSell = units >= holdingVol;
+    const remainingUnits = Math.max(0, holdingVol - units);
+
+    try {
+      setSubmittingSell(true);
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) throw new Error('ไม่พบข้อมูลผู้ใช้');
+
+      // 1. บันทึกรายการขาย SELL ลงใน trade_transactions
+      const sellTradePayload: any = {
+        user_id: user.id,
+        broker: sellTargetHolding.broker || 'BLS',
+        trade_date: sellDate || new Date().toISOString().split('T')[0],
+        side: 'SELL',
+        stock_symbol: sellTargetHolding.symbol,
+        currency: curr,
+        units: units,
+        unit_price: price,
+        exchange_rate: rateToThb,
+        gross_amount: grossAmount,
+        fee: fee,
+        withholding_tax: 0,
+        net_amount: netAmount,
+        gross_amount_thb: grossAmountThb,
+        fee_thb: fee * rateToThb,
+        net_amount_thb: netAmountThb,
+        reason: sellNote || (isFullSell ? 'ขายทั้งหมดปิดสถานะ' : 'ขายทำกำไร'),
+        account_id: sellAccountId || null,
+      };
+
+      const { error: tradeErr } = await supabase.from('trade_transactions').insert(sellTradePayload);
+      if (tradeErr) {
+        if (tradeErr.message?.includes('column trade_transactions.account_id does not exist')) {
+          delete sellTradePayload.account_id;
+          await supabase.from('trade_transactions').insert(sellTradePayload);
+        } else {
+          console.warn('Could not record sell trade transaction:', tradeErr.message);
+        }
+      }
+
+      // 2. เติมเงินสดเข้า financial_accounts
+      if (sellAccountId) {
+        const targetAcc = accounts.find((a) => a.id === sellAccountId);
+        if (targetAcc) {
+          const accCurr = (targetAcc.currency || 'THB').toUpperCase();
+          let creditAmount = netAmountThb;
+          if (accCurr === curr) {
+            creditAmount = netAmount;
+          } else if (accCurr !== 'THB') {
+            const accRateToThb = fxRates[accCurr] || 1.0;
+            creditAmount = accRateToThb > 0 ? netAmountThb / accRateToThb : netAmountThb;
+          }
+
+          const newBal = (Number(targetAcc.current_balance) || 0) + creditAmount;
+          const { error: accErr } = await supabase
+            .from('financial_accounts')
+            .update({ current_balance: newBal, updated_at: new Date().toISOString() })
+            .eq('id', sellAccountId);
+
+          if (accErr) {
+            console.error('Failed to credit financial account:', accErr);
+            alert(`คำเตือน: บันทึกการขายสำเร็จ แต่ไม่สามารถเพิ่มเงินเข้าบัญชีได้: ${accErr.message}`);
+          }
+        }
+      }
+
+      // 3. ปรับปรุงพอร์ตการลงทุน (portfolio_holdings)
+      if (isFullSell) {
+        // ขายหมด 100% -> ลบแถวออกจาก portfolio_holdings เพื่อปิดสถานะอย่างสมบูรณ์
+        const { error: delErr } = await supabase
+          .from('portfolio_holdings')
+          .delete()
+          .eq('id', sellTargetHolding.id);
+        if (delErr) throw delErr;
+      } else {
+        // ขายบางส่วน -> ปรับลดจำนวนหน่วยคงเหลือ
+        const { error: updErr } = await supabase
+          .from('portfolio_holdings')
+          .update({
+            volume: remainingUnits,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', sellTargetHolding.id);
+        if (updErr) throw updErr;
+      }
+
+      // 4. บันทึก Broker-to-Account Mapping
+      if (sellTargetHolding.broker && sellAccountId) {
+        saveBrokerAccountMapping(sellTargetHolding.broker, sellAccountId);
+      }
+
+      handleCloseSellModal();
+      await fetchHoldings();
+      await fetchAccounts();
+      onHoldingsUpdated?.();
+    } catch (err: any) {
+      console.error('Sell holding error:', err);
+      alert(`ไม่สามารถทำรายการขายได้: ${err?.message || 'เกิดข้อผิดพลาด'}`);
+    } finally {
+      setSubmittingSell(false);
     }
   };
 
@@ -997,9 +1245,21 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
                       %
                     </td>
 
-                    {/* Actions: Edit Modal (Volume/Cost/Price), Sync, Delete */}
+                    {/* Actions: Sell, Edit Modal (Volume/Cost/Price), Sync, Delete */}
                     <td className="py-3 px-4 text-center">
-                      <div className="inline-flex items-center justify-center gap-1">
+                      <div className="inline-flex items-center justify-center gap-1.5">
+                        {/* Sell Holding Button */}
+                        <button
+                          type="button"
+                          onClick={() => handleOpenSellModal(item)}
+                          disabled={isRowLoading || isBulkUpdating || isSavingThisRow}
+                          title="ขายสินทรัพย์ / ขายทั้งหมดปิดสถานะ (Sell)"
+                          className="px-2.5 py-1 text-xs font-bold text-rose-700 hover:text-white hover:bg-rose-600 bg-rose-50 border border-rose-200 rounded-lg transition disabled:opacity-30 cursor-pointer inline-flex items-center gap-1 shadow-2xs"
+                        >
+                          <TrendingDown className="w-3.5 h-3.5" />
+                          <span>ขาย</span>
+                        </button>
+
                         {/* Edit Holding Details (Modal) */}
                         <button
                           type="button"
@@ -1029,8 +1289,8 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
                           type="button"
                           onClick={() => handleDeleteHolding(item)}
                           disabled={isRowLoading || isBulkUpdating || isSavingThisRow}
-                          title="ลบสินทรัพย์ออกจากพอร์ต"
-                          className="p-1.5 min-w-[32px] min-h-[32px] flex items-center justify-center text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition disabled:opacity-30 cursor-pointer"
+                          title="ลบสินทรัพย์ออกจากพอร์ต (กรณีบันทึกผิด ไม่ใช่การขาย)"
+                          className="p-1.5 min-w-[32px] min-h-[32px] flex items-center justify-center text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition disabled:opacity-30 cursor-pointer"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
@@ -1147,7 +1407,7 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
                     onChange={(e) => setFormData({ ...formData, accountId: e.target.value })}
                     className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl bg-white outline-none focus:ring-2 focus:ring-blue-500 font-medium cursor-pointer"
                   >
-                    <option value="">-- ไม่ระบุบัญชี --</option>
+                    <option value="">-- ไม่หักเงินสด (บันทึกข้อมูลย้อนหลัง) --</option>
                     {accounts.map((acc) => {
                       const curr = (acc.currency || 'THB').toUpperCase();
                       return (
@@ -1188,6 +1448,84 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
                       </span>
                     </div>
                   </label>
+                </div>
+              )}
+
+              {/* Add Mode: สรุปการหักเงินสดออกจากกระเป๋า (Live Preview) */}
+              {modalMode === 'add' && formData.recordTrade && (
+                <div>
+                  {formData.accountId ? (
+                    (() => {
+                      const targetAcc = accounts.find((a) => a.id === formData.accountId);
+                      if (!targetAcc) return null;
+                      const vol = parseFloat(formData.volume) || 0;
+                      const cost = parseFloat(formData.initial_cost) || 0;
+                      const curr = (formData.currency || 'THB').toUpperCase();
+                      const rateToThb = fxRates[curr] || 1.0;
+                      const gross = vol * cost;
+                      const grossThb = gross * rateToThb;
+                      const accCurr = (targetAcc.currency || 'THB').toUpperCase();
+                      let deductAmount = grossThb;
+                      if (accCurr === curr) {
+                        deductAmount = gross;
+                      } else if (accCurr !== 'THB') {
+                        const accRateToThb = fxRates[accCurr] || 1.0;
+                        deductAmount = accRateToThb > 0 ? grossThb / accRateToThb : grossThb;
+                      }
+                      const curBal = Number(targetAcc.current_balance) || 0;
+                      const remainingBal = curBal - deductAmount;
+                      const isNegative = remainingBal < 0;
+
+                      return (
+                        <div
+                          className={`p-3 rounded-xl border text-xs transition-colors ${
+                            isNegative
+                              ? 'bg-amber-50/90 border-amber-300 text-amber-900'
+                              : 'bg-emerald-50/80 border-emerald-200 text-emerald-950'
+                          }`}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex items-start gap-2">
+                              <Wallet className="w-4 h-4 text-emerald-600 mt-0.5 shrink-0" />
+                              <div className="space-y-0.5">
+                                <span className="font-bold block">
+                                  ตัดเงินจากบัญชี: {targetAcc.bank_name ? `[${targetAcc.bank_name}] ` : ''}
+                                  {targetAcc.account_name}
+                                </span>
+                                <span className="text-[11px] block opacity-90">
+                                  ยอดตัดเงิน: -
+                                  {deductAmount.toLocaleString(undefined, {
+                                    minimumFractionDigits: 2,
+                                    maximumFractionDigits: 2,
+                                  })}{' '}
+                                  {accCurr} • ยอดคงเหลือใหม่:{' '}
+                                  <span className={`font-bold ${isNegative ? 'text-amber-700' : 'text-emerald-700'}`}>
+                                    {remainingBal.toLocaleString(undefined, {
+                                      minimumFractionDigits: 2,
+                                      maximumFractionDigits: 2,
+                                    })}{' '}
+                                    {accCurr}
+                                  </span>
+                                </span>
+                              </div>
+                            </div>
+                            {isNegative && (
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-200 text-amber-900 shrink-0">
+                                ยอดจะติดลบ
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })()
+                  ) : (
+                    <div className="p-2.5 bg-slate-100 rounded-xl border border-slate-200 text-xs text-slate-600 flex items-center gap-2">
+                      <AlertCircle className="w-4 h-4 text-slate-400 shrink-0" />
+                      <span>
+                        ไม่ได้เลือกบัญชี: ระบบจะไม่หักเงินสดออกจากกระเป๋า (เหมาะสำหรับบันทึกข้อมูลพอร์ตย้อนหลัง)
+                      </span>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -1460,6 +1798,370 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
           </div>
         </div>
       )}
+
+      {/* Sell Modal (ขายสินทรัพย์ / ขายทั้งหมด 100% ปิดสถานะ) */}
+      {isSellModalOpen && sellTargetHolding && (() => {
+        const holdingVol = Number(sellTargetHolding.volume) || 0;
+        const holdingCost = Number(sellTargetHolding.initial_cost) || 0;
+        const curr = (sellTargetHolding.currency || 'THB').toUpperCase();
+        const currPrefix = getCurrencySymbol(curr);
+        const rateToThb = fxRates[curr] || Number(sellTargetHolding.exchange_rate) || 1.0;
+
+        const units = parseFloat(sellVolumeInput) || 0;
+        const price = parseFloat(sellPriceInput) || 0;
+        const fee = parseFloat(sellFeeInput) || 0;
+
+        const isFullSell = units >= holdingVol && holdingVol > 0;
+        const remainingUnits = Math.max(0, holdingVol - units);
+
+        const gross = units * price;
+        const net = Math.max(0, gross - fee);
+        const netThb = net * rateToThb;
+
+        const costSold = units * holdingCost;
+        const realizedPnl = net - costSold;
+        const realizedPnlYield = costSold > 0 ? (realizedPnl / costSold) * 100 : 0;
+
+        const targetAcc = accounts.find((a) => a.id === sellAccountId);
+        let creditAmount = netThb;
+        let accCurr = 'THB';
+        if (targetAcc) {
+          accCurr = (targetAcc.currency || 'THB').toUpperCase();
+          if (accCurr === curr) {
+            creditAmount = net;
+          } else if (accCurr !== 'THB') {
+            const accRateToThb = fxRates[accCurr] || 1.0;
+            creditAmount = accRateToThb > 0 ? netThb / accRateToThb : netThb;
+          }
+        }
+        const curAccBal = targetAcc ? Number(targetAcc.current_balance || 0) : 0;
+        const projectedAccBal = curAccBal + creditAmount;
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs animate-in fade-in duration-150">
+            <div className="bg-white w-full max-w-lg rounded-2xl shadow-xl border border-slate-200 overflow-hidden animate-in zoom-in-95 duration-150 flex flex-col max-h-[90vh]">
+              {/* Header */}
+              <div className="flex items-center justify-between px-5 py-4 border-b border-rose-100 bg-rose-50/70">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-rose-100 border border-rose-200 flex items-center justify-center text-rose-600">
+                    <TrendingDown className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-slate-800 flex items-center gap-2">
+                      <span>ขายสินทรัพย์: {sellTargetHolding.symbol}</span>
+                      <span className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-white text-rose-700 border border-rose-200">
+                        {curr}
+                      </span>
+                    </h3>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      ขายทำกำไร หรือขายทั้งหมด 100% เพื่อปิดสถานะและรับเงินเข้ากระเป๋า
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCloseSellModal}
+                  className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-rose-100/50 transition cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Body */}
+              <form onSubmit={handleConfirmSell} className="p-5 overflow-y-auto space-y-4">
+                {/* Current Position Snapshot */}
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                  <div>
+                    <span className="text-[11px] text-slate-500 block">จำนวนที่ถือครอง</span>
+                    <span className="font-bold text-slate-800 font-mono">
+                      {holdingVol.toLocaleString(undefined, { maximumFractionDigits: 6 })} หุ้น
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[11px] text-slate-500 block">ต้นทุนเฉลี่ย</span>
+                    <span className="font-bold text-slate-800 font-mono">
+                      {currPrefix}{holdingCost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[11px] text-slate-500 block">ราคาตลาดล่าสุด</span>
+                    <span className="font-bold text-slate-800 font-mono">
+                      {currPrefix}
+                      {Number(sellTargetHolding.present_price || holdingCost).toLocaleString(undefined, {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 4,
+                      })}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[11px] text-slate-500 block">โบรกเกอร์</span>
+                    <span className="font-bold text-slate-800">
+                      {sellTargetHolding.broker || '-'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Quick Proportion Selectors */}
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="text-xs font-semibold text-slate-700">
+                      เลือกสัดส่วนที่ต้องการขาย:
+                    </label>
+                    {isFullSell && (
+                      <span className="text-[11px] font-bold text-rose-600 bg-rose-50 px-2 py-0.5 rounded-full border border-rose-200">
+                        ⚡ ขายทั้งหมด 100% (ปิดสถานะ)
+                      </span>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-4 gap-2">
+                    {[
+                      { label: '25%', ratio: 0.25 },
+                      { label: '50%', ratio: 0.5 },
+                      { label: '75%', ratio: 0.75 },
+                      { label: 'ขายหมด 100%', ratio: 1.0 },
+                    ].map((btn) => {
+                      const computedVal = Number((holdingVol * btn.ratio).toFixed(6));
+                      const isSelected = btn.ratio === 1.0 ? isFullSell : Math.abs(units - computedVal) < 0.000001;
+                      return (
+                        <button
+                          key={btn.label}
+                          type="button"
+                          onClick={() => {
+                            setSellVolumeInput(btn.ratio === 1.0 ? String(holdingVol) : String(computedVal));
+                          }}
+                          className={`py-1.5 px-2 text-xs font-bold rounded-xl border transition cursor-pointer ${
+                            isSelected
+                              ? 'bg-rose-600 text-white border-rose-600 shadow-xs'
+                              : 'bg-white text-slate-700 border-slate-200 hover:bg-rose-50 hover:text-rose-700 hover:border-rose-200'
+                          }`}
+                        >
+                          {btn.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Inputs: Sell Volume & Sell Price */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      จำนวนหน่วยที่จะขาย <span className="text-rose-500">*</span>
+                    </label>
+                    <input
+                      type="number"
+                      step="any"
+                      required
+                      max={holdingVol}
+                      min={0.00000001}
+                      placeholder="0.00"
+                      value={sellVolumeInput}
+                      onChange={(e) => setSellVolumeInput(e.target.value)}
+                      className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl bg-white outline-none focus:ring-2 focus:ring-rose-500 font-semibold"
+                    />
+                    <span className="text-[11px] text-slate-500 mt-0.5 block">
+                      {isFullSell ? (
+                        <span className="text-rose-600 font-semibold">ขายหมดทั้งพอร์ต (คงเหลือ 0 หุ้น)</span>
+                      ) : (
+                        <span>คงเหลือหลังขาย: {remainingUnits.toLocaleString(undefined, { maximumFractionDigits: 6 })} หุ้น</span>
+                      )}
+                    </span>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      ราคาที่ขายต่อหน่วย ({currPrefix}) <span className="text-rose-500">*</span>
+                    </label>
+                    <input
+                      type="number"
+                      step="any"
+                      required
+                      min={0}
+                      placeholder="0.00"
+                      value={sellPriceInput}
+                      onChange={(e) => setSellPriceInput(e.target.value)}
+                      className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl bg-white outline-none focus:ring-2 focus:ring-rose-500 font-semibold"
+                    />
+                    <span className="text-[11px] text-slate-500 mt-0.5 block">
+                      ราคาต่อหุ้นที่ทำรายการขายจริง
+                    </span>
+                  </div>
+                </div>
+
+                {/* Inputs: Fee & Date */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      ค่าธรรมเนียม / ภาษี ({currPrefix})
+                    </label>
+                    <input
+                      type="number"
+                      step="any"
+                      min={0}
+                      placeholder="0.00"
+                      value={sellFeeInput}
+                      onChange={(e) => setSellFeeInput(e.target.value)}
+                      className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl bg-white outline-none focus:ring-2 focus:ring-rose-500 font-medium"
+                    />
+                    <span className="text-[11px] text-slate-500 mt-0.5 block">
+                      ค่าคอมมิชชั่นโบรกเกอร์ (ถ้ามี)
+                    </span>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      วันที่ทำรายการ
+                    </label>
+                    <input
+                      type="date"
+                      required
+                      value={sellDate}
+                      onChange={(e) => setSellDate(e.target.value)}
+                      className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl bg-white outline-none focus:ring-2 focus:ring-rose-500 font-medium"
+                    />
+                    <span className="text-[11px] text-slate-500 mt-0.5 block">
+                      วันที่บันทึกรายการขาย
+                    </span>
+                  </div>
+                </div>
+
+                {/* Destination Account Selection */}
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1 flex items-center gap-1.5">
+                    <Wallet className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>รับเงินสดเข้ากระเป๋า / บัญชีการเงิน (Destination Account)</span>
+                  </label>
+                  <select
+                    value={sellAccountId}
+                    onChange={(e) => setSellAccountId(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl bg-white outline-none focus:ring-2 focus:ring-rose-500 font-medium cursor-pointer"
+                  >
+                    <option value="">-- ไม่ระบุบัญชี (ไม่เพิ่มเงินสดเข้ากระเป๋า) --</option>
+                    {accounts.map((acc) => {
+                      const aCurr = (acc.currency || 'THB').toUpperCase();
+                      return (
+                        <option key={acc.id} value={acc.id}>
+                          {acc.bank_name ? `[${acc.bank_name}] ` : ''}
+                          {acc.account_name} ({Number(acc.current_balance || 0).toLocaleString()} {aCurr})
+                        </option>
+                      );
+                    })}
+                  </select>
+                  <span className="text-[11px] text-slate-500 mt-0.5 block">
+                    ระบบจะนำเงินสุทธิที่ได้จากการขายโอนเข้าบัญชีนี้โดยอัตโนมัติ
+                  </span>
+                </div>
+
+                {/* Live Realized Profit & Wallet Credit Preview */}
+                <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200/90 space-y-2.5">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
+                    <div>
+                      <span className="text-[11px] text-slate-500 block">รับเงินสุทธิ</span>
+                      <span className="font-bold text-slate-800 font-mono text-sm block">
+                        {currPrefix}
+                        {net.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                      {curr !== 'THB' && (
+                        <span className="text-[10px] text-slate-500">
+                          ~฿{netThb.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </span>
+                      )}
+                    </div>
+
+                    <div>
+                      <span className="text-[11px] text-slate-500 block">กำไร/ขาดทุนรับรู้ (Realized)</span>
+                      <span
+                        className={`font-bold font-mono text-sm block ${
+                          realizedPnl >= 0 ? 'text-emerald-600' : 'text-rose-600'
+                        }`}
+                      >
+                        {realizedPnl >= 0 ? '+' : ''}
+                        {currPrefix}
+                        {realizedPnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                      <span
+                        className={`text-[10px] font-semibold ${
+                          realizedPnlYield >= 0 ? 'text-emerald-600' : 'text-rose-600'
+                        }`}
+                      >
+                        {realizedPnlYield >= 0 ? '+' : ''}
+                        {realizedPnlYield.toFixed(2)}%
+                      </span>
+                    </div>
+
+                    <div className="col-span-2 sm:col-span-1">
+                      <span className="text-[11px] text-slate-500 block">สถานะในพอร์ตหลังขาย</span>
+                      {isFullSell ? (
+                        <span className="inline-flex items-center gap-1 text-[11px] font-bold text-rose-700 bg-rose-50 px-2 py-0.5 rounded border border-rose-200 mt-0.5">
+                          ปิดสถานะ 100%
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-[11px] font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-200 mt-0.5">
+                          คงเหลือ {remainingUnits.toLocaleString()} หุ้น
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Wallet Credit Preview Note */}
+                  {targetAcc && net > 0 && (
+                    <div className="pt-2 border-t border-slate-200/80 flex items-center justify-between text-xs text-emerald-900 bg-emerald-50/70 p-2 rounded-lg border border-emerald-200/80">
+                      <div className="flex items-center gap-2">
+                        <Wallet className="w-4 h-4 text-emerald-600 shrink-0" />
+                        <div>
+                          <span className="font-semibold block">
+                            โอนเงินเข้า: {targetAcc.bank_name ? `[${targetAcc.bank_name}] ` : ''}
+                            {targetAcc.account_name}
+                          </span>
+                          <span className="text-[11px] text-emerald-700 block">
+                            ยอดเงินเข้า: +{creditAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {accCurr}
+                            {' '}(ยอดคงเหลือใหม่: {projectedAccBal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {accCurr})
+                          </span>
+                        </div>
+                      </div>
+                      <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+                    </div>
+                  )}
+
+                  {isFullSell && (
+                    <div className="text-[11px] text-slate-500 bg-white p-2 rounded-lg border border-slate-200/80">
+                      💡 <strong>ข้อสังเกต:</strong> เมื่อขายครบ 100% ระบบจะบันทึกประวัติการขาย (SELL) ในบันทึกการเทรด และนำสินทรัพย์ออกจากตารางพอร์ตให้อัตโนมัติ (ไม่จำเป็นต้องกดปุ่มลบถังขยะ)
+                    </div>
+                  )}
+                </div>
+
+                {/* Footer Buttons */}
+                <div className="flex justify-end items-center gap-2.5 pt-3 border-t border-slate-100">
+                  <button
+                    type="button"
+                    onClick={handleCloseSellModal}
+                    className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 bg-white hover:bg-slate-100 border border-slate-200 rounded-xl transition cursor-pointer"
+                  >
+                    ยกเลิก
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={submittingSell}
+                    className="px-5 py-2 text-white bg-rose-600 hover:bg-rose-700 rounded-xl text-xs font-bold transition disabled:opacity-50 shadow-xs cursor-pointer flex items-center gap-1.5"
+                  >
+                    {submittingSell ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <span>กำลังบันทึกการขาย...</span>
+                      </>
+                    ) : (
+                      <>
+                        <TrendingDown className="w-3.5 h-3.5" />
+                        <span>{isFullSell ? 'ยืนยันขายทั้งหมด (100%)' : `ยืนยันการขาย (${units.toLocaleString()} หุ้น)`}</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

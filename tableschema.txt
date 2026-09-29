@@ -231,3 +231,22 @@ create table public.currency_exchange_rates (
   updated_at timestamp with time zone not null default now(),
   constraint currency_exchange_rates_pkey primary key (currency)
 ) TABLESPACE pg_default;
+
+create table public.recurring_commitments (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references auth.users(id) on delete cascade default auth.uid(),
+  name text not null,                       -- เช่น 'เบี้ยประกันสุขภาพ AIA', 'ผ่อน iPhone 16'
+  amount numeric(18, 4) not null,           -- ยอดเงินต่องวด
+  frequency text not null,                  -- 'MONTHLY', 'ANNUAL', 'QUARTERLY'
+  due_day integer not null,                 -- วันที่ของเดือนที่ครบกำหนด (1-31)
+  due_month integer null,                   -- สำหรับ ANNUAL ระบุเดือน (1-12) เช่น เดือน 10
+  start_date date not null,                 -- วันเริ่มต้นสัญญา/งวดแรก
+  end_date date null,                       -- วันสิ้นสุด (ถ้าเป็น null = ทำต่อเนื่อง เช่น ประกันชีวิต/Netflix)
+  is_active boolean default true,           -- เปิด/ปิด การแจ้งเตือน
+  
+  -- การเชื่อมโยงการชำระเงิน
+  payment_account_id uuid references public.financial_accounts(id) on delete set null,
+  category text not null,                   -- 'ประกัน', 'หนี้สิน/ผ่อนชำระ', 'ความบันเทิง'
+  notes text null,
+  created_at timestamptz default now()
+);
