@@ -7,6 +7,11 @@ import {
   syncCurrencyExchangeRates,
   type ExchangeRateMap,
 } from '@/lib/exchangeRates';
+import {
+  parseGoldSymbol,
+  fetchGoldSpotUsd,
+  calculateGoldHoldingPrice,
+} from '@/lib/gold';
 
 const yahooFinance = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
 
@@ -16,8 +21,11 @@ const yahooFinance = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
  */
 function isExcludedSymbol(rawSymbol: string): boolean {
   const sym = rawSymbol.toUpperCase().trim();
+  // Check if it's a recognized gold symbol format - if so, do NOT exclude
+  if (sym.startsWith('GOLD') || sym.startsWith('XAU')) {
+    return parseGoldSymbol(sym) === null;
+  }
   return (
-    sym.startsWith('GOLD') ||
     sym.startsWith('K-') ||
     sym.startsWith('SCBTA') ||
     sym === 'GOOG80'
@@ -30,7 +38,7 @@ function isExcludedSymbol(rawSymbol: string): boolean {
  */
 function mapSymbolForYahoo(rawSymbol: string): string | null {
   const sym = rawSymbol.toUpperCase().trim();
-  if (isExcludedSymbol(sym)) {
+  if (isExcludedSymbol(sym) || parseGoldSymbol(sym) !== null) {
     return null;
   }
   // If the symbol already includes a market suffix (.BK, .HK, .SI, .T, .PA, .DE, etc.)
@@ -98,6 +106,8 @@ export async function GET(req: NextRequest) {
     }
 
     const updates = [];
+    let cachedGoldSpotUsd: number | null = null;
+    let goldFetchAttempted = false;
 
     for (const item of holdings) {
       const sym = item.symbol.toUpperCase().trim();
@@ -115,10 +125,32 @@ export async function GET(req: NextRequest) {
       }
 
       let rawPrice: number | null = null;
-      const isCrypto = ['BTC', 'ETH', 'SOL', 'BNB', 'DOGE', 'XRP'].includes(sym);
+      const goldConfig = parseGoldSymbol(sym);
+      const isCrypto = !goldConfig && ['BTC', 'ETH', 'SOL', 'BNB', 'DOGE', 'XRP'].includes(sym);
       let priceSource = '';
 
-      if (isCrypto) {
+      if (goldConfig) {
+        try {
+          if (!goldFetchAttempted) {
+            goldFetchAttempted = true;
+            cachedGoldSpotUsd = await fetchGoldSpotUsd();
+          }
+
+          if (cachedGoldSpotUsd !== null && cachedGoldSpotUsd > 0) {
+            const usdThbRate = ratesMap['USD'] ?? (holdingCurrency === 'USD' ? 1.0 : Number(item.exchange_rate) || 33.35);
+            rawPrice = calculateGoldHoldingPrice(
+              goldConfig,
+              cachedGoldSpotUsd,
+              usdThbRate,
+              holdingCurrency,
+              ratesMap
+            );
+            priceSource = 'gold_api';
+          }
+        } catch (e) {
+          console.error(`Gold price fetch/calculation failed: ${sym}`, e);
+        }
+      } else if (isCrypto) {
         try {
           // ใช้ CoinGecko Simple Price API แทน (ไม่บล็อก Vercel Serverless)
           const cryptoMap: Record<string, string> = {
@@ -167,9 +199,12 @@ export async function GET(req: NextRequest) {
         const rateToThb = ratesMap[holdingCurrency] ?? (holdingCurrency === 'THB' ? 1.0 : Number(item.exchange_rate) || 1.0);
         let finalPresentPrice = rawPrice;
 
-        // Currency alignment for present_price:
-        // 1. If Crypto was fetched in USD (Binance):
-        if (priceSource === 'binance_usd') {
+        if (priceSource === 'gold_api') {
+          // calculateGoldHoldingPrice already returns the price directly in holdingCurrency!
+          finalPresentPrice = rawPrice;
+        }
+        // 1. If Crypto was fetched in USD (Binance / CoinGecko):
+        else if (priceSource === 'binance_usd') {
           if (holdingCurrency === 'THB') {
             finalPresentPrice = rawPrice * (ratesMap['USD'] ?? 33.5);
           } else if (holdingCurrency !== 'USD') {
@@ -202,8 +237,17 @@ export async function GET(req: NextRequest) {
           newPrice: finalPresentPrice,
           currency: holdingCurrency,
           exchangeRateUsed: rateToThb,
+          priceSource,
+          goldType: goldConfig?.type,
           success: !updateError,
           error: updateError?.message,
+        });
+      } else {
+        updates.push({
+          id: item.id,
+          symbol: sym,
+          skipped: true,
+          reason: goldConfig ? 'Failed to fetch Gold Spot price' : 'Price quote unavailable',
         });
       }
     }

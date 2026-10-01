@@ -191,7 +191,7 @@ export default function TradeTransactionsSection({ onTradesUpdated }: TradeTrans
       const { data: fxData } = await supabase.from('currency_exchange_rates').select('currency, rate_to_thb');
       if (fxData && fxData.length > 0) {
         const rates: Record<string, number> = { THB: 1.0 };
-        fxData.forEach((row) => {
+        fxData.forEach((row: any) => {
           rates[row.currency] = Number(row.rate_to_thb);
         });
         setExchangeRates(rates);
@@ -380,12 +380,14 @@ export default function TradeTransactionsSection({ onTradesUpdated }: TradeTrans
     } catch {}
   };
 
-  // เมื่อเปลี่ยนโบรกเกอร์ในฟอร์ม ให้สลับไปใช้บัญชีที่ผูกไว้กับโบรกเกอร์นั้นทันที
+  // เมื่อเปลี่ยนโบรกเกอร์ในฟอร์ม ให้สลับไปใช้บัญชีที่ผูกไว้กับโบรกเกอร์นั้นทันที (ตรวจสอบความถูกต้องของบัญชี)
   const handleBrokerChange = (newBroker: string) => {
     setFormBroker(newBroker);
     const boundAccountId = brokerAccountMap[newBroker];
-    if (boundAccountId) {
+    if (boundAccountId && accounts.some((a) => a.id === boundAccountId)) {
       setFormAccountId(boundAccountId);
+    } else {
+      setFormAccountId('');
     }
   };
 
@@ -406,7 +408,9 @@ export default function TradeTransactionsSection({ onTradesUpdated }: TradeTrans
     setFormDate(new Date().toISOString().split('T')[0]);
     const defaultBroker = 'BLS';
     setFormBroker(defaultBroker);
-    setFormAccountId(brokerAccountMap[defaultBroker] || '');
+    const mappedAccId = brokerAccountMap[defaultBroker] || '';
+    const isValidAcc = accounts.some((a) => a.id === mappedAccId);
+    setFormAccountId(isValidAcc ? mappedAccId : '');
     setFormSaveAsDefault(true);
     setFormSide('BUY');
     setFormSymbol('');
@@ -428,7 +432,9 @@ export default function TradeTransactionsSection({ onTradesUpdated }: TradeTrans
     setEditingId(t.id);
     setFormDate(t.trade_date);
     setFormBroker(t.broker);
-    setFormAccountId(t.account_id || brokerAccountMap[t.broker] || '');
+    const targetAccId = t.account_id || brokerAccountMap[t.broker] || '';
+    const isValidAcc = accounts.some((a) => a.id === targetAccId);
+    setFormAccountId(isValidAcc ? targetAccId : '');
     setFormSaveAsDefault(false);
     setFormSide((t.side as any) || 'BUY');
     setFormSymbol(t.stock_symbol);
@@ -491,7 +497,25 @@ export default function TradeTransactionsSection({ onTradesUpdated }: TradeTrans
 
     try {
       setSubmitting(true);
+      // ตรวจสอบและดึง User Session ให้พร้อมใช้งาน
+      let currentUser: any = null;
       const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        currentUser = user;
+      } else {
+        const { data: { session } } = await supabase.auth.getSession();
+        currentUser = session?.user || null;
+      }
+
+      if (!currentUser) {
+        throw new Error('ไม่พบเซสชันผู้ใช้ กรุณารีเฟรชหน้าเว็บหรือเข้าสู่ระบบใหม่อีกครั้ง');
+      }
+
+      // ตรวจสอบว่าบัญชีที่เลือกมีอยู่จริงใน accounts หรือไม่ เพื่อป้องกัน Foreign Key Violation
+      const validAccountId =
+        formAccountId && accounts.some((a) => a.id === formAccountId)
+          ? formAccountId
+          : null;
 
       const payload: any = {
         broker: formBroker.trim(),
@@ -511,14 +535,16 @@ export default function TradeTransactionsSection({ onTradesUpdated }: TradeTrans
         fee_thb: formCalculations.feeThb,
         net_amount_thb: formCalculations.netThb,
         reason: formReason.trim() || null,
-        account_id: formAccountId || null,
+        account_id: validAccountId,
       };
 
-      if (user?.id) payload.user_id = user.id;
+      if (modalMode === 'create') {
+        payload.user_id = currentUser.id;
+      }
 
-      // บันทึก default mapping ถ้าผู้ใช้เลือกไว้
-      if (formSaveAsDefault && formBroker && formAccountId) {
-        saveBrokerAccountMapping(formBroker, formAccountId);
+      // บันทึก default mapping ถ้าผู้ใช้เลือกไว้และเป็นบัญชีที่ถูกต้อง
+      if (formSaveAsDefault && formBroker && validAccountId) {
+        saveBrokerAccountMapping(formBroker, validAccountId);
       }
 
       let saveError: any = null;
@@ -527,40 +553,57 @@ export default function TradeTransactionsSection({ onTradesUpdated }: TradeTrans
         const { error } = await supabase.from('trade_transactions').insert(payload);
         saveError = error;
       } else {
-        const { error } = await supabase.from('trade_transactions').update(payload).eq('id', editingId);
-        saveError = error;
-      }
+        const updatePayload = { ...payload };
+        delete updatePayload.user_id;
+        delete updatePayload.id;
 
-      // ตรวจสอบกรณีฐานข้อมูลยังไม่ได้เพิ่มคอลัมน์ account_id
-      if (saveError) {
-        if (saveError.message?.includes('column trade_transactions.account_id does not exist')) {
-          const retryWithoutAccount = confirm(
-            '⚠️ ข้อควรทราบจากฐานข้อมูล:\n' +
-            'ตาราง trade_transactions ใน Supabase ยังไม่มีคอลัมน์ account_id (ยังไม่ได้รัน SQL Migration)\n\n' +
-            '👉 คำสั่ง SQL สำหรับเพิ่มคอลัมน์:\n' +
-            'ALTER TABLE public.trade_transactions ADD COLUMN IF NOT EXISTS account_id uuid REFERENCES public.financial_accounts(id) ON DELETE SET NULL;\n\n' +
-            'คุณต้องการบันทึกข้อมูลการเทรดนี้โดย "ไม่บันทึก account_id ลง DB" ชั่วคราวก่อนหรือไม่? (ระบบจะยังคงจำการผูกบัญชีในเครื่องให้ตามปกติ)'
-          );
-          if (retryWithoutAccount) {
-            delete payload.account_id;
-            if (modalMode === 'create') {
-              const { error: rErr } = await supabase.from('trade_transactions').insert(payload);
-              if (rErr) throw rErr;
-            } else {
-              const { error: rErr } = await supabase.from('trade_transactions').update(payload).eq('id', editingId);
-              if (rErr) throw rErr;
-            }
-          } else {
-            return;
-          }
-        } else {
-          throw saveError;
+        const { data: updatedRows, error } = await supabase
+          .from('trade_transactions')
+          .update(updatePayload)
+          .eq('id', editingId)
+          .select();
+        saveError = error;
+
+        if (!error && (!updatedRows || updatedRows.length === 0)) {
+          throw new Error('ไม่สามารถบันทึกการแก้ไขได้: ไม่พบรายการหรือไม่มีสิทธิ์แก้ไขรายการนี้');
         }
       }
 
+      // หากมีปัญหาเกี่ยวกับ account_id (เช่น คอลัมน์ไม่มี หรือติด FK) ให้ retry อัตโนมัติทันที
+      if (
+        saveError &&
+        (saveError.message?.includes('account_id') ||
+          saveError.code === '42703' || // undefined_column
+          saveError.code === '23503') // foreign_key_violation
+      ) {
+        console.warn('Retrying trade save without account_id:', saveError.message);
+        delete payload.account_id;
+        if (modalMode === 'create') {
+          const { error: rErr } = await supabase.from('trade_transactions').insert(payload);
+          saveError = rErr;
+        } else {
+          const updatePayload = { ...payload };
+          delete updatePayload.user_id;
+          delete updatePayload.id;
+          const { data: retryRows, error: rErr } = await supabase
+            .from('trade_transactions')
+            .update(updatePayload)
+            .eq('id', editingId)
+            .select();
+          saveError = rErr;
+          if (!rErr && (!retryRows || retryRows.length === 0)) {
+            throw new Error('ไม่สามารถบันทึกการแก้ไขได้: ไม่พบรายการหรือไม่มีสิทธิ์แก้ไขรายการนี้');
+          }
+        }
+      }
+
+      if (saveError) {
+        throw saveError;
+      }
+
       // ถ้าเลือกให้ตัดเงิน/เพิ่มเงินในบัญชีที่ผูกโดยอัตโนมัติ
-      if (formSyncBalance && formAccountId) {
-        const targetAcc = accounts.find((a) => a.id === formAccountId);
+      if (formSyncBalance && validAccountId) {
+        const targetAcc = accounts.find((a) => a.id === validAccountId);
         if (targetAcc) {
           const accCurr = (targetAcc.currency || 'THB').toUpperCase();
           const tradeCurr = (formCurrency || 'THB').toUpperCase();
@@ -577,7 +620,7 @@ export default function TradeTransactionsSection({ onTradesUpdated }: TradeTrans
             await supabase
               .from('financial_accounts')
               .update({ current_balance: newBal, updated_at: new Date().toISOString() })
-              .eq('id', formAccountId);
+              .eq('id', validAccountId);
           }
         }
       }

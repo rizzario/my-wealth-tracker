@@ -28,8 +28,9 @@
 - `@/lib/supabase/server.ts` — Server Components, Server Actions, Route Handlers
 
 **Market data**
-- Crypto → Binance public REST (`https://api.binance.com/api/v3/ticker/price`)
+- Crypto → Binance public REST / CoinGecko Simple Price
 - Equities, US & Thai → `yahoo-finance2` (instance-based, v3/v4)
+- Gold → Gold API (`https://api.gold-api.com/price/XAU/USD`, XAU/USD Spot) with Yahoo (`GC=F`) fallback
 - FX USD/THB → Open Exchange (`https://open.er-api.com/v6/latest/USD`)
 
 **UI** — Lucide React, Tailwind CSS
@@ -350,11 +351,15 @@ Commitments represent future obligations. To preserve ledger integrity and preve
 
 Routing by `symbol`:
 
-1. **Crypto** — `BTC`, `ETH`, `SOL`, `BNB`, `DOGE`, `XRP` → Binance (USD) × `usdThbRate`
-2. **US equities / ETFs** — known list (`AAPL`, `NVDA`, `TSLA`, `VOO`, `QQQI`, …) → Yahoo
-3. **Thai equities** — default fallback (`PTT`, `SCB`, `LH`, `EA`, `SCGP`, …) → append `.BK` → Yahoo → already THB
-4. **Manual / excluded** — symbols prefixed `GOLD`, `K-`, `SCBTA`, `GOOG80` (DRs and Thai mutual
-   funds with no Yahoo coverage) **must be skipped before any fetch**, or the batch run throws.
+1. **Gold** — `GOLD (G)`, `GOLD (OZ)`, `GOLD 965 (G)`, `GOLD 965 (BAHT)` → Gold API (`https://api.gold-api.com/price/XAU/USD`) with Yahoo `GC=F` fallback
+   - `GOLD (OZ)`: XAU/USD Spot directly (USD or converted to THB).
+   - `GOLD (G)`: 99.5% pure gold per gram: `(XAU_USD / 31.1034768) * usdThbRate`.
+   - `GOLD 965 (G)`: Thai 96.5% gold per gram: `(XAU_USD / 31.1034768) * (96.5 / 99.5) * usdThbRate`.
+   - `GOLD 965 (BAHT)`: Thai 96.5% bullion (1 Baht = 15.244g): `(XAU_USD / 31.1034768) * (96.5 / 99.5) * 15.244 * usdThbRate` (~`XAU_USD * 0.4753 * usdThbRate`).
+2. **Crypto** — `BTC`, `ETH`, `SOL`, `BNB`, `DOGE`, `XRP` → CoinGecko (USD) × `usdThbRate`
+3. **US equities / ETFs** — known list (`AAPL`, `NVDA`, `TSLA`, `VOO`, `QQQI`, …) → Yahoo
+4. **Thai equities** — default fallback (`PTT`, `SCB`, `LH`, `EA`, `SCGP`, …) → append `.BK` → Yahoo → already THB
+5. **Manual / excluded** — unsupported symbols prefixed `K-`, `SCBTA`, `GOOG80` or unrecognized gold funds **must be skipped before any fetch**, or the batch run throws.
 
 Because the `*_thb` generated columns apply `exchange_rate` themselves for USD rows, this route
 should write `present_price` in the holding's **native** currency and let the database convert.

@@ -1341,13 +1341,15 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
                     type="text"
                     required
                     disabled={modalMode === 'edit'}
-                    placeholder="เช่น AAPL, NVDA, BTC, PTT"
+                    placeholder="เช่น AAPL, BTC, GOLD (G), GOLD 965 (G)"
                     value={formData.symbol}
                     onChange={(e) => setFormData({ ...formData, symbol: e.target.value.toUpperCase() })}
                     className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl bg-white outline-none focus:ring-2 focus:ring-blue-500 font-semibold uppercase disabled:bg-slate-100 disabled:text-slate-500"
                   />
                   <span className="text-[11px] text-slate-500 mt-0.5 block">
-                    {modalMode === 'add' ? 'ใส่ชื่อย่อหุ้น หรือเหรียญคริปโต' : 'สัญลักษณ์อ้างอิงของสินทรัพย์'}
+                    {modalMode === 'add'
+                      ? 'ใส่ชื่อย่อหุ้น, คริปโต หรือทองคำ: GOLD (G), GOLD (OZ), GOLD 965 (G)'
+                      : 'สัญลักษณ์อ้างอิงของสินทรัพย์'}
                   </span>
                 </div>
 
