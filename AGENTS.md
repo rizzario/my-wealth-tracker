@@ -238,9 +238,10 @@ Daily income, expense, and internal transfer / bill payment log.
 | `account_id` | UUID, nullable, FK → `financial_accounts(id)` | Source account (outflow for expense & transfer) |
 | `to_account_id` | UUID, nullable, FK → `financial_accounts(id)` | Destination account (inflow for transfer / debt deduction for credit card) |
 | `note` | TEXT, nullable | |
+| `is_historical` | BOOLEAN, default `false` | True when recorded from past/historical slips via Gemini AI (should bypass balance adjustment trigger) |
 | `created_at` | TIMESTAMPTZ, default `now()` | |
 
-**Trigger:** `on_transaction_changed` — `AFTER INSERT OR UPDATE OR DELETE FOR EACH ROW EXECUTE apply_txn_to_balance()`. Automatically keeps both source and destination accounts accurately synchronized without double-counting debt payments as expenses.
+**Trigger:** `on_transaction_changed` — `AFTER INSERT OR UPDATE OR DELETE FOR EACH ROW EXECUTE apply_txn_to_balance()`. Automatically keeps both source and destination accounts accurately synchronized without double-counting debt payments as expenses. When `is_historical = true`, balance adjustments should be skipped to prevent distorting current account balances.
 
 ### 3.8 Net worth — canonical formula
 
@@ -387,6 +388,8 @@ Scheduled by `vercel.json` Cron:
 | `components/CashAndPvdSection.tsx` | Client | Fixed deposits, Provident Fund (PVD), and long-term bonds with promo countdown badges. |
 | `components/CashFlowSection.tsx` | Client | Debt & cash flow manager: operating accounts, credit cards, projected statement balances, pending commitments accordion, one-click reconciliation (`[⚡ บันทึกตัดเงินจริง]`), and recurring commitments CRUD modal. |
 | `components/ExpenseIncomeSection.tsx` | Client | Daily income, expense, and internal transfer tracking with category breakdowns. |
+| `components/SlipScannerModal.tsx` | Client | AI slip scanner modal powered by Gemini 3.8 Flash: drag & drop, clipboard paste (Ctrl+V), auto bank account matching, and historical slip toggle. |
+| `app/api/scan-slip/route.ts` | Route Handler | POST endpoint using `@google/genai` (Gemini 3.8 Flash) with structured JSON schema for Thai bank slip analysis and account matching. |
 | `lib/performance.ts` | Shared Utility | Pure calculation engine for trade ledger: Realized P&L (FIFO/Average Cost), broker win rates, profit factor, fee totals, and Top Gainer/Loser ranking. |
 | `lib/recurringCommitments.ts` | Shared Utility | Pure functions for recurring commitments eligibility, due-date calculations, confirmed transaction matching, and pending liability calculations. |
 | `lib/networth.ts` | Shared Utility | Canonical net worth calculation helper (§3.8). |
@@ -654,8 +657,8 @@ DECLARE
   liab boolean;
   delta numeric(14,2);
 BEGIN
-  -- reverse the old row
-  IF TG_OP IN ('UPDATE', 'DELETE') AND OLD.account_id IS NOT NULL THEN
+  -- reverse the old row (skip if historical)
+  IF TG_OP IN ('UPDATE', 'DELETE') AND OLD.account_id IS NOT NULL AND COALESCE(OLD.is_historical, false) = false THEN
     SELECT is_liability INTO liab FROM financial_accounts WHERE id = OLD.account_id;
     delta := CASE WHEN OLD.type = 'INCOME' THEN -OLD.amount ELSE OLD.amount END;
     IF liab THEN delta := -delta; END IF;
@@ -664,8 +667,8 @@ BEGIN
      WHERE id = OLD.account_id AND user_id = OLD.user_id;
   END IF;
 
-  -- apply the new row
-  IF TG_OP IN ('INSERT', 'UPDATE') AND NEW.account_id IS NOT NULL THEN
+  -- apply the new row (skip if historical)
+  IF TG_OP IN ('INSERT', 'UPDATE') AND NEW.account_id IS NOT NULL AND COALESCE(NEW.is_historical, false) = false THEN
     SELECT is_liability INTO liab FROM financial_accounts WHERE id = NEW.account_id;
     delta := CASE WHEN NEW.type = 'INCOME' THEN NEW.amount ELSE -NEW.amount END;
     IF liab THEN delta := -delta; END IF;

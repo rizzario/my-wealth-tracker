@@ -31,8 +31,10 @@ import {
   ChevronsRight,
   RotateCcw,
   ChevronDown,
+  Sparkles,
 } from 'lucide-react';
 import { getCurrencySymbol } from '@/lib/currency';
+import SlipScannerModal from './SlipScannerModal';
 
 // ค่าความกว้างเริ่มต้นของแต่ละคอลัมน์ (px)
 export const DEFAULT_COLUMN_WIDTHS = {
@@ -57,6 +59,7 @@ export interface FinancialTransaction {
   account_id?: string | number | null;
   to_account_id?: string | number | null;
   note?: string | null;
+  is_historical?: boolean;
   created_at?: string;
 }
 
@@ -224,7 +227,11 @@ export default function ExpenseIncomeSection({
   const [editCategory, setEditCategory] = useState('');
   const [editAmount, setEditAmount] = useState('');
   const [editNote, setEditNote] = useState('');
+  const [editIsHistorical, setEditIsHistorical] = useState(false);
   const [submittingEdit, setSubmittingEdit] = useState(false);
+
+  // AI Slip Scanner Modal State
+  const [isSlipScannerOpen, setIsSlipScannerOpen] = useState(false);
 
   // Pagination State
   const [currentPage, setCurrentPage] = useState(1);
@@ -567,6 +574,7 @@ export default function ExpenseIncomeSection({
     setEditCategory(tx.category || '');
     setEditAmount(tx.amount != null ? String(tx.amount) : '');
     setEditNote(tx.note || '');
+    setEditIsHistorical(Boolean(tx.is_historical));
     setIsEditModalOpen(true);
   };
 
@@ -606,6 +614,7 @@ export default function ExpenseIncomeSection({
         amount: parseFloat(editAmount) || 0,
         note: editNote.trim() || null,
         transaction_date: fullDateTime,
+        is_historical: editIsHistorical,
       };
 
       const { error } = await supabase
@@ -903,6 +912,17 @@ export default function ExpenseIncomeSection({
             >
               {hideValues ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
               <span>{hideValues ? 'แสดงยอดเงิน' : 'ซ่อนยอดเงิน'}</span>
+            </button>
+
+            {/* ปุ่ม AI สแกนสลิป */}
+            <button
+              type="button"
+              onClick={() => setIsSlipScannerOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300/80 rounded-xl transition shadow-xs cursor-pointer"
+              title="สแกนสลิปโอนเงินด้วย Gemini AI"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+              <span>AI สแกนสลิป</span>
             </button>
 
             {/* ปุ่มพับ/เปิดฟอร์มบันทึก */}
@@ -1637,6 +1657,14 @@ export default function ExpenseIncomeSection({
                               )}
                               <span className="truncate">{tx.category}</span>
                             </span>
+                            {tx.is_historical && (
+                              <span
+                                className="ml-1.5 px-1.5 py-0.5 rounded text-[9px] font-semibold bg-amber-50 text-amber-700 border border-amber-200 shrink-0 inline-flex items-center"
+                                title="รายการย้อนหลัง (ไม่กระทบยอดเงินคงเหลือปัจจุบัน)"
+                              >
+                                ย้อนหลัง
+                              </span>
+                            )}
                           </td>
 
                           <td className="py-2.5 px-3 text-slate-600 truncate" title={tx.note || '-'}>
@@ -1987,6 +2015,20 @@ export default function ExpenseIncomeSection({
                 />
               </div>
 
+              {/* สลิปย้อนหลัง (is_historical) */}
+              <div className="flex items-center justify-between p-3 bg-slate-50 border border-slate-200 rounded-xl">
+                <div>
+                  <span className="text-xs font-semibold text-slate-700 block">รายการย้อนหลัง (Historical)</span>
+                  <span className="text-[10px] text-slate-500">ไม่ปรับยอดเงินคงเหลือในบัญชีปัจจุบัน</span>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={editIsHistorical}
+                  onChange={(e) => setEditIsHistorical(e.target.checked)}
+                  className="w-4 h-4 text-emerald-600 rounded focus:ring-emerald-500 cursor-pointer"
+                />
+              </div>
+
               {/* Footer Buttons */}
               <div className="pt-2 flex justify-end gap-2 border-t border-slate-100">
                 <button
@@ -2008,6 +2050,22 @@ export default function ExpenseIncomeSection({
           </div>
         </div>
       )}
+
+      {/* AI Slip Scanner Modal */}
+      <SlipScannerModal
+        isOpen={isSlipScannerOpen}
+        onClose={() => setIsSlipScannerOpen(false)}
+        accounts={accounts}
+        onTransactionSaved={async () => {
+          await fetchTransactions();
+          await fetchAccounts();
+          onTransactionsUpdated?.();
+          onCashFlowUpdated?.();
+        }}
+        expenseCategories={POPULAR_EXPENSE_CATEGORIES}
+        incomeCategories={POPULAR_INCOME_CATEGORIES}
+        transferCategories={POPULAR_TRANSFER_CATEGORIES}
+      />
     </div>
   );
 }

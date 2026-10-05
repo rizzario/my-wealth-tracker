@@ -36,6 +36,7 @@ export interface FinancialTransaction {
   account_id?: string | number | null;
   to_account_id?: string | number | null;
   note?: string | null;
+  is_historical?: boolean;
   created_at?: string;
 }
 
