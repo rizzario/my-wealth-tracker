@@ -63,11 +63,43 @@ export async function GET(req: NextRequest) {
     const currencyOnly = searchParams.get('currency_only') === 'true';
     const forceSyncFx = searchParams.get('sync_fx') === 'true';
 
-    // Check if triggered by Vercel Cron via CRON_SECRET bearer token
+    // Check authorization source
     const authHeader = req.headers.get('authorization');
-    const isCron = Boolean(
-      process.env.CRON_SECRET && authHeader === `Bearer ${process.env.CRON_SECRET}`
-    );
+    const userAgent = req.headers.get('user-agent') || '';
+    const cronSchedule = req.headers.get('x-vercel-cron-schedule');
+
+    let isAuthorized = false;
+    let authSource = 'unauthorized';
+
+    if (process.env.CRON_SECRET && authHeader === `Bearer ${process.env.CRON_SECRET}`) {
+      isAuthorized = true;
+      authSource = 'cron_secret';
+    } else if (userAgent.includes('vercel-cron') || Boolean(cronSchedule)) {
+      isAuthorized = true;
+      authSource = 'vercel_cron';
+    } else if (process.env.NODE_ENV === 'development') {
+      isAuthorized = true;
+      authSource = 'development';
+    } else {
+      const authClient = await createClient();
+      const { data: { user } } = await authClient.auth.getUser();
+      if (user) {
+        isAuthorized = true;
+        authSource = 'user_session';
+      }
+    }
+
+    if (!isAuthorized) {
+      return NextResponse.json(
+        {
+          error: 'Unauthorized',
+          message: 'Access denied. Valid user session or Vercel Cron authorization required.',
+        },
+        { status: 401 }
+      );
+    }
+
+    const isCron = authSource === 'cron_secret' || authSource === 'vercel_cron';
 
     if (isCron && !process.env.SUPABASE_SERVICE_ROLE_KEY) {
       console.warn(
@@ -269,9 +301,13 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       status: 'success',
-      source: isCron ? 'vercel_cron' : 'client_request',
+      source: authSource,
       rates: ratesMap,
       updatedCount: updates.length,
+      warning:
+        isCron && !process.env.SUPABASE_SERVICE_ROLE_KEY
+          ? 'SUPABASE_SERVICE_ROLE_KEY is not defined in Vercel. Cron might not be able to read/update holdings with RLS enabled.'
+          : undefined,
       updates,
     });
   } catch (error: any) {

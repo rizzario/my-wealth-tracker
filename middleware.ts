@@ -10,20 +10,9 @@ export async function middleware(request: NextRequest) {
   const url = request.nextUrl.clone();
   const pathname = url.pathname;
 
-  // 1. สำคัญที่สุด: ถ้าเป็น path /auth (callback) ปล่อยให้ผ่านเลย ห้ามตรวจ session และห้าม redirect เด็ดขาด
-  if (pathname.startsWith('/auth')) {
+  // 1. สำคัญที่สุด: ถ้าเป็น path /auth หรือ /api/update-prices ปล่อยให้ผ่านเลย (Route Handler จะตรวจสิทธิ์ CRON_SECRET / Session เอง)
+  if (pathname.startsWith('/auth') || pathname.startsWith('/api/update-prices')) {
     return supabaseResponse;
-  }
-
-  // 1.1 ถ้าเป็น Vercel Cron หรือคำขอที่มี CRON_SECRET ถูกต้อง ให้ผ่านได้โดยไม่ต้องตรวจ cookie session
-  if (pathname.startsWith('/api/update-prices')) {
-    const authHeader = request.headers.get('authorization');
-    if (
-      (process.env.CRON_SECRET && authHeader === `Bearer ${process.env.CRON_SECRET}`) ||
-      process.env.NODE_ENV === 'development'
-    ) {
-      return supabaseResponse;
-    }
   }
 
   const supabase = createServerClient(
