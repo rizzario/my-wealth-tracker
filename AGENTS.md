@@ -366,7 +366,14 @@ should write `present_price` in the holding's **native** currency and let the da
 Writing an already-converted THB figure into a `currency = 'USD'` row double-applies the rate.
 **[VERIFY]** which convention the current implementation follows — §7.2 is entangled with this.
 
-Scheduled by `vercel.json` Cron — e.g. `30 10 * * 1-5` = 17:30 ICT, weekdays.
+Scheduled by `vercel.json` Cron:
+- `30 10 * * 1-5`: 17:30 ICT (Mon-Fri) — after Thai market (SET) close, gold, crypto, and FX sync.
+- `0 22 * * 1-5`: 05:00 ICT next morning (Tue-Sat) — after US market (NYSE/NASDAQ) close and overnight FX sync.
+
+**Vercel Cron & Auth Requirements**:
+- `CRON_SECRET`: Required environment variable in Vercel. Vercel automatically sends `Authorization: Bearer <CRON_SECRET>` with each invocation. `middleware.ts` allows this bypass to prevent redirecting cron calls to `/login`.
+- `SUPABASE_SERVICE_ROLE_KEY`: Required in Vercel for cron execution to bypass Row Level Security (RLS) since Vercel Cron carries no user session cookie.
+- `maxDuration = 60`: Route handler configured to allow up to 60 seconds on Vercel Serverless.
 
 ### 4.5 Client architecture
 
@@ -435,6 +442,46 @@ before arithmetic, or `'100' + 50` becomes `'10050'`.
 ### 5.6 Vercel deployment
 - Do not set a custom root directory in `vercel.json` or the Vercel UI — this is not a monorepo.
 - `npm run build` must pass locally before pushing.
+
+### 5.7 Supabase PostgREST 1,000-row limit — chunking required for ledger tables ⚠️
+By default, Supabase PostgREST caps any single query at 1,000 rows unless configured otherwise. For tables with large transaction counts (such as `trade_transactions` with 2,260+ records and `expense_income_transactions`), standard `.select('*')` queries will **silently truncate** after 1,000 rows without any warning or error, corrupting ledger totals, searches, and cash flow analytics.
+
+**Standard chunking pattern**:
+```typescript
+let allRecords: any[] = [];
+let from = 0;
+const CHUNK_SIZE = 1000;
+let hasMore = true;
+
+while (hasMore) {
+  const { data: chunk, error } = await supabase
+    .from('trade_transactions')
+    .select('*')
+    .order('trade_date', { ascending: false })
+    .order('id', { ascending: false })
+    .range(from, from + CHUNK_SIZE - 1);
+
+  if (error) break;
+  if (chunk && chunk.length > 0) {
+    allRecords = allRecords.concat(chunk);
+    if (chunk.length < CHUNK_SIZE) {
+      hasMore = false;
+    } else {
+      from += CHUNK_SIZE;
+    }
+  } else {
+    hasMore = false;
+  }
+}
+```
+Always use this pattern when reading ledger tables where historical rows can exceed 1,000.
+
+### 5.8 Performance Analytics: Realized vs. Unrealized Separation Rule ⚠️
+When calculating portfolio analytics and broker performance:
+1. **Never count open holdings in Realized P&L**: Open positions from `portfolio_holdings` (`volume > 0`) must strictly be excluded from Realized Gain/Loss. Mixing them double-counts returns and corrupts historical closed trade metrics.
+2. **Realized P&L derivation**: Realized P&L is calculated solely from completed `SELL` orders matched against historical buy costs (Weighted Average Cost / FIFO) recorded in `trade_transactions`.
+3. **Active holdings view**: Active open positions must be isolated into a dedicated Unrealized P&L view (`present_price - initial_cost`).
+4. **Broker performance metrics**: Win rate %, profit factor, gross profit/loss, and commission fees must be grouped by the `broker` field across completed trades in `trade_transactions`.
 
 ---
 

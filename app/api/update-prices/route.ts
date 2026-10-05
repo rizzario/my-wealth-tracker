@@ -53,12 +53,27 @@ function mapSymbolForYahoo(rawSymbol: string): string | null {
   return `${sym}.BK`;
 }
 
+export const maxDuration = 60; // Allow up to 60 seconds on Vercel
+export const dynamic = 'force-dynamic';
+
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const targetId = searchParams.get('id');
     const currencyOnly = searchParams.get('currency_only') === 'true';
     const forceSyncFx = searchParams.get('sync_fx') === 'true';
+
+    // Check if triggered by Vercel Cron via CRON_SECRET bearer token
+    const authHeader = req.headers.get('authorization');
+    const isCron = Boolean(
+      process.env.CRON_SECRET && authHeader === `Bearer ${process.env.CRON_SECRET}`
+    );
+
+    if (isCron && !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      console.warn(
+        '⚠️ [CRON] Triggered by Vercel Cron, but SUPABASE_SERVICE_ROLE_KEY is not defined. RLS will prevent fetching holdings without a user session.'
+      );
+    }
 
     // 1. Select between Service Role (for Cron/Admin) and Server Client (for User Session) to satisfy RLS
     let supabase;
@@ -254,6 +269,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       status: 'success',
+      source: isCron ? 'vercel_cron' : 'client_request',
       rates: ratesMap,
       updatedCount: updates.length,
       updates,

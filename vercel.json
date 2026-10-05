@@ -1,3 +1,13 @@
 {
-  "framework": "nextjs"
+  "framework": "nextjs",
+  "crons": [
+    {
+      "path": "/api/update-prices",
+      "schedule": "30 10 * * 1-5"
+    },
+    {
+      "path": "/api/update-prices",
+      "schedule": "0 22 * * 1-5"
+    }
+  ]
 }

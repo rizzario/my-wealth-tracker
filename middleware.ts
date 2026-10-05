@@ -15,6 +15,17 @@ export async function middleware(request: NextRequest) {
     return supabaseResponse;
   }
 
+  // 1.1 ถ้าเป็น Vercel Cron หรือคำขอที่มี CRON_SECRET ถูกต้อง ให้ผ่านได้โดยไม่ต้องตรวจ cookie session
+  if (pathname.startsWith('/api/update-prices')) {
+    const authHeader = request.headers.get('authorization');
+    if (
+      (process.env.CRON_SECRET && authHeader === `Bearer ${process.env.CRON_SECRET}`) ||
+      process.env.NODE_ENV === 'development'
+    ) {
+      return supabaseResponse;
+    }
+  }
+
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
@@ -40,8 +51,11 @@ export async function middleware(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  // 2. ถ้ายังไม่ล็อกอิน และพยายามเข้าหน้าที่ไม่ใช่ /login ให้พาไป /login
+  // 2. ถ้ายังไม่ล็อกอิน และพยายามเข้าหน้าที่ไม่ใช่ /login ให้พาไป /login (สำหรับ API ส่งกลับเป็น JSON 401)
   if (!user && pathname !== '/login') {
+    if (pathname.startsWith('/api/')) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
     url.pathname = '/login';
     return NextResponse.redirect(url);
   }
