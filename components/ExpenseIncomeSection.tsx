@@ -348,17 +348,37 @@ export default function ExpenseIncomeSection({
     }
   };
 
-  // ดึงรายการธุรกรรมทั้งหมดของผู้ใช้
+  // ดึงรายการธุรกรรมทั้งหมดของผู้ใช้ (ทำ Pagination loop ผ่าน .range เพื่อทะลุข้อจำกัด default limit 1,000 แถว)
   const fetchTransactions = async () => {
     try {
-      const { data, error } = await supabase
-        .from('expense_income_transactions')
-        .select('*')
-        .order('transaction_date', { ascending: false })
-        .order('created_at', { ascending: false });
+      let allTxns: FinancialTransaction[] = [];
+      let from = 0;
+      const CHUNK_SIZE = 1000;
+      let hasMore = true;
 
-      if (error) throw error;
-      setTransactions((data || []) as FinancialTransaction[]);
+      while (hasMore) {
+        const { data: chunk, error } = await supabase
+          .from('expense_income_transactions')
+          .select('*')
+          .order('transaction_date', { ascending: false })
+          .order('created_at', { ascending: false })
+          .range(from, from + CHUNK_SIZE - 1);
+
+        if (error) throw error;
+
+        if (chunk && chunk.length > 0) {
+          allTxns = allTxns.concat(chunk as FinancialTransaction[]);
+          if (chunk.length < CHUNK_SIZE) {
+            hasMore = false;
+          } else {
+            from += CHUNK_SIZE;
+          }
+        } else {
+          hasMore = false;
+        }
+      }
+
+      setTransactions(allTxns);
     } catch (err: any) {
       console.error('Error fetching transactions:', err.message);
     }

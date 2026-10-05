@@ -376,9 +376,11 @@ Scheduled by `vercel.json` Cron — e.g. `30 10 * * 1-5` = 17:30 ICT, weekdays.
 | `components/OverviewSection.tsx` | Client | Executive summary dashboard: Net Worth breakdown, asset allocation, portfolio performance, and pending recurring commitments alert banner. |
 | `components/PortfolioTable.tsx` | Client | Positions table for stocks, crypto, and mutual funds. Row-level and bulk price refresh from Supabase without page reload. |
 | `components/TradeTransactionsSection.tsx` | Client | Buy/sell trade ledger for tax and historical tracking. |
+| `components/PerformanceAnalyticsSection.tsx` | Client | Performance analytics & broker evaluation: Realized P&L, Top Gainers/Losers, win-rate & profit factor by broker, and active holding separation. |
 | `components/CashAndPvdSection.tsx` | Client | Fixed deposits, Provident Fund (PVD), and long-term bonds with promo countdown badges. |
 | `components/CashFlowSection.tsx` | Client | Debt & cash flow manager: operating accounts, credit cards, projected statement balances, pending commitments accordion, one-click reconciliation (`[⚡ บันทึกตัดเงินจริง]`), and recurring commitments CRUD modal. |
 | `components/ExpenseIncomeSection.tsx` | Client | Daily income, expense, and internal transfer tracking with category breakdowns. |
+| `lib/performance.ts` | Shared Utility | Pure calculation engine for trade ledger: Realized P&L (FIFO/Average Cost), broker win rates, profit factor, fee totals, and Top Gainer/Loser ranking. |
 | `lib/recurringCommitments.ts` | Shared Utility | Pure functions for recurring commitments eligibility, due-date calculations, confirmed transaction matching, and pending liability calculations. |
 | `lib/networth.ts` | Shared Utility | Canonical net worth calculation helper (§3.8). |
 

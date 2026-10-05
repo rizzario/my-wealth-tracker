@@ -22,6 +22,7 @@ import {
   Landmark,
   ChevronDown,
   Check,
+  BarChart3,
 } from 'lucide-react';
 import PortfolioTable from '../components/PortfolioTable';
 import CashAndPVDTable from '../components/CashAndPvdSection';
@@ -29,10 +30,11 @@ import CashFlowSection from '../components/CashFlowSection';
 import ExpenseIncomeSection from '../components/ExpenseIncomeSection';
 import TradeTransactionsSection from '../components/TradeTransactionsSection';
 import OverviewSection from '../components/OverviewSection';
+import PerformanceAnalyticsSection from '../components/PerformanceAnalyticsSection';
 import { useIdleTimer } from './hooks/useIdleTimer';
 import { calculateNetWorthSummary } from '@/lib/networth';
 
-type TabKey = 'overview' | 'holdings' | 'trades' | 'cash_pvd' | 'cashflow' | 'expenses';
+type TabKey = 'overview' | 'holdings' | 'trades' | 'analytics' | 'cash_pvd' | 'cashflow' | 'expenses';
 
 interface TabItem {
   id: TabKey;
@@ -74,6 +76,13 @@ const INVESTMENT_GROUP: NavGroupItem = {
       shortLabel: 'ประวัติเทรด',
       icon: ArrowLeftRight,
       description: 'บันทึกซื้อ-ขายหุ้นและผูกบัญชีโบรกเกอร์',
+    },
+    {
+      id: 'analytics',
+      label: 'วิเคราะห์ผลตอบแทน & โบรกเกอร์',
+      shortLabel: 'วิเคราะห์พอร์ต',
+      icon: BarChart3,
+      description: 'วิเคราะห์กำไร-ขาดทุนรายโบรกเกอร์ Top Gainer / Loser',
     },
   ],
 };
@@ -133,7 +142,7 @@ export default function Home() {
 
   const desktopNavRef = useRef<HTMLElement>(null);
 
-  const isInvestmentActive = activeTab === 'holdings' || activeTab === 'trades';
+  const isInvestmentActive = activeTab === 'holdings' || activeTab === 'trades' || activeTab === 'analytics';
   const isAssetActive = activeTab === 'cash_pvd' || activeTab === 'cashflow';
 
   // States ข้อมูล
@@ -208,15 +217,35 @@ export default function Home() {
     const { data: fData } = await supabase.from('financial_accounts').select('*');
     if (fData) setFinancialAccounts(fData);
 
-    // 4. ดึงธุรกรรมทั้งหมดสำหรับคำนวณรายรับ-จ่ายประจำเดือน & ธุรกรรมล่าสุดใน Overview
-    const { data: tData } = await supabase
-      .from('expense_income_transactions')
-      .select('*')
-      .order('transaction_date', { ascending: false });
-    if (tData) {
-      setAllTransactions(tData);
-      setRecentTransactions(tData.slice(0, 5));
+    // 4. ดึงธุรกรรมทั้งหมดสำหรับคำนวณรายรับ-จ่ายประจำเดือน & ธุรกรรมล่าสุดใน Overview (วนลูป range เพื่อทะลุข้อจำกัด 1,000 แถว)
+    let allTxns: any[] = [];
+    let from = 0;
+    const CHUNK_SIZE = 1000;
+    let hasMore = true;
+
+    while (hasMore) {
+      const { data: chunk, error: tErr } = await supabase
+        .from('expense_income_transactions')
+        .select('*')
+        .order('transaction_date', { ascending: false })
+        .order('created_at', { ascending: false })
+        .range(from, from + CHUNK_SIZE - 1);
+
+      if (tErr) break;
+      if (chunk && chunk.length > 0) {
+        allTxns = allTxns.concat(chunk);
+        if (chunk.length < CHUNK_SIZE) {
+          hasMore = false;
+        } else {
+          from += CHUNK_SIZE;
+        }
+      } else {
+        hasMore = false;
+      }
     }
+
+    setAllTransactions(allTxns);
+    setRecentTransactions(allTxns.slice(0, 5));
 
     // 5. ดึงภาระประจำ (Recurring Commitments)
     const { data: rcData } = await supabase.from('recurring_commitments').select('*');
@@ -300,7 +329,7 @@ export default function Home() {
                     <span>การลงทุน</span>
                     {isInvestmentActive && (
                       <span className="hidden xl:inline-block text-[10px] font-normal opacity-90 px-1 py-0.5 bg-emerald-600/80 rounded leading-none">
-                        {activeTab === 'holdings' ? 'พอร์ต' : 'เทรด'}
+                        {activeTab === 'holdings' ? 'พอร์ต' : activeTab === 'trades' ? 'เทรด' : 'วิเคราะห์'}
                       </span>
                     )}
                     <ChevronDown
@@ -774,6 +803,11 @@ export default function Home() {
         {/* Tab 3: ประวัติการเทรด & คำสั่งซื้อขาย (Trade Transactions) */}
         {activeTab === 'trades' && (
           <TradeTransactionsSection onTradesUpdated={fetchAllOverviewData} />
+        )}
+
+        {/* Tab: วิเคราะห์ผลตอบแทน & โบรกเกอร์ (Performance & Broker Analytics) */}
+        {activeTab === 'analytics' && (
+          <PerformanceAnalyticsSection initialHoldings={holdings} />
         )}
 
         {/* Tab 4: เงินฝาก & PVD */}

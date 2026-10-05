@@ -63,7 +63,7 @@ interface OverviewSectionProps {
   recentTransactions: FinancialTransaction[];
   recurringCommitments?: any[];
   hideValues: boolean;
-  onNavigateTab: (tab: 'overview' | 'holdings' | 'trades' | 'cash_pvd' | 'cashflow' | 'expenses') => void;
+  onNavigateTab: (tab: 'overview' | 'holdings' | 'trades' | 'analytics' | 'cash_pvd' | 'cashflow' | 'expenses') => void;
 }
 
 const THAI_MONTHS_FULL = [

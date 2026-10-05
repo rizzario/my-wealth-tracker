@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, Fragment } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import {
   TrendingUp,
@@ -28,6 +28,10 @@ import {
   AlertCircle,
   Hash,
   ExternalLink,
+  ChevronUp,
+  Copy,
+  Receipt,
+  Info,
 } from 'lucide-react';
 import { CURRENCY_OPTIONS, getCurrencySymbol } from '@/lib/currency';
 
@@ -149,6 +153,21 @@ export default function TradeTransactionsSection({ onTradesUpdated }: TradeTrans
   });
   const [isResizing, setIsResizing] = useState(false);
 
+  // Expand Row State & Copy State
+  const [expandedRowId, setExpandedRowId] = useState<number | string | null>(null);
+  const [copiedOrderId, setCopiedOrderId] = useState<string | null>(null);
+
+  const toggleRowExpand = (id: number | string) => {
+    setExpandedRowId((prev) => (prev === id ? null : id));
+  };
+
+  const handleCopyOrderId = (orderId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(orderId);
+    setCopiedOrderId(orderId);
+    setTimeout(() => setCopiedOrderId(null), 2000);
+  };
+
   // Add / Edit Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState<'create' | 'edit'>('create');
@@ -197,18 +216,38 @@ export default function TradeTransactionsSection({ onTradesUpdated }: TradeTrans
         setExchangeRates(rates);
       }
 
-      // 3. ดึง trade_transactions
-      const { data: tradeData, error: tradeErr } = await supabase
-        .from('trade_transactions')
-        .select('*')
-        .order('trade_date', { ascending: false })
-        .order('created_at', { ascending: false });
+      // 3. ดึง trade_transactions ทั้งหมด (ทำ Batch Fetching วนลูปผ่าน .range เพื่อทะลุขีดจำกัด default 1,000 แถวของ Supabase PostgREST)
+      let allTrades: TradeTransaction[] = [];
+      let from = 0;
+      const CHUNK_SIZE = 1000;
+      let hasMore = true;
 
-      if (tradeErr) {
-        console.error('Error fetching trade transactions:', tradeErr.message);
-      } else {
-        setTrades((tradeData || []) as TradeTransaction[]);
+      while (hasMore) {
+        const { data: chunk, error: tradeErr } = await supabase
+          .from('trade_transactions')
+          .select('*')
+          .order('trade_date', { ascending: false })
+          .order('created_at', { ascending: false })
+          .range(from, from + CHUNK_SIZE - 1);
+
+        if (tradeErr) {
+          console.error('Error fetching trade transactions chunk:', tradeErr.message);
+          throw tradeErr;
+        }
+
+        if (chunk && chunk.length > 0) {
+          allTrades = allTrades.concat(chunk as TradeTransaction[]);
+          if (chunk.length < CHUNK_SIZE) {
+            hasMore = false;
+          } else {
+            from += CHUNK_SIZE;
+          }
+        } else {
+          hasMore = false;
+        }
       }
+
+      setTrades(allTrades);
     } catch (err: any) {
       console.error('Fetch error:', err.message);
     } finally {
@@ -230,12 +269,21 @@ export default function TradeTransactionsSection({ onTradesUpdated }: TradeTrans
     } catch {}
   };
 
-  // ดึงปีทั้งหมดที่มีรายการเทรด เพื่อนำมาทำ Filter
+  // หาชื่อบัญชีที่ผูกไว้ (รองรับทั้ง account_id ที่บันทึกลง DB และ default mapping ตามโบรกเกอร์)
+  const getAccountLabel = (accountId?: string | null, brokerName?: string) => {
+    const accId = accountId || (brokerName ? brokerAccountMap[brokerName] : null);
+    if (!accId) return null;
+    const acc = accounts.find((a) => a.id === accId);
+    if (!acc) return null;
+    return `${acc.bank_name ? `[${acc.bank_name}] ` : ''}${acc.account_name}`;
+  };
+
+  // ดึงปีทั้งหมดที่มีรายการเทรด เพื่อนำมาทำ Filter (ปลอดภัยจาก Timezone)
   const availableYears = useMemo(() => {
     const years = new Set<number>();
     trades.forEach((t) => {
       if (t.trade_date) {
-        const y = new Date(t.trade_date).getFullYear();
+        const y = parseInt(t.trade_date.split('-')[0], 10);
         if (!isNaN(y)) years.add(y);
       }
     });
@@ -251,18 +299,79 @@ export default function TradeTransactionsSection({ onTradesUpdated }: TradeTrans
     return Array.from(list);
   }, [trades]);
 
-  // คำนวณสรุปผลรวม (Metrics)
+  // กรองรายการเทรด (สัญลักษณ์, โบรกเกอร์, บัญชี, คำสั่ง, สกุลเงิน, เหตุผล)
+  const filteredTrades = useMemo(() => {
+    return trades.filter((t) => {
+      // 1. Search Query
+      if (searchQuery.trim()) {
+        const q = searchQuery.trim().toLowerCase();
+        const sym = (t.stock_symbol || '').trim().toLowerCase();
+        const matchSymbol = sym.includes(q);
+        const matchBroker = (t.broker || '').toLowerCase().includes(q);
+        const matchReason = (t.reason || '').toLowerCase().includes(q);
+        const matchOrderId = (t.order_id || '').toLowerCase().includes(q);
+        const accLabel = getAccountLabel(t.account_id, t.broker) || '';
+        const matchAcc = accLabel.toLowerCase().includes(q);
+        const matchCurr = (t.currency || '').toLowerCase().includes(q);
+        const matchSide =
+          (t.side || '').toLowerCase().includes(q) ||
+          (t.side === 'BUY' && 'ซื้อ'.includes(q)) ||
+          (t.side === 'SELL' && 'ขาย'.includes(q));
+
+        if (!matchSymbol && !matchBroker && !matchReason && !matchOrderId && !matchAcc && !matchCurr && !matchSide) {
+          return false;
+        }
+      }
+
+      // 2. Broker Filter
+      if (brokerFilter !== 'ALL' && t.broker !== brokerFilter) return false;
+
+      // 3. Side Filter
+      if (sideFilter !== 'ALL' && t.side !== sideFilter) return false;
+
+      // 4. Year Filter (Safe string split YYYY)
+      if (yearFilter !== 'ALL' && t.trade_date) {
+        const y = t.trade_date.split('-')[0];
+        if (y !== yearFilter) return false;
+      }
+
+      // 5. Account Filter (รองรับทั้ง account_id ใน DB และ default mapping ตามโบรกเกอร์)
+      if (accountFilter !== 'ALL') {
+        const effectiveAccId = t.account_id || brokerAccountMap[t.broker];
+        if (effectiveAccId !== accountFilter) return false;
+      }
+
+      return true;
+    });
+  }, [trades, searchQuery, brokerFilter, sideFilter, yearFilter, accountFilter, brokerAccountMap, accounts]);
+
+  // ตรวจสอบว่ามีการเปิดใช้ Filter ตัวใดตัวหนึ่งอยู่หรือไม่
+  const isFilterActive =
+    searchQuery.trim() !== '' ||
+    brokerFilter !== 'ALL' ||
+    sideFilter !== 'ALL' ||
+    yearFilter !== 'ALL' ||
+    accountFilter !== 'ALL';
+
+  // คำนวณสรุปผลรวม (Metrics) ครอบคลุมทั้ง Buy, Sell, Fee และ Withholding Tax (WHT)
+  // หากมี Filter ทำงานอยู่ จะคำนวณตามรายการที่กรอง เพื่อให้ตัวเลขใน Summary Cards สะท้อนข้อมูลตรงตามหน้าจอจริง
   const summaryMetrics = useMemo(() => {
     let totalBuyThb = 0;
     let totalSellThb = 0;
     let totalFeeThb = 0;
+    let totalWhtThb = 0;
     let buyCount = 0;
     let sellCount = 0;
 
-    trades.forEach((t) => {
+    const targetList = isFilterActive ? filteredTrades : trades;
+
+    targetList.forEach((t) => {
       const netThb = Number(t.net_amount_thb || 0);
       const feeThb = Number(t.fee_thb || 0);
+      const fx = Number(t.exchange_rate || 1.0);
+      const whtThb = Number(t.withholding_tax || 0) * (fx > 0 ? fx : 1.0);
       totalFeeThb += feeThb;
+      totalWhtThb += whtThb;
 
       if (t.side === 'BUY') {
         totalBuyThb += netThb;
@@ -279,44 +388,14 @@ export default function TradeTransactionsSection({ onTradesUpdated }: TradeTrans
       totalBuyThb,
       totalSellThb,
       totalFeeThb,
+      totalWhtThb,
       buyCount,
       sellCount,
-      totalTrades: trades.length,
+      totalTrades: targetList.length,
       netCashFlow,
+      isFiltered: isFilterActive,
     };
-  }, [trades]);
-
-  // กรองรายการเทรด
-  const filteredTrades = useMemo(() => {
-    return trades.filter((t) => {
-      // 1. Search Query
-      if (searchQuery.trim()) {
-        const q = searchQuery.trim().toLowerCase();
-        const matchSymbol = (t.stock_symbol || '').toLowerCase().includes(q);
-        const matchBroker = (t.broker || '').toLowerCase().includes(q);
-        const matchReason = (t.reason || '').toLowerCase().includes(q);
-        const matchOrderId = (t.order_id || '').toLowerCase().includes(q);
-        if (!matchSymbol && !matchBroker && !matchReason && !matchOrderId) return false;
-      }
-
-      // 2. Broker Filter
-      if (brokerFilter !== 'ALL' && t.broker !== brokerFilter) return false;
-
-      // 3. Side Filter
-      if (sideFilter !== 'ALL' && t.side !== sideFilter) return false;
-
-      // 4. Year Filter
-      if (yearFilter !== 'ALL' && t.trade_date) {
-        const y = new Date(t.trade_date).getFullYear();
-        if (String(y) !== yearFilter) return false;
-      }
-
-      // 5. Account Filter
-      if (accountFilter !== 'ALL' && t.account_id !== accountFilter) return false;
-
-      return true;
-    });
-  }, [trades, searchQuery, brokerFilter, sideFilter, yearFilter, accountFilter]);
+  }, [trades, filteredTrades, isFilterActive]);
 
   // Auto-reset page 1 when filter changes
   useEffect(() => {
@@ -648,15 +727,6 @@ export default function TradeTransactionsSection({ onTradesUpdated }: TradeTrans
     }
   };
 
-  // หาชื่อบัญชีที่ผูกไว้
-  const getAccountLabel = (accountId?: string | null, brokerName?: string) => {
-    const accId = accountId || (brokerName ? brokerAccountMap[brokerName] : null);
-    if (!accId) return null;
-    const acc = accounts.find((a) => a.id === accId);
-    if (!acc) return null;
-    return `${acc.bank_name ? `[${acc.bank_name}] ` : ''}${acc.account_name}`;
-  };
-
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
       {/* 1. Header Toolbar */}
@@ -741,18 +811,22 @@ export default function TradeTransactionsSection({ onTradesUpdated }: TradeTrans
           </p>
         </div>
 
-        {/* ค่าธรรมเนียมรวม */}
+        {/* ค่าธรรมเนียมรวม & WHT */}
         <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs">
           <span className="text-xs font-medium text-slate-500 flex items-center gap-1.5">
             <span className="p-1 rounded-md bg-amber-100 text-amber-700">
               <DollarSign className="w-3.5 h-3.5" />
             </span>
-            ค่าธรรมเนียมรวม (Fees)
+            ค่าธรรมเนียม & ภาษี (Fees & WHT)
           </span>
           <p className="text-xl font-bold text-amber-600 mt-2">
-            ฿{summaryMetrics.totalFeeThb.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            ฿{(summaryMetrics.totalFeeThb + summaryMetrics.totalWhtThb).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </p>
-          <p className="text-[11px] text-slate-500 mt-0.5">รวมค่าคอมมิชชั่น & VAT</p>
+          <p className="text-[11px] text-slate-500 mt-0.5 truncate" title={`คอมมิชชั่น ฿${summaryMetrics.totalFeeThb.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} | WHT ฿${summaryMetrics.totalWhtThb.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}>
+            {summaryMetrics.totalWhtThb > 0
+              ? `Fee ฿${summaryMetrics.totalFeeThb.toLocaleString('th-TH', { maximumFractionDigits: 0 })} + WHT ฿${summaryMetrics.totalWhtThb.toLocaleString('th-TH', { maximumFractionDigits: 0 })}`
+              : 'รวมค่าคอมมิชชั่น & VAT'}
+          </p>
         </div>
 
         {/* จำนวนธุรกรรมทั้งหมด */}
@@ -764,7 +838,9 @@ export default function TradeTransactionsSection({ onTradesUpdated }: TradeTrans
             จำนวนรายการ
           </span>
           <p className="text-xl font-bold text-slate-800 mt-2">{summaryMetrics.totalTrades} รายการ</p>
-          <p className="text-[11px] text-slate-500 mt-0.5">ในประวัติการเทรดทั้งหมด</p>
+          <p className="text-[11px] text-slate-500 mt-0.5">
+            {summaryMetrics.isFiltered ? `กรองจาก ${trades.length} รายการทั้งหมด` : 'ในประวัติการเทรดทั้งหมด'}
+          </p>
         </div>
       </div>
 
@@ -907,9 +983,9 @@ export default function TradeTransactionsSection({ onTradesUpdated }: TradeTrans
                   />
                 </th>
 
-                {/* สัญลักษณ์หุ้น */}
+                {/* สัญลักษณ์ */}
                 <th className="py-3 px-3 relative group">
-                  <span>สัญลักษณ์</span>
+                  <span>สัญลักษณ์ / FX</span>
                   <div
                     onMouseDown={(e) => handleMouseDownResize('symbol', e)}
                     className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-indigo-400/40 transition group-hover:bg-slate-200"
@@ -927,7 +1003,7 @@ export default function TradeTransactionsSection({ onTradesUpdated }: TradeTrans
 
                 {/* ราคา/หน่วย */}
                 <th className="py-3 px-3 relative group text-right">
-                  <span>ราคา/หน่วย</span>
+                  <span>ราคา / รวม Gross</span>
                   <div
                     onMouseDown={(e) => handleMouseDownResize('price', e)}
                     className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-indigo-400/40 transition group-hover:bg-slate-200"
@@ -936,7 +1012,7 @@ export default function TradeTransactionsSection({ onTradesUpdated }: TradeTrans
 
                 {/* ค่าธรรมเนียม */}
                 <th className="py-3 px-3 relative group text-right">
-                  <span>ค่าธรรมเนียม</span>
+                  <span>ค่าธรรมเนียม / WHT</span>
                   <div
                     onMouseDown={(e) => handleMouseDownResize('fee', e)}
                     className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-indigo-400/40 transition group-hover:bg-slate-200"
@@ -954,7 +1030,7 @@ export default function TradeTransactionsSection({ onTradesUpdated }: TradeTrans
 
                 {/* เหตุผล / บันทึก */}
                 <th className="py-3 px-3 relative group">
-                  <span>เหตุผล / บันทึก</span>
+                  <span>Order ID / เหตุผล</span>
                   <div
                     onMouseDown={(e) => handleMouseDownResize('reason', e)}
                     className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-indigo-400/40 transition group-hover:bg-slate-200"
@@ -987,97 +1063,310 @@ export default function TradeTransactionsSection({ onTradesUpdated }: TradeTrans
                   const isFree = t.side === 'FREE';
                   const boundAccName = getAccountLabel(t.account_id, t.broker);
                   const currSym = getCurrencySymbol(t.currency);
+                  const isExpanded = expandedRowId === t.id;
+                  const isForeign = t.currency && t.currency !== 'THB';
+                  const fxRate = Number(t.exchange_rate || 1.0);
+                  const grossThb = Number(t.gross_amount_thb ?? ((Number(t.units) * Number(t.unit_price)) * fxRate));
+                  const grossNative = Number(t.gross_amount ?? (Number(t.units) * Number(t.unit_price)));
+                  const whtThb = Number(t.withholding_tax || 0) * (fxRate > 0 ? fxRate : 1.0);
 
                   return (
-                    <tr key={t.id} className="hover:bg-slate-50/80 transition">
-                      {/* วันที่ */}
-                      <td className="py-2.5 px-3 text-slate-600 whitespace-nowrap">{t.trade_date}</td>
+                    <Fragment key={t.id}>
+                      <tr className={`transition group ${isExpanded ? 'bg-emerald-50/40' : 'hover:bg-slate-50/80'}`}>
+                        {/* วันที่ & Toggle */}
+                        <td className="py-2.5 px-3 text-slate-700 whitespace-nowrap">
+                          <button
+                            type="button"
+                            onClick={() => toggleRowExpand(t.id)}
+                            className="flex items-center gap-1.5 hover:text-emerald-700 transition cursor-pointer text-left w-full group/btn font-sans"
+                            title="คลิกเพื่อดูรายละเอียดเชิงลึก (Audit Ledger)"
+                          >
+                            <ChevronRight
+                              className={`w-3.5 h-3.5 text-slate-400 group-hover/btn:text-emerald-600 transition-transform ${
+                                isExpanded ? 'rotate-90 text-emerald-600' : ''
+                              }`}
+                            />
+                            <span className="font-mono text-xs">{t.trade_date}</span>
+                          </button>
+                        </td>
 
-                      {/* โบรกเกอร์ & บัญชี */}
-                      <td className="py-2.5 px-3 truncate" title={`${t.broker}${boundAccName ? ` (${boundAccName})` : ''}`}>
-                        <div className="font-sans font-semibold text-slate-800">{t.broker}</div>
-                        {boundAccName ? (
-                          <div className="text-[10px] text-slate-500 truncate flex items-center gap-1 mt-0.5">
-                            <Wallet className="w-3 h-3 text-emerald-600 shrink-0" />
-                            <span className="truncate">{boundAccName}</span>
+                        {/* โบรกเกอร์ & บัญชี */}
+                        <td className="py-2.5 px-3 truncate" title={`${t.broker}${boundAccName ? ` (${boundAccName})` : ''}`}>
+                          <div className="font-sans font-semibold text-slate-800 flex items-center gap-1.5">
+                            <span>{t.broker}</span>
+                            {t.account_id && (
+                              <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500" title="ผูกบัญชีบันทึกลงฐานข้อมูลแล้ว" />
+                            )}
                           </div>
-                        ) : (
-                          <span className="text-[10px] text-slate-500">ไม่ได้ผูกบัญชี</span>
-                        )}
-                      </td>
+                          {boundAccName ? (
+                            <div className="text-[10px] text-slate-500 truncate flex items-center gap-1 mt-0.5">
+                              <Wallet className="w-3 h-3 text-emerald-600 shrink-0" />
+                              <span className="truncate">{boundAccName}</span>
+                            </div>
+                          ) : (
+                            <span className="text-[10px] text-slate-400">ไม่ได้ผูกบัญชี</span>
+                          )}
+                        </td>
 
-                      {/* ฝั่งคำสั่ง */}
-                      <td className="py-2.5 px-3 text-center whitespace-nowrap">
-                        <span
-                          className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold font-sans ${
-                            isBuy
-                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                              : isSell
-                              ? 'bg-rose-50 text-rose-700 border border-rose-200'
-                              : 'bg-blue-50 text-blue-700 border border-blue-200'
-                          }`}
-                        >
-                          {isBuy ? 'ซื้อ' : isSell ? 'ขาย' : 'ฟรี/ปันผล'}
-                        </span>
-                      </td>
-
-                      {/* สัญลักษณ์ */}
-                      <td className="py-2.5 px-3 whitespace-nowrap">
-                        <span className="font-bold text-slate-900 font-sans">{t.stock_symbol}</span>
-                        {t.currency && t.currency !== 'THB' && (
-                          <span className="ml-1 text-[10px] text-slate-500 font-sans">({t.currency})</span>
-                        )}
-                      </td>
-
-                      {/* จำนวนหุ้น */}
-                      <td className="py-2.5 px-3 text-right text-slate-700 font-mono tabular-nums">
-                        {Number(t.units).toLocaleString(undefined, { maximumFractionDigits: 6 })}
-                      </td>
-
-                      {/* ราคาต่อหน่วย */}
-                      <td className="py-2.5 px-3 text-right text-slate-700 font-mono tabular-nums">
-                        {currSym}{Number(t.unit_price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
-                      </td>
-
-                      {/* ค่าธรรมเนียม */}
-                      <td className="py-2.5 px-3 text-right text-slate-500 text-[11px] font-mono tabular-nums">
-                        {Number(t.fee_thb || 0) > 0 ? `฿${Number(t.fee_thb).toLocaleString(undefined, { minimumFractionDigits: 2 })}` : '-'}
-                      </td>
-
-                      {/* ยอดเงินสุทธิ */}
-                      <td className="py-2.5 px-3 text-right font-bold whitespace-nowrap font-mono tabular-nums">
-                        <span className={isBuy ? 'text-emerald-700' : isSell ? 'text-rose-700' : 'text-blue-700'}>
-                          {isBuy ? '-' : isSell ? '+' : ''}฿{Number(t.net_amount_thb || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                        </span>
-                      </td>
-
-                      {/* เหตุผล / บันทึก */}
-                      <td className="py-2.5 px-3 text-slate-500 font-sans truncate" title={t.reason || t.order_id || ''}>
-                        {t.reason || (t.order_id ? `#${t.order_id}` : '-')}
-                      </td>
-
-                      {/* เครื่องมือจัดการ */}
-                      <td className="py-2.5 px-3 text-center whitespace-nowrap font-sans">
-                        <div className="flex items-center justify-center gap-1">
-                          <button
-                            type="button"
-                            onClick={() => handleOpenEditModal(t)}
-                            className="p-1 min-w-[32px] min-h-[32px] flex items-center justify-center text-slate-500 hover:text-emerald-600 rounded-lg hover:bg-slate-100 transition cursor-pointer"
-                            title="แก้ไขรายการ"
+                        {/* ฝั่งคำสั่ง */}
+                        <td className="py-2.5 px-3 text-center whitespace-nowrap">
+                          <span
+                            className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold font-sans ${
+                              isBuy
+                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                : isSell
+                                ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                                : 'bg-blue-50 text-blue-700 border border-blue-200'
+                            }`}
                           >
-                            <Pencil className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteTrade(t)}
-                            className="p-1 min-w-[32px] min-h-[32px] flex items-center justify-center text-slate-500 hover:text-rose-600 rounded-lg hover:bg-slate-100 transition cursor-pointer"
-                            title="ลบรายการ"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
+                            {isBuy ? 'ซื้อ' : isSell ? 'ขาย' : 'ฟรี/ปันผล'}
+                          </span>
+                        </td>
+
+                        {/* สัญลักษณ์ & Foreign FX */}
+                        <td className="py-2.5 px-3">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-bold text-slate-900 font-sans">{t.stock_symbol}</span>
+                            {isForeign && (
+                              <span className="px-1.5 py-0.2 rounded bg-slate-100 text-[10px] font-semibold text-slate-600 font-sans border border-slate-200">
+                                {t.currency}
+                              </span>
+                            )}
+                          </div>
+                          {isForeign && fxRate !== 1 && (
+                            <div className="text-[10px] text-slate-400 font-mono mt-0.5" title={`อัตราแลกเปลี่ยนคำนวณ: 1 ${t.currency} = ฿${fxRate}`}>
+                              @ ฿{fxRate.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+                            </div>
+                          )}
+                        </td>
+
+                        {/* จำนวนหุ้น */}
+                        <td className="py-2.5 px-3 text-right text-slate-700 font-mono tabular-nums">
+                          {Number(t.units).toLocaleString(undefined, { maximumFractionDigits: 6 })}
+                        </td>
+
+                        {/* ราคาต่อหน่วย & Gross */}
+                        <td className="py-2.5 px-3 text-right font-mono tabular-nums">
+                          <div className="text-slate-800 font-medium">
+                            {currSym}{Number(t.unit_price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+                          </div>
+                          <div className="text-[10px] text-slate-400 mt-0.5" title="มูลค่ารวม Gross ก่อนหักค่าธรรมเนียมและภาษี">
+                            Gross: {isForeign ? `${currSym}${grossNative.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : `฿${grossThb.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                          </div>
+                        </td>
+
+                        {/* ค่าธรรมเนียม & WHT */}
+                        <td className="py-2.5 px-3 text-right font-mono tabular-nums text-[11px]">
+                          {Number(t.fee_thb || 0) > 0 ? (
+                            <div className="text-slate-600">
+                              ฿{Number(t.fee_thb).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            </div>
+                          ) : (
+                            <div className="text-slate-400">-</div>
+                          )}
+                          {Number(t.withholding_tax || 0) > 0 && (
+                            <div className="text-[10px] text-amber-600 font-medium mt-0.5" title={`ภาษีหัก ณ ที่จ่าย (WHT): ${currSym}${Number(t.withholding_tax).toLocaleString(undefined, { minimumFractionDigits: 2 })}`}>
+                              WHT ฿{whtThb.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            </div>
+                          )}
+                        </td>
+
+                        {/* ยอดเงินสุทธิ */}
+                        <td className="py-2.5 px-3 text-right font-bold whitespace-nowrap font-mono tabular-nums">
+                          <div className={isBuy ? 'text-emerald-700' : isSell ? 'text-rose-700' : 'text-blue-700'}>
+                            {isBuy ? '-' : isSell ? '+' : ''}฿{Number(t.net_amount_thb || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          </div>
+                          {isForeign && t.net_amount != null && (
+                            <div className="text-[10px] font-normal text-slate-500 font-mono mt-0.5">
+                              ({isBuy ? '-' : isSell ? '+' : ''}{currSym}{Number(t.net_amount).toLocaleString(undefined, { minimumFractionDigits: 2 })})
+                            </div>
+                          )}
+                        </td>
+
+                        {/* Order ID & เหตุผล */}
+                        <td className="py-2.5 px-3">
+                          <div className="flex flex-col gap-1 max-w-full">
+                            {t.order_id && (
+                              <div className="flex items-center gap-1">
+                                <span
+                                  className="inline-flex items-center gap-1 text-[10px] font-mono text-slate-600 bg-slate-100 hover:bg-slate-200 px-1.5 py-0.5 rounded border border-slate-200 cursor-pointer transition w-fit"
+                                  onClick={(e) => handleCopyOrderId(t.order_id!, e)}
+                                  title="คลิกเพื่อคัดลอกเลขคำสั่งซื้อ (Order ID)"
+                                >
+                                  <Hash className="w-2.5 h-2.5 text-slate-400" />
+                                  <span className="truncate max-w-[85px]">{t.order_id}</span>
+                                  {copiedOrderId === t.order_id ? (
+                                    <Check className="w-2.5 h-2.5 text-emerald-600" />
+                                  ) : (
+                                    <Copy className="w-2.5 h-2.5 text-slate-400" />
+                                  )}
+                                </span>
+                              </div>
+                            )}
+                            {t.reason ? (
+                              <span className="text-slate-600 truncate block text-xs" title={t.reason}>
+                                {t.reason}
+                              </span>
+                            ) : !t.order_id ? (
+                              <span className="text-slate-400 text-xs">-</span>
+                            ) : null}
+                          </div>
+                        </td>
+
+                        {/* เครื่องมือจัดการ */}
+                        <td className="py-2.5 px-3 text-center whitespace-nowrap font-sans">
+                          <div className="flex items-center justify-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => toggleRowExpand(t.id)}
+                              className={`p-1 min-w-[30px] min-h-[30px] flex items-center justify-center rounded-lg transition cursor-pointer ${
+                                isExpanded ? 'text-emerald-700 bg-emerald-100/70' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100'
+                              }`}
+                              title={isExpanded ? 'ย่อรายละเอียด' : 'ดูรายละเอียดเชิงลึก'}
+                            >
+                              <Receipt className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleOpenEditModal(t)}
+                              className="p-1 min-w-[30px] min-h-[30px] flex items-center justify-center text-slate-500 hover:text-emerald-600 rounded-lg hover:bg-slate-100 transition cursor-pointer"
+                              title="แก้ไขรายการ"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteTrade(t)}
+                              className="p-1 min-w-[30px] min-h-[30px] flex items-center justify-center text-slate-500 hover:text-rose-600 rounded-lg hover:bg-slate-100 transition cursor-pointer"
+                              title="ลบรายการ"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+
+                      {/* Expanded Detail View */}
+                      {isExpanded && (
+                        <tr className="bg-emerald-50/20 border-b border-emerald-100 animate-in fade-in duration-150">
+                          <td colSpan={10} className="p-3 sm:p-4">
+                            <div className="bg-white rounded-xl border border-emerald-200/80 p-4 shadow-2xs space-y-3 font-sans">
+                              {/* Header & Meta */}
+                              <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-slate-100 text-xs">
+                                <div className="flex items-center gap-2">
+                                  <span className="p-1 rounded-md bg-emerald-100 text-emerald-700">
+                                    <Receipt className="w-4 h-4" />
+                                  </span>
+                                  <span className="font-bold text-slate-800">
+                                    บันทึกคำสั่งซื้อขาย #{t.id} ({t.side} {t.stock_symbol})
+                                  </span>
+                                  {t.order_id && (
+                                    <span className="inline-flex items-center gap-1 text-[10px] font-mono bg-slate-100 text-slate-600 px-2 py-0.5 rounded border border-slate-200">
+                                      <Hash className="w-3 h-3 text-slate-400" />
+                                      {t.order_id}
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="text-[11px] text-slate-400 font-mono">
+                                  วันที่ทำรายการ: <span className="font-semibold text-slate-600">{t.trade_date}</span>
+                                  {t.created_at && ` (บันทึกเข้าระบบ: ${new Date(t.created_at).toLocaleString('th-TH')})`}
+                                </div>
+                              </div>
+
+                              {/* 4 Financial Columns */}
+                              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
+                                <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+                                  <span className="text-[10px] text-slate-400 block font-medium">มูลค่ารวมก่อนหัก (Gross)</span>
+                                  <span className="text-sm font-bold text-slate-800 font-mono block mt-0.5">
+                                    ฿{grossThb.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                  </span>
+                                  {isForeign && (
+                                    <span className="text-[10px] text-slate-500 font-mono">
+                                      ({currSym}{grossNative.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
+                                    </span>
+                                  )}
+                                </div>
+
+                                <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+                                  <span className="text-[10px] text-slate-400 block font-medium">ค่าคอมมิชชั่น & VAT</span>
+                                  <span className="text-sm font-bold text-amber-600 font-mono block mt-0.5">
+                                    ฿{Number(t.fee_thb || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                  </span>
+                                  {isForeign && Number(t.fee || 0) > 0 && (
+                                    <span className="text-[10px] text-slate-500 font-mono">
+                                      ({currSym}{Number(t.fee).toLocaleString(undefined, { minimumFractionDigits: 2 })})
+                                    </span>
+                                  )}
+                                </div>
+
+                                <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+                                  <span className="text-[10px] text-slate-400 block font-medium">ภาษีหัก ณ ที่จ่าย (WHT)</span>
+                                  <span className="text-sm font-bold text-amber-700 font-mono block mt-0.5">
+                                    ฿{whtThb.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                  </span>
+                                  {isForeign && Number(t.withholding_tax || 0) > 0 && (
+                                    <span className="text-[10px] text-slate-500 font-mono">
+                                      ({currSym}{Number(t.withholding_tax).toLocaleString(undefined, { minimumFractionDigits: 2 })})
+                                    </span>
+                                  )}
+                                </div>
+
+                                <div className="bg-emerald-50/70 p-2.5 rounded-xl border border-emerald-100">
+                                  <span className="text-[10px] text-emerald-800 block font-medium">ยอดสุทธิชำระ/รับจริง (Net)</span>
+                                  <span className="text-sm font-bold text-emerald-900 font-mono block mt-0.5">
+                                    {isBuy ? '-' : isSell ? '+' : ''}฿{Number(t.net_amount_thb || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                  </span>
+                                  {isForeign && t.net_amount != null && (
+                                    <span className="text-[10px] text-emerald-700 font-mono">
+                                      ({currSym}{Number(t.net_amount).toLocaleString(undefined, { minimumFractionDigits: 2 })})
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* Details: Account, FX, Reason */}
+                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs pt-0.5">
+                                <div className="flex items-start gap-2 bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+                                  <Wallet className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                                  <div className="min-w-0">
+                                    <span className="text-[10px] text-slate-400 block font-medium">บัญชีการเงินที่ตัด/รับเงิน</span>
+                                    <span className="font-semibold text-slate-800 block truncate">
+                                      {boundAccName || 'ไม่ได้ผูกบัญชีการเงิน'}
+                                    </span>
+                                    <span className="text-[10px] text-slate-500">
+                                      {t.account_id ? '✓ บันทึกรหัสบัญชีลงฐานข้อมูล' : boundAccName ? 'ℹ️ อ้างอิงตามโบรกเกอร์เริ่มต้น' : 'ไม่ได้ระบุ'}
+                                    </span>
+                                  </div>
+                                </div>
+
+                                <div className="flex items-start gap-2 bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+                                  <ArrowRightLeft className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+                                  <div className="min-w-0">
+                                    <span className="text-[10px] text-slate-400 block font-medium">อัตราแลกเปลี่ยน (FX) & ราคาต่อหน่วย</span>
+                                    <span className="font-semibold text-slate-800 block font-mono">
+                                      {currSym}{Number(t.unit_price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })} / หน่วย
+                                    </span>
+                                    <span className="text-[10px] text-slate-500 font-mono">
+                                      {isForeign ? `1 ${t.currency} = ฿${fxRate.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}` : 'สกุลเงินฐาน THB (1.0)'}
+                                    </span>
+                                  </div>
+                                </div>
+
+                                <div className="flex items-start gap-2 bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+                                  <Info className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
+                                  <div className="min-w-0">
+                                    <span className="text-[10px] text-slate-400 block font-medium">กลยุทธ์ / บันทึกเหตุผลการเทรด</span>
+                                    <p className="text-slate-700 text-xs break-words line-clamp-2" title={t.reason || ''}>
+                                      {t.reason || 'ไม่มีบันทึกเหตุผล'}
+                                    </p>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
                   );
                 })
               )}
