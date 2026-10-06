@@ -109,6 +109,7 @@ export async function POST(req: NextRequest) {
     // 3. Extract Image payload (support multipart/form-data or application/json base64)
     let base64Data = '';
     let mimeType = 'image/jpeg';
+    let requestedModel = '';
 
     const contentType = req.headers.get('content-type') || '';
 
@@ -118,6 +119,7 @@ export async function POST(req: NextRequest) {
       if (!file) {
         return NextResponse.json({ error: 'No image file uploaded' }, { status: 400 });
       }
+      requestedModel = (formData.get('model') as string) || '';
       const arrayBuffer = await file.arrayBuffer();
       const buffer = Buffer.from(arrayBuffer);
       base64Data = buffer.toString('base64');
@@ -127,6 +129,7 @@ export async function POST(req: NextRequest) {
       if (!body.image) {
         return NextResponse.json({ error: 'Image data missing from request' }, { status: 400 });
       }
+      requestedModel = body.model || '';
       base64Data = body.image.replace(/^data:image\/[a-zA-Z]+;base64,/, '');
       if (body.mimeType) mimeType = body.mimeType;
     }
@@ -163,9 +166,17 @@ User's Financial Accounts List:
 ${userAccountsContext}
 `;
 
-    // 6. Call Gemini Flash-Lite with Multimodal Image and Structured Output
-    // Default to gemini-2.5-flash-lite (lowest cost, fast, minimal thinking) or GEMINI_MODEL env var
-    const modelName = process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite';
+    // 6. Call Gemini Model with Multimodal Image and Structured Output
+    const ALLOWED_MODELS = [
+      'gemini-2.5-flash-lite',
+      'gemini-2.5-flash',
+      'gemini-3.8-flash',
+      'gemini-3.5-flash-lite',
+    ];
+
+    const modelName = ALLOWED_MODELS.includes(requestedModel)
+      ? requestedModel
+      : (process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite');
 
     const response = await ai.interactions.create({
       model: modelName,
@@ -198,7 +209,7 @@ ${userAccountsContext}
 
     if (response.usage) {
       console.log(
-        `[Gemini Scan] Tokens - Input: ${response.usage.total_input_tokens}, Output: ${response.usage.total_output_tokens}, Thoughts: ${response.usage.total_thought_tokens || 0}, Total: ${response.usage.total_tokens}`
+        `[Gemini Scan (${modelName})] Tokens - Input: ${response.usage.total_input_tokens}, Output: ${response.usage.total_output_tokens}, Thoughts: ${response.usage.total_thought_tokens || 0}, Total: ${response.usage.total_tokens}`
       );
     }
 
@@ -287,9 +298,11 @@ ${userAccountsContext}
         matched_account_id: matchedAccountId,
         matched_to_account_id: matchedToAccountId,
         is_historical_suggested: isHistoricalSuggested,
+        model_used: modelName,
       },
       usage: response.usage
         ? {
+            model: modelName,
             input_tokens: response.usage.total_input_tokens,
             output_tokens: response.usage.total_output_tokens,
             thought_tokens: response.usage.total_thought_tokens || 0,

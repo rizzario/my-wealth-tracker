@@ -25,6 +25,7 @@ import {
   CheckSquare,
   Square,
   ZoomIn,
+  Cpu,
 } from 'lucide-react';
 import { AccountOption } from './ExpenseIncomeSection';
 
@@ -112,6 +113,24 @@ function compressImageForOcr(file: File, maxDimension = 1200, quality = 0.85): P
   });
 }
 
+export const AVAILABLE_MODELS = [
+  {
+    id: 'gemini-2.5-flash-lite',
+    name: 'Gemini 2.5 Flash-Lite',
+    badge: 'ประหยัดสุด & เร็ว ⚡',
+  },
+  {
+    id: 'gemini-2.5-flash',
+    name: 'Gemini 2.5 Flash',
+    badge: 'มาตรฐาน 🎯',
+  },
+  {
+    id: 'gemini-3.8-flash',
+    name: 'Gemini 3.8 Flash',
+    badge: 'รุ่นใหม่ล่าสุด 🚀',
+  },
+];
+
 export default function SlipScannerModal({
   isOpen,
   onClose,
@@ -128,6 +147,17 @@ export default function SlipScannerModal({
   const [items, setItems] = useState<StagedSlipItem[]>([]);
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [selectedModel, setSelectedModel] = useState<string>('gemini-2.5-flash-lite');
+
+  // Load preferred model from localStorage
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('gemini_scan_model');
+      if (saved && AVAILABLE_MODELS.some((m) => m.id === saved)) {
+        setSelectedModel(saved);
+      }
+    } catch {}
+  }, []);
 
   // Lightbox preview for zooming image
   const [zoomedImage, setZoomedImage] = useState<{ url: string; title: string } | null>(null);
@@ -150,10 +180,11 @@ export default function SlipScannerModal({
 
   // Scan a single item through /api/scan-slip
   const scanSingleItem = useCallback(
-    async (item: StagedSlipItem): Promise<Partial<StagedSlipItem>> => {
+    async (item: StagedSlipItem, model: string): Promise<Partial<StagedSlipItem>> => {
       const optimizedBlob = await compressImageForOcr(item.file);
       const formData = new FormData();
       formData.append('file', optimizedBlob, item.file.name.replace(/\.[^.]+$/, '.jpg'));
+      formData.append('model', model);
 
       const res = await fetch('/api/scan-slip', {
         method: 'POST',
@@ -215,7 +246,7 @@ export default function SlipScannerModal({
 
   // Queue runner: processes pending items with concurrency of 2
   const processQueue = useCallback(
-    async (currentItems: StagedSlipItem[]) => {
+    async (currentItems: StagedSlipItem[], model = selectedModel) => {
       const pendingItems = currentItems.filter((i) => i.status === 'pending');
       if (pendingItems.length === 0) return;
 
@@ -234,7 +265,7 @@ export default function SlipScannerModal({
           );
 
           try {
-            const updates = await scanSingleItem(target);
+            const updates = await scanSingleItem(target, model);
             setItems((prev) =>
               prev.map((it) => (it.id === target.id ? { ...it, ...updates } : it))
             );
@@ -259,7 +290,7 @@ export default function SlipScannerModal({
       );
       await Promise.all(workers);
     },
-    [scanSingleItem]
+    [scanSingleItem, selectedModel]
   );
 
   // Add multiple files into the staging queue
@@ -288,11 +319,11 @@ export default function SlipScannerModal({
       setItems((prev) => {
         const combined = [...prev, ...newItems];
         // Trigger queue processing
-        setTimeout(() => processQueue(combined), 50);
+        setTimeout(() => processQueue(combined, selectedModel), 50);
         return combined;
       });
     },
-    [accounts, processQueue]
+    [accounts, processQueue, selectedModel]
   );
 
   // Support Clipboard Paste (Ctrl + V)
@@ -324,7 +355,7 @@ export default function SlipScannerModal({
   const handleRetryItem = (item: StagedSlipItem) => {
     const updated = items.map((i) => (i.id === item.id ? { ...i, status: 'pending' as const, errorMessage: undefined } : i));
     setItems(updated);
-    processQueue(updated);
+    processQueue(updated, selectedModel);
   };
 
   // Delete an item from the staging list
@@ -433,7 +464,7 @@ export default function SlipScannerModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
       <div className="bg-white rounded-3xl shadow-2xl border border-slate-200/80 w-full max-w-7xl max-h-[96vh] flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="px-5 py-3.5 border-b border-slate-100 flex items-center justify-between shrink-0 bg-slate-50/70">
+        <div className="px-4 sm:px-5 py-3 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0 bg-slate-50/70">
           <div className="flex items-center gap-2.5">
             <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-600">
               <Sparkles className="w-5 h-5" />
@@ -441,22 +472,49 @@ export default function SlipScannerModal({
             <div>
               <h2 className="text-base font-bold text-slate-800 tracking-tight flex items-center gap-2">
                 <span>AI สแกนสลิปหลายรายการ (Bulk Scan & Staging)</span>
-                <span className="text-[10px] font-semibold bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full">
-                  Gemini 3.8 Flash
-                </span>
               </h2>
               <p className="text-xs text-slate-500">
                 อัปโหลดสลิปได้พร้อมกันหลายรูป ตรวจทานและแก้ไขทีละแถวก่อนบันทึกลงระบบ
               </p>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition cursor-pointer"
-          >
-            <X className="w-5 h-5" />
-          </button>
+
+          <div className="flex items-center justify-between sm:justify-end gap-2.5">
+            {/* Model Selector Dropdown */}
+            <div className="flex items-center gap-1.5 bg-white border border-slate-200/90 shadow-2xs rounded-xl px-2.5 py-1.5">
+              <Cpu className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+              <label htmlFor="gemini-model-select" className="text-[11px] font-medium text-slate-500 hidden md:inline shrink-0">
+                โมเดล:
+              </label>
+              <select
+                id="gemini-model-select"
+                value={selectedModel}
+                onChange={(e) => {
+                  const newModel = e.target.value;
+                  setSelectedModel(newModel);
+                  try {
+                    localStorage.setItem('gemini_scan_model', newModel);
+                  } catch {}
+                }}
+                className="bg-transparent text-xs font-semibold text-slate-800 focus:outline-none cursor-pointer pr-1"
+                title="เลือกโมเดล Gemini สำหรับประมวลผลสลิป"
+              >
+                {AVAILABLE_MODELS.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name} ({m.badge})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {/* Content Body */}
