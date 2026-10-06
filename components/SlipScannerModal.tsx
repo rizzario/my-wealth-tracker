@@ -30,6 +30,11 @@ import {
   CheckCircle2,
   Cloud,
   FlaskConical,
+  Building2,
+  Calendar,
+  LayoutList,
+  Table as TableIcon,
+  ArrowRight,
 } from 'lucide-react';
 import { AccountOption } from './ExpenseIncomeSection';
 
@@ -174,6 +179,28 @@ export default function SlipScannerModal({
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [selectedModel, setSelectedModel] = useState<string>('cloudflare-llama-3.2-11b-vision');
+
+  // View mode: 'cards' (stacked review cards - mobile optimized) vs 'table' (traditional spreadsheet)
+  const [viewMode, setViewMode] = useState<'cards' | 'table'>('cards');
+
+  // Load preferred view mode (default to 'cards' for mobile-first experience)
+  useEffect(() => {
+    try {
+      const savedView = localStorage.getItem('slip_scanner_view_mode') as 'cards' | 'table' | null;
+      if (savedView === 'cards' || savedView === 'table') {
+        setViewMode(savedView);
+      } else if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+        setViewMode('cards');
+      }
+    } catch {}
+  }, []);
+
+  const handleSetViewMode = (mode: 'cards' | 'table') => {
+    setViewMode(mode);
+    try {
+      localStorage.setItem('slip_scanner_view_mode', mode);
+    } catch {}
+  };
 
   // Connection & provider status
   const [providerStatus, setProviderStatus] = useState<{
@@ -614,27 +641,38 @@ export default function SlipScannerModal({
   const cfStatus = providerStatus?.cloudflare?.status;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
-      <div className="bg-white rounded-3xl shadow-2xl border border-slate-200/80 w-full max-w-7xl max-h-[96vh] flex flex-col overflow-hidden">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-1.5 sm:p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
+      <div className="bg-white rounded-2xl sm:rounded-3xl shadow-2xl border border-slate-200/80 w-full max-w-7xl max-h-[98vh] sm:max-h-[96vh] flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="px-4 sm:px-5 py-3 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0 bg-slate-50/70">
-          <div className="flex items-center gap-2.5">
-            <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-600">
-              <Sparkles className="w-5 h-5" />
+        <div className="px-3.5 sm:px-5 py-3 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 shrink-0 bg-slate-50/70">
+          <div className="flex items-center justify-between w-full sm:w-auto">
+            <div className="flex items-center gap-2 sm:gap-2.5">
+              <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-600 shrink-0">
+                <Sparkles className="w-5 h-5" />
+              </div>
+              <div>
+                <h2 className="text-sm sm:text-base font-bold text-slate-800 tracking-tight flex items-center gap-1.5 sm:gap-2">
+                  <span>AI สแกนสลิปหลายรายการ (Bulk Scan & Staging)</span>
+                </h2>
+                <p className="text-[11px] sm:text-xs text-slate-500">
+                  รองรับ Cloudflare Workers AI (ฟรี) และ Google Gemini
+                </p>
+              </div>
             </div>
-            <div>
-              <h2 className="text-base font-bold text-slate-800 tracking-tight flex items-center gap-2">
-                <span>AI สแกนสลิปหลายรายการ (Bulk Scan & Staging)</span>
-              </h2>
-              <p className="text-xs text-slate-500">
-                รองรับทั้ง Cloudflare Workers AI (Llama 3.2 Vision) และ Google Gemini
-              </p>
-            </div>
+            {/* Mobile Close Button */}
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition cursor-pointer sm:hidden"
+              aria-label="ปิดหน้าต่าง"
+            >
+              <X className="w-5 h-5" />
+            </button>
           </div>
 
           <div className="flex items-center justify-between sm:justify-end gap-2 flex-wrap">
             {/* Model Selector Dropdown */}
-            <div className="flex items-center gap-1.5 bg-white border border-slate-200/90 shadow-2xs rounded-xl px-2.5 py-1.5">
+            <div className="flex items-center gap-1.5 bg-white border border-slate-200/90 shadow-2xs rounded-xl px-2.5 py-1.5 flex-1 sm:flex-initial">
               {isCfModel ? (
                 <Cloud className="w-3.5 h-3.5 text-sky-600 shrink-0" />
               ) : (
@@ -654,7 +692,7 @@ export default function SlipScannerModal({
                     localStorage.setItem('gemini_scan_model', newModel);
                   } catch {}
                 }}
-                className="bg-transparent text-xs font-semibold text-slate-800 focus:outline-none cursor-pointer pr-1"
+                className="bg-transparent text-xs font-semibold text-slate-800 focus:outline-none cursor-pointer pr-1 w-full sm:w-auto"
                 title="เลือกโมเดล AI สำหรับประมวลผลสลิป"
               >
                 <optgroup label="Cloudflare Workers AI (ฟรี)">
@@ -679,7 +717,7 @@ export default function SlipScannerModal({
               type="button"
               onClick={checkProviderStatus}
               disabled={isCheckingStatus}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-white border border-slate-200 rounded-xl text-[11px] font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-50 transition shadow-2xs cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-white border border-slate-200 rounded-xl text-[11px] font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-50 transition shadow-2xs cursor-pointer shrink-0"
               title="ตรวจสอบสถานะการเชื่อมต่อ API"
             >
               {isCheckingStatus ? (
@@ -710,10 +748,12 @@ export default function SlipScannerModal({
               </span>
             </button>
 
+            {/* Desktop Close Button */}
             <button
               type="button"
               onClick={onClose}
-              className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition cursor-pointer"
+              className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition cursor-pointer hidden sm:block"
+              aria-label="ปิดหน้าต่าง"
             >
               <X className="w-5 h-5" />
             </button>
@@ -748,14 +788,18 @@ export default function SlipScannerModal({
                 </div>
                 <div className="space-y-1">
                   <p className="text-base font-bold text-slate-800">
-                    ลากรูปสลิปมาวางที่นี่ หรือคลิกเพื่อเลือกหลายไฟล์
+                    ลากรูปสลิปมาวางที่นี่ หรือแตะเพื่อเลือกหลายไฟล์
                   </p>
                   <p className="text-xs text-slate-500">
-                    เลือกสลิปพร้อมกันได้หลายรูป (JPG, PNG, WEBP) ระบบจะสแกนและนำมาพักในตารางให้ตรวจทาน
+                    เลือกสลิปพร้อมกันได้หลายรูป (JPG, PNG, WEBP) ระบบจะสแกนและจัดเป็นการ์ดตรวจทานให้อัตโนมัติ
                   </p>
                   <div className="pt-2 flex flex-wrap items-center justify-center gap-2">
-                    <span className="text-xs font-semibold text-emerald-700 bg-emerald-100/70 px-2.5 py-1 rounded-lg">
+                    <span className="text-xs font-semibold text-emerald-700 bg-emerald-100/70 px-2.5 py-1 rounded-lg hidden sm:inline">
                       💡 กด Ctrl + V เพื่อวางรูปจากคลิปบอร์ดได้ทันที
+                    </span>
+                    <span className="text-xs font-semibold text-emerald-700 bg-emerald-100/70 px-3 py-1.5 rounded-xl sm:hidden inline-flex items-center gap-1.5 shadow-2xs">
+                      <Camera className="w-3.5 h-3.5" />
+                      <span>แตะเพื่อเลือกรูปหรือถ่ายภาพสลิป</span>
                     </span>
                   </div>
                 </div>
@@ -791,10 +835,10 @@ export default function SlipScannerModal({
               <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs text-slate-600 space-y-1.5">
                 <p className="font-semibold text-slate-800 flex items-center gap-1.5">
                   <Info className="w-4 h-4 text-emerald-600" />
-                  <span>ระบบพักข้อมูลชั่วคราว (Temporary Staging Table):</span>
+                  <span>ระบบพักข้อมูลชั่วคราว (Review & Staging Cards):</span>
                 </p>
                 <p>
-                  เมื่ออัปโหลดสลิป ข้อมูลจะถูกจัดเก็บไว้ในตารางจำลองบนหน้าจอนี้ก่อน คุณสามารถแก้ไข ยอดเงิน หมวดหมู่ บัญชี หรือลบรายการที่ไม่ถูกต้องออกได้ตามสะดวก ก่อนกดบันทึกจริงเข้าฐานข้อมูล
+                  เมื่ออัปโหลดสลิป AI จะดึงข้อมูลและแสดงเป็น<strong>การ์ดตรวจทาน (Stacked Review Cards)</strong> ที่อ่านง่ายบนมือถือ คุณสามารถแตะดูรูปสลิปขยายเต็มจอ แก้ไขยอดเงิน หมวดหมู่ บัญชี หรือสลับไปดูแบบตารางได้ตามสะดวก ก่อนกดยืนยันบันทึกจริง
                 </p>
                 <div className="pt-1 text-[11px] text-slate-500 flex items-center gap-2">
                   <span className="font-medium text-slate-700">โมเดลที่เลือก:</span>
@@ -806,127 +850,157 @@ export default function SlipScannerModal({
               </div>
             </div>
           ) : (
-            /* VIEW B: Staging Table & Toolbar */
+            /* VIEW B: Staging Cards / Table & Toolbar */
             <div className="space-y-3.5">
               {/* Toolbar & Progress Bar */}
-              <div className="bg-slate-50 p-3 sm:p-4 rounded-2xl border border-slate-200/80 flex flex-wrap items-center justify-between gap-3">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <button
-                    type="button"
-                    onClick={handleToggleSelectAll}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-xl hover:bg-slate-100 transition shadow-2xs cursor-pointer"
-                  >
-                    {items.every((i) => i.selected) ? (
-                      <CheckSquare className="w-3.5 h-3.5 text-emerald-600" />
-                    ) : (
-                      <Square className="w-3.5 h-3.5 text-slate-400" />
-                    )}
-                    <span>{items.every((i) => i.selected) ? 'ยกเลิกเลือกทั้งหมด' : 'เลือกทั้งหมด'}</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => additionalFileInputRef.current?.click()}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-800 bg-emerald-100 hover:bg-emerald-200 border border-emerald-300 rounded-xl transition shadow-2xs cursor-pointer"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>+ เพิ่มรูปสลิป</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={handleTestWithMockSlip}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-100 border border-slate-300 rounded-xl transition shadow-2xs cursor-pointer"
-                    title="สร้างสลิปจำลองสำหรับทดสอบ"
-                  >
-                    <FlaskConical className="w-3.5 h-3.5 text-emerald-600" />
-                    <span>+ สลิปตัวอย่าง</span>
-                  </button>
-
-                  <input
-                    ref={additionalFileInputRef}
-                    type="file"
-                    multiple
-                    accept="image/*"
-                    className="hidden"
-                    onChange={(e) => {
-                      if (e.target.files) handleAddFiles(e.target.files);
-                    }}
-                  />
-
-                  {/* Bulk Historical Toggles */}
-                  <div className="flex items-center gap-1 pl-1">
+              <div className="bg-slate-50 p-3 sm:p-4 rounded-2xl border border-slate-200/80 flex flex-col gap-3">
+                {/* Row 1: Actions & View Switcher */}
+                <div className="flex flex-wrap items-center justify-between gap-2.5">
+                  <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
                     <button
                       type="button"
-                      onClick={() => handleBulkSetHistorical(true)}
-                      className="px-2.5 py-1 text-[11px] font-medium text-amber-800 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-lg transition cursor-pointer"
-                      title="ตั้งค่าให้ทุกรายการเป็นสลิปย้อนหลัง (ไม่ปรับยอดเงินคงเหลือปัจจุบัน)"
+                      onClick={handleToggleSelectAll}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-xl hover:bg-slate-100 transition shadow-2xs cursor-pointer"
                     >
-                      เปิดย้อนหลังทั้งหมด
+                      {items.every((i) => i.selected) ? (
+                        <CheckSquare className="w-3.5 h-3.5 text-emerald-600" />
+                      ) : (
+                        <Square className="w-3.5 h-3.5 text-slate-400" />
+                      )}
+                      <span>{items.every((i) => i.selected) ? 'ยกเลิกเลือกทั้งหมด' : 'เลือกทั้งหมด'}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => additionalFileInputRef.current?.click()}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-800 bg-emerald-100 hover:bg-emerald-200 border border-emerald-300 rounded-xl transition shadow-2xs cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>+ เพิ่มรูปสลิป</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleTestWithMockSlip}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-100 border border-slate-300 rounded-xl transition shadow-2xs cursor-pointer hidden sm:inline-flex"
+                      title="สร้างสลิปจำลองสำหรับทดสอบ"
+                    >
+                      <FlaskConical className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>+ สลิปตัวอย่าง</span>
+                    </button>
+
+                    <input
+                      ref={additionalFileInputRef}
+                      type="file"
+                      multiple
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => {
+                        if (e.target.files) handleAddFiles(e.target.files);
+                      }}
+                    />
+
+                    {/* Bulk Historical Toggles */}
+                    <div className="flex items-center gap-1 pl-1">
+                      <button
+                        type="button"
+                        onClick={() => handleBulkSetHistorical(true)}
+                        className="px-2.5 py-1 text-[11px] font-medium text-amber-800 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-lg transition cursor-pointer"
+                        title="ตั้งค่าให้ทุกรายการเป็นสลิปย้อนหลัง (ไม่ปรับยอดเงินคงเหลือปัจจุบัน)"
+                      >
+                        ย้อนหลังทั้งหมด
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleBulkSetHistorical(false)}
+                        className="px-2.5 py-1 text-[11px] font-medium text-slate-600 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg transition cursor-pointer"
+                      >
+                        ปิดย้อนหลัง
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* View Mode Switcher: Cards vs Table */}
+                  <div className="inline-flex items-center p-0.5 bg-slate-200/80 rounded-xl shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => handleSetViewMode('cards')}
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-lg transition cursor-pointer ${
+                        viewMode === 'cards'
+                          ? 'bg-white text-emerald-700 shadow-2xs font-bold'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                      title="แสดงเป็นการ์ดตรวจทาน (Stacked Review Cards - เหมาะสำหรับมือถือ)"
+                    >
+                      <LayoutList className="w-3.5 h-3.5" />
+                      <span>การ์ดตรวจทาน ({items.length})</span>
                     </button>
                     <button
                       type="button"
-                      onClick={() => handleBulkSetHistorical(false)}
-                      className="px-2.5 py-1 text-[11px] font-medium text-slate-600 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg transition cursor-pointer"
+                      onClick={() => handleSetViewMode('table')}
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-lg transition cursor-pointer ${
+                        viewMode === 'table'
+                          ? 'bg-white text-emerald-700 shadow-2xs font-bold'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                      title="แสดงเป็นตาราง (Table View)"
                     >
-                      ปิดย้อนหลังทั้งหมด
+                      <TableIcon className="w-3.5 h-3.5" />
+                      <span>ตาราง</span>
                     </button>
                   </div>
                 </div>
 
-                {/* Progress / Status Metrics */}
-                <div className="flex items-center gap-3 text-xs">
+                {/* Row 2: Status Metrics */}
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-200/60 text-xs">
                   {scanningCount > 0 ? (
                     <div className="flex items-center gap-2 text-emerald-700 font-semibold animate-pulse">
                       <Loader2 className="w-4 h-4 animate-spin text-emerald-600" />
                       <span>กำลังสแกน {scanningCount} รูป...</span>
                     </div>
                   ) : (
-                    <span className="font-semibold text-slate-700">
-                      สแกนเสร็จสิ้น ({successCount}/{totalCount} รายการ)
-                      {errorCount > 0 && <span className="text-rose-600 ml-1">ผิดพลาด {errorCount}</span>}
-                    </span>
+                    <div className="flex items-center gap-1.5 text-slate-700 font-medium">
+                      <span>สแกนแล้ว {successCount}/{totalCount} รายการ</span>
+                      {errorCount > 0 && (
+                        <span className="text-rose-600 font-semibold bg-rose-50 px-2 py-0.5 rounded-md border border-rose-200">
+                          ผิดพลาด {errorCount}
+                        </span>
+                      )}
+                    </div>
                   )}
-                  <div className="h-4 w-[1px] bg-slate-300 hidden sm:block" />
-                  <div className="font-bold text-slate-900 bg-white px-3 py-1 rounded-xl border border-slate-200 shadow-2xs">
+
+                  <div className="font-bold text-slate-900 bg-white px-3 py-1 rounded-xl border border-slate-200 shadow-2xs text-[11px] sm:text-xs">
                     เลือก {selectedCount} รายการ • รวม ฿{selectedTotalAmount.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </div>
                 </div>
               </div>
 
-              {/* Staging Data Table */}
-              <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-2xs bg-white">
-                <div className="overflow-x-auto max-h-[55vh]">
-                  <table className="w-full text-left border-collapse text-xs">
-                    <thead className="bg-slate-50 border-b border-slate-200 sticky top-0 z-10 text-slate-500 font-semibold text-[11px] select-none">
-                      <tr>
-                        <th className="py-2.5 px-3 w-10 text-center">เลือก</th>
-                        <th className="py-2.5 px-2 w-16 text-center">รูปสลิป</th>
-                        <th className="py-2.5 px-3 w-40">วันที่ & เวลา</th>
-                        <th className="py-2.5 px-3 w-28">ประเภท</th>
-                        <th className="py-2.5 px-3 w-40">หมวดหมู่</th>
-                        <th className="py-2.5 px-3 w-32">จำนวนเงิน (฿)</th>
-                        <th className="py-2.5 px-3 w-48">บัญชีที่ใช้</th>
-                        <th className="py-2.5 px-3 min-w-[200px]">บันทึกช่วยจำ (Note)</th>
-                        <th className="py-2.5 px-3 w-28 text-center">สลิปย้อนหลัง</th>
-                        <th className="py-2.5 px-2 w-12 text-center">ลบ</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {items.map((item, idx) => {
-                        const isSuccess = item.status === 'success';
-                        const isScanning = item.status === 'scanning' || item.status === 'pending';
-                        const isError = item.status === 'error';
+              {/* Data Presentation: Stacked Review Cards OR Spreadsheet Table */}
+              {viewMode === 'cards' ? (
+                /* STACKED REVIEW CARDS (Mobile-First / Card View) */
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 sm:gap-4 pb-2">
+                  {items.map((item, idx) => {
+                    const isSuccess = item.status === 'success';
+                    const isScanning = item.status === 'scanning' || item.status === 'pending';
+                    const isError = item.status === 'error';
 
-                        return (
-                          <tr
-                            key={item.id}
-                            className={`transition hover:bg-slate-50/70 ${
-                              !item.selected ? 'opacity-50 bg-slate-50/40' : isError ? 'bg-rose-50/30' : ''
-                            }`}
-                          >
-                            {/* 1. Checkbox */}
-                            <td className="py-2.5 px-3 text-center">
+                    return (
+                      <div
+                        key={item.id}
+                        className={`rounded-2xl border transition-all duration-200 p-4 sm:p-5 flex flex-col justify-between gap-3.5 ${
+                          !item.selected
+                            ? 'opacity-60 bg-slate-50/70 border-slate-200'
+                            : isError
+                            ? 'bg-rose-50/20 border-rose-200 ring-1 ring-rose-200/60 shadow-2xs'
+                            : isScanning
+                            ? 'bg-sky-50/20 border-sky-200 shadow-2xs'
+                            : 'bg-white border-slate-200/90 hover:border-emerald-300 shadow-2xs hover:shadow-xs'
+                        }`}
+                      >
+                        {/* Card Top Row: Checkbox, Badge, Model, Delete */}
+                        <div className="flex items-center justify-between gap-2 pb-2.5 border-b border-slate-100">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <label className="inline-flex items-center gap-2 cursor-pointer select-none">
                               <input
                                 type="checkbox"
                                 checked={item.selected}
@@ -934,250 +1008,624 @@ export default function SlipScannerModal({
                                 disabled={!isSuccess}
                                 className="w-4 h-4 text-emerald-600 rounded focus:ring-emerald-500 cursor-pointer disabled:opacity-30"
                               />
-                            </td>
+                              <span className="text-xs font-bold text-slate-800">
+                                สลิป #{idx + 1}
+                              </span>
+                            </label>
 
-                            {/* 2. Slip Thumbnail with Zoom */}
-                            <td className="py-2.5 px-2 text-center">
-                              <div
-                                onClick={() =>
-                                  setZoomedImage({
-                                    url: item.previewUrl,
-                                    title: item.note || `สลิปที่ ${idx + 1}`,
-                                  })
-                                }
-                                className="relative w-12 h-14 mx-auto rounded-lg overflow-hidden border border-slate-200 cursor-pointer group shadow-2xs"
-                                title="คลิกเพื่อดูรูปขยาย"
+                            {isScanning ? (
+                              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-sky-100 text-sky-800 border border-sky-200 animate-pulse">
+                                <Loader2 className="w-3 h-3 animate-spin text-sky-600" />
+                                <span>กำลังสแกน...</span>
+                              </span>
+                            ) : isError ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-100 text-rose-800 border border-rose-200">
+                                <AlertCircle className="w-3 h-3 text-rose-600" />
+                                <span>สแกนไม่สำเร็จ</span>
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                <span>สแกนแล้ว</span>
+                              </span>
+                            )}
+
+                            {item.modelUsed && (
+                              <span
+                                className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono ${
+                                  item.modelUsed.includes('cloudflare') || item.modelUsed.includes('@cf')
+                                    ? 'bg-sky-50 text-sky-700 border border-sky-200'
+                                    : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                }`}
                               >
-                                <img
-                                  src={item.previewUrl}
-                                  alt="Slip"
-                                  className="w-full h-full object-cover group-hover:scale-105 transition"
+                                {item.modelUsed.includes('cloudflare') || item.modelUsed.includes('@cf')
+                                  ? '☁️ Workers AI'
+                                  : '⚡ Gemini'}
+                              </span>
+                            )}
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteItem(item.id)}
+                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition cursor-pointer"
+                            title="ลบสลิปนี้"
+                            aria-label="ลบสลิปนี้"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+
+                        {/* Hero Row: Slip Thumbnail & Extracted Amount */}
+                        <div className="flex gap-3 sm:gap-4 items-start">
+                          {/* Slip Thumbnail with Lightbox */}
+                          <div
+                            onClick={() =>
+                              setZoomedImage({
+                                url: item.previewUrl,
+                                title: item.note || `สลิปที่ ${idx + 1}`,
+                              })
+                            }
+                            className="relative w-20 h-24 sm:w-24 sm:h-28 rounded-xl overflow-hidden border border-slate-200/90 shadow-2xs cursor-pointer group shrink-0 bg-slate-100"
+                            title="แตะเพื่อดูรูปสลิปขยายเต็มจอ"
+                          >
+                            <img
+                              src={item.previewUrl}
+                              alt="Slip"
+                              className="w-full h-full object-cover group-hover:scale-105 transition duration-200"
+                            />
+                            <div className="absolute inset-0 bg-slate-900/40 opacity-0 group-hover:opacity-100 sm:flex hidden items-center justify-center transition text-white">
+                              <ZoomIn className="w-4 h-4" />
+                            </div>
+                            <div className="absolute bottom-1 right-1 bg-slate-900/60 text-white rounded p-1 sm:hidden">
+                              <ZoomIn className="w-3 h-3" />
+                            </div>
+                          </div>
+
+                          {/* Extracted Amount & Detection Chips */}
+                          <div className="flex-1 min-w-0 space-y-2">
+                            <div>
+                              <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">
+                                จำนวนเงิน (Amount)
+                              </label>
+                              <div className="relative">
+                                <span className="absolute left-3 top-1/2 -translate-y-1/2 font-bold text-slate-400 text-sm">
+                                  ฿
+                                </span>
+                                <input
+                                  type="number"
+                                  step="any"
+                                  inputMode="decimal"
+                                  value={item.amount}
+                                  onChange={(e) => handleUpdateItem(item.id, 'amount', e.target.value)}
+                                  placeholder="0.00"
+                                  disabled={!isSuccess}
+                                  className="w-full pl-7 pr-3 py-2 text-base sm:text-lg font-bold font-mono text-slate-900 border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 bg-white disabled:bg-slate-100 text-right"
                                 />
-                                <div className="absolute inset-0 bg-slate-900/30 opacity-0 group-hover:opacity-100 flex items-center justify-center transition text-white">
-                                  <ZoomIn className="w-3.5 h-3.5" />
-                                </div>
                               </div>
-                            </td>
+                            </div>
 
-                            {/* 3. Date & Time */}
-                            <td className="py-2.5 px-3">
-                              {isScanning ? (
-                                <div className="flex items-center gap-1.5 text-slate-400">
-                                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                  <span>กำลังอ่าน...</span>
-                                </div>
-                              ) : isError ? (
-                                <span className="text-rose-600 font-medium">สแกนไม่สำเร็จ</span>
-                              ) : (
-                                <div className="space-y-1">
-                                  <input
-                                    type="date"
-                                    value={item.date}
-                                    onChange={(e) => handleUpdateItem(item.id, 'date', e.target.value)}
-                                    className="w-full px-2 py-1 text-xs border border-slate-200 rounded-lg outline-none focus:border-emerald-500 bg-white"
-                                  />
-                                  <input
-                                    type="time"
-                                    value={item.time}
-                                    onChange={(e) => handleUpdateItem(item.id, 'time', e.target.value)}
-                                    className="w-full px-2 py-0.5 text-[11px] border border-slate-200 rounded-lg outline-none focus:border-emerald-500 bg-white text-slate-600"
-                                  />
-                                </div>
+                            {/* Detected Info Chips */}
+                            <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                              {item.senderBank && (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                                  <Building2 className="w-3 h-3 text-emerald-600" />
+                                  <span>{item.senderBank}</span>
+                                </span>
                               )}
-                            </td>
+                              {item.senderAccountMasked && (
+                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono text-slate-500 bg-slate-50 border border-slate-200">
+                                  {item.senderAccountMasked}
+                                </span>
+                              )}
+                              {item.receiverName && (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium bg-slate-100 text-slate-700 max-w-[200px] truncate" title={`ผู้รับ: ${item.receiverName}`}>
+                                  <span>➔ {item.receiverName}</span>
+                                </span>
+                              )}
+                              {item.referenceNumber && (
+                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono text-slate-500 bg-slate-50 border border-slate-200/60 truncate max-w-[170px]" title={`Ref: ${item.referenceNumber}`}>
+                                  <span>Ref: {item.referenceNumber}</span>
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
 
-                            {/* 4. Type */}
-                            <td className="py-2.5 px-3">
-                              {isSuccess && (
-                                <select
-                                  value={item.type}
-                                  onChange={(e) =>
-                                    handleUpdateItem(
-                                      item.id,
-                                      'type',
-                                      e.target.value as 'EXPENSE' | 'INCOME' | 'TRANSFER'
-                                    )
-                                  }
-                                  className={`w-full px-2 py-1 text-xs font-semibold rounded-lg border outline-none ${
+                        {/* Error Banner & Retry Button */}
+                        {isError && (
+                          <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl flex items-center justify-between gap-3">
+                            <div className="flex items-center gap-2 text-xs text-rose-700 min-w-0">
+                              <AlertCircle className="w-4 h-4 shrink-0" />
+                              <span className="truncate">{item.errorMessage || 'การสแกนสลิปไม่สำเร็จ'}</span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleRetryItem(item)}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-xl transition shadow-2xs shrink-0 cursor-pointer"
+                            >
+                              <RotateCcw className="w-3.5 h-3.5" />
+                              <span>ลองใหม่</span>
+                            </button>
+                          </div>
+                        )}
+
+                        {/* Scanning Animation State */}
+                        {isScanning && (
+                          <div className="p-4 bg-sky-50/70 border border-sky-200 rounded-xl flex flex-col items-center justify-center gap-1.5 text-center">
+                            <Loader2 className="w-5 h-5 animate-spin text-sky-600" />
+                            <span className="text-xs font-semibold text-sky-900">กำลังวิเคราะห์ข้อมูลจากสลิป...</span>
+                            <span className="text-[11px] text-sky-600">กรุณารอสักครู่ ระบบกำลังจัดหมวดหมู่และจับคู่บัญชี</span>
+                          </div>
+                        )}
+
+                        {/* Form Fields: Type, Category, Date/Time, Accounts, Note, Historical */}
+                        {isSuccess && (
+                          <div className="space-y-3 pt-1">
+                            {/* Type Segmented Buttons */}
+                            <div>
+                              <label className="block text-[11px] font-bold text-slate-500 mb-1">
+                                ประเภทรายการ
+                              </label>
+                              <div className="grid grid-cols-3 gap-1.5 p-1 bg-slate-100 rounded-xl">
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdateItem(item.id, 'type', 'EXPENSE')}
+                                  className={`py-1.5 text-xs font-bold rounded-lg transition cursor-pointer flex items-center justify-center gap-1 ${
                                     item.type === 'EXPENSE'
-                                      ? 'border-rose-200 bg-rose-50/70 text-rose-700'
-                                      : item.type === 'INCOME'
-                                      ? 'border-emerald-200 bg-emerald-50/70 text-emerald-700'
-                                      : 'border-indigo-200 bg-indigo-50/70 text-indigo-700'
+                                      ? 'bg-rose-600 text-white shadow-2xs'
+                                      : 'text-slate-600 hover:text-slate-900'
                                   }`}
                                 >
-                                  <option value="EXPENSE">รายจ่าย</option>
-                                  <option value="INCOME">รายรับ</option>
-                                  <option value="TRANSFER">โอนเงิน</option>
-                                </select>
-                              )}
-                            </td>
-
-                            {/* 5. Category */}
-                            <td className="py-2.5 px-3">
-                              {isSuccess && (
-                                <select
-                                  value={item.category}
-                                  onChange={(e) => handleUpdateItem(item.id, 'category', e.target.value)}
-                                  className="w-full px-2 py-1 text-xs border border-slate-200 rounded-lg outline-none focus:border-emerald-500 bg-white"
+                                  <ArrowDownRight className="w-3.5 h-3.5" />
+                                  <span>รายจ่าย</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdateItem(item.id, 'type', 'INCOME')}
+                                  className={`py-1.5 text-xs font-bold rounded-lg transition cursor-pointer flex items-center justify-center gap-1 ${
+                                    item.type === 'INCOME'
+                                      ? 'bg-emerald-600 text-white shadow-2xs'
+                                      : 'text-slate-600 hover:text-slate-900'
+                                  }`}
                                 >
-                                  {(item.type === 'EXPENSE'
-                                    ? expenseCategories
-                                    : item.type === 'INCOME'
-                                    ? incomeCategories
-                                    : transferCategories
-                                  ).map((cat) => (
-                                    <option key={cat} value={cat}>
-                                      {cat}
+                                  <ArrowUpRight className="w-3.5 h-3.5" />
+                                  <span>รายรับ</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdateItem(item.id, 'type', 'TRANSFER')}
+                                  className={`py-1.5 text-xs font-bold rounded-lg transition cursor-pointer flex items-center justify-center gap-1 ${
+                                    item.type === 'TRANSFER'
+                                      ? 'bg-indigo-600 text-white shadow-2xs'
+                                      : 'text-slate-600 hover:text-slate-900'
+                                  }`}
+                                >
+                                  <ArrowRightLeft className="w-3.5 h-3.5" />
+                                  <span>โอนเงิน</span>
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Category Dropdown */}
+                            <div>
+                              <label className="block text-[11px] font-bold text-slate-500 mb-1">
+                                หมวดหมู่ (Category)
+                              </label>
+                              <select
+                                value={item.category}
+                                onChange={(e) => handleUpdateItem(item.id, 'category', e.target.value)}
+                                className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 bg-white"
+                              >
+                                {(item.type === 'EXPENSE'
+                                  ? expenseCategories
+                                  : item.type === 'INCOME'
+                                  ? incomeCategories
+                                  : transferCategories
+                                ).map((cat) => (
+                                  <option key={cat} value={cat}>
+                                    {cat}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+
+                            {/* Date & Time (2 columns) */}
+                            <div className="grid grid-cols-2 gap-2">
+                              <div>
+                                <label className="block text-[11px] font-bold text-slate-500 mb-1 flex items-center gap-1">
+                                  <Calendar className="w-3 h-3 text-slate-400" />
+                                  <span>วันที่</span>
+                                </label>
+                                <input
+                                  type="date"
+                                  value={item.date}
+                                  onChange={(e) => handleUpdateItem(item.id, 'date', e.target.value)}
+                                  className="w-full px-2.5 py-1.5 text-xs border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 bg-white font-medium"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[11px] font-bold text-slate-500 mb-1 flex items-center gap-1">
+                                  <Clock className="w-3 h-3 text-slate-400" />
+                                  <span>เวลา</span>
+                                </label>
+                                <input
+                                  type="time"
+                                  value={item.time}
+                                  onChange={(e) => handleUpdateItem(item.id, 'time', e.target.value)}
+                                  className="w-full px-2.5 py-1.5 text-xs border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 bg-white font-mono"
+                                />
+                              </div>
+                            </div>
+
+                            {/* Account Selection */}
+                            <div className="space-y-2">
+                              <div>
+                                <label className="block text-[11px] font-bold text-slate-500 mb-1 flex items-center gap-1">
+                                  <Wallet className="w-3 h-3 text-slate-400" />
+                                  <span>{item.type === 'TRANSFER' ? 'จากบัญชีต้นทาง (From)' : 'บัญชีที่ใช้'}</span>
+                                </label>
+                                <select
+                                  value={item.accountId}
+                                  onChange={(e) => handleUpdateItem(item.id, 'accountId', e.target.value)}
+                                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 bg-white"
+                                >
+                                  <option value="">-- ไม่ระบุบัญชี --</option>
+                                  {accounts.map((acc) => (
+                                    <option key={acc.id} value={acc.id}>
+                                      {acc.account_name} ({acc.bank_name || acc.account_type})
                                     </option>
                                   ))}
                                 </select>
-                              )}
-                            </td>
+                              </div>
 
-                            {/* 6. Amount */}
-                            <td className="py-2.5 px-3">
-                              {isSuccess && (
-                                <div className="relative">
-                                  <span className="absolute left-2 top-1/2 -translate-y-1/2 font-bold text-slate-400 text-xs">฿</span>
-                                  <input
-                                    type="number"
-                                    step="any"
-                                    value={item.amount}
-                                    onChange={(e) => handleUpdateItem(item.id, 'amount', e.target.value)}
-                                    placeholder="0.00"
-                                    className="w-full pl-5 pr-2 py-1 text-xs font-bold font-mono text-slate-900 border border-slate-200 rounded-lg outline-none focus:border-emerald-500 bg-white text-right"
-                                  />
-                                </div>
-                              )}
-                            </td>
-
-                            {/* 7. Accounts */}
-                            <td className="py-2.5 px-3">
-                              {isSuccess && (
-                                <div className="space-y-1">
+                              {item.type === 'TRANSFER' && (
+                                <div>
+                                  <label className="block text-[11px] font-bold text-indigo-700 mb-1 flex items-center gap-1">
+                                    <ArrowRight className="w-3 h-3 text-indigo-500" />
+                                    <span>ไปยังบัญชีปลายทาง (To)</span>
+                                  </label>
                                   <select
-                                    value={item.accountId}
-                                    onChange={(e) => handleUpdateItem(item.id, 'accountId', e.target.value)}
-                                    className="w-full px-2 py-1 text-xs border border-slate-200 rounded-lg outline-none focus:border-emerald-500 bg-white"
+                                    value={item.toAccountId}
+                                    onChange={(e) => handleUpdateItem(item.id, 'toAccountId', e.target.value)}
+                                    className="w-full px-3 py-2 text-xs border border-indigo-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 bg-indigo-50/50 text-indigo-900 font-medium"
                                   >
-                                    <option value="">-- ไม่ระบุบัญชี --</option>
+                                    <option value="">➔ เลือกบัญชีปลายทาง</option>
                                     {accounts.map((acc) => (
                                       <option key={acc.id} value={acc.id}>
-                                        {acc.account_name} ({acc.bank_name || acc.account_type})
+                                        ➔ {acc.account_name} ({acc.bank_name || acc.account_type})
                                       </option>
                                     ))}
                                   </select>
+                                </div>
+                              )}
+                            </div>
 
-                                  {item.type === 'TRANSFER' && (
+                            {/* Note */}
+                            <div>
+                              <label className="block text-[11px] font-bold text-slate-500 mb-1">
+                                บันทึกช่วยจำ (Note)
+                              </label>
+                              <input
+                                type="text"
+                                value={item.note}
+                                onChange={(e) => handleUpdateItem(item.id, 'note', e.target.value)}
+                                placeholder="บันทึกช่วยจำ..."
+                                className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 bg-white"
+                              />
+                            </div>
+
+                            {/* Historical Toggle */}
+                            <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-2">
+                                <History className="w-4 h-4 text-amber-600 shrink-0" />
+                                <div>
+                                  <span className="text-xs font-semibold text-slate-800">สลิปย้อนหลัง (Historical)</span>
+                                  <p className="text-[10px] text-slate-500">บันทึกประวัติเท่านั้น ไม่กระทบยอดคงเหลือในบัญชีปัจจุบัน</p>
+                                </div>
+                              </div>
+                              <label className="relative inline-flex items-center cursor-pointer shrink-0" title="สลิปย้อนหลัง: ไม่ปรับยอดเงินคงเหลือปัจจุบัน">
+                                <input
+                                  type="checkbox"
+                                  checked={item.isHistorical}
+                                  onChange={(e) => handleUpdateItem(item.id, 'isHistorical', e.target.checked)}
+                                  className="sr-only peer"
+                                />
+                                <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-500" />
+                              </label>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                /* TRADITIONAL SPREADSHEET TABLE VIEW */
+                <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-2xs bg-white">
+                  <div className="overflow-x-auto max-h-[55vh]">
+                    <table className="w-full text-left border-collapse text-xs min-w-[950px]">
+                      <thead className="bg-slate-50 border-b border-slate-200 sticky top-0 z-10 text-slate-500 font-semibold text-[11px] select-none">
+                        <tr>
+                          <th className="py-2.5 px-3 w-10 text-center">เลือก</th>
+                          <th className="py-2.5 px-2 w-16 text-center">รูปสลิป</th>
+                          <th className="py-2.5 px-3 w-40">วันที่ & เวลา</th>
+                          <th className="py-2.5 px-3 w-28">ประเภท</th>
+                          <th className="py-2.5 px-3 w-40">หมวดหมู่</th>
+                          <th className="py-2.5 px-3 w-32">จำนวนเงิน (฿)</th>
+                          <th className="py-2.5 px-3 w-48">บัญชีที่ใช้</th>
+                          <th className="py-2.5 px-3 min-w-[200px]">บันทึกช่วยจำ (Note)</th>
+                          <th className="py-2.5 px-3 w-28 text-center">สลิปย้อนหลัง</th>
+                          <th className="py-2.5 px-2 w-12 text-center">ลบ</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {items.map((item, idx) => {
+                          const isSuccess = item.status === 'success';
+                          const isScanning = item.status === 'scanning' || item.status === 'pending';
+                          const isError = item.status === 'error';
+
+                          return (
+                            <tr
+                              key={item.id}
+                              className={`transition hover:bg-slate-50/70 ${
+                                !item.selected ? 'opacity-50 bg-slate-50/40' : isError ? 'bg-rose-50/30' : ''
+                              }`}
+                            >
+                              {/* 1. Checkbox */}
+                              <td className="py-2.5 px-3 text-center">
+                                <input
+                                  type="checkbox"
+                                  checked={item.selected}
+                                  onChange={(e) => handleUpdateItem(item.id, 'selected', e.target.checked)}
+                                  disabled={!isSuccess}
+                                  className="w-4 h-4 text-emerald-600 rounded focus:ring-emerald-500 cursor-pointer disabled:opacity-30"
+                                />
+                              </td>
+
+                              {/* 2. Slip Thumbnail with Zoom */}
+                              <td className="py-2.5 px-2 text-center">
+                                <div
+                                  onClick={() =>
+                                    setZoomedImage({
+                                      url: item.previewUrl,
+                                      title: item.note || `สลิปที่ ${idx + 1}`,
+                                    })
+                                  }
+                                  className="relative w-12 h-14 mx-auto rounded-lg overflow-hidden border border-slate-200 cursor-pointer group shadow-2xs"
+                                  title="คลิกเพื่อดูรูปขยาย"
+                                >
+                                  <img
+                                    src={item.previewUrl}
+                                    alt="Slip"
+                                    className="w-full h-full object-cover group-hover:scale-105 transition"
+                                  />
+                                  <div className="absolute inset-0 bg-slate-900/30 opacity-0 group-hover:opacity-100 flex items-center justify-center transition text-white">
+                                    <ZoomIn className="w-3.5 h-3.5" />
+                                  </div>
+                                </div>
+                              </td>
+
+                              {/* 3. Date & Time */}
+                              <td className="py-2.5 px-3">
+                                {isScanning ? (
+                                  <div className="flex items-center gap-1.5 text-slate-400">
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                    <span>กำลังอ่าน...</span>
+                                  </div>
+                                ) : isError ? (
+                                  <span className="text-rose-600 font-medium">สแกนไม่สำเร็จ</span>
+                                ) : (
+                                  <div className="space-y-1">
+                                    <input
+                                      type="date"
+                                      value={item.date}
+                                      onChange={(e) => handleUpdateItem(item.id, 'date', e.target.value)}
+                                      className="w-full px-2 py-1 text-xs border border-slate-200 rounded-lg outline-none focus:border-emerald-500 bg-white"
+                                    />
+                                    <input
+                                      type="time"
+                                      value={item.time}
+                                      onChange={(e) => handleUpdateItem(item.id, 'time', e.target.value)}
+                                      className="w-full px-2 py-0.5 text-[11px] border border-slate-200 rounded-lg outline-none focus:border-emerald-500 bg-white text-slate-600"
+                                    />
+                                  </div>
+                                )}
+                              </td>
+
+                              {/* 4. Type */}
+                              <td className="py-2.5 px-3">
+                                {isSuccess && (
+                                  <select
+                                    value={item.type}
+                                    onChange={(e) =>
+                                      handleUpdateItem(
+                                        item.id,
+                                        'type',
+                                        e.target.value as 'EXPENSE' | 'INCOME' | 'TRANSFER'
+                                      )
+                                    }
+                                    className={`w-full px-2 py-1 text-xs font-semibold rounded-lg border outline-none ${
+                                      item.type === 'EXPENSE'
+                                        ? 'border-rose-200 bg-rose-50/70 text-rose-700'
+                                        : item.type === 'INCOME'
+                                        ? 'border-emerald-200 bg-emerald-50/70 text-emerald-700'
+                                        : 'border-indigo-200 bg-indigo-50/70 text-indigo-700'
+                                    }`}
+                                  >
+                                    <option value="EXPENSE">รายจ่าย</option>
+                                    <option value="INCOME">รายรับ</option>
+                                    <option value="TRANSFER">โอนเงิน</option>
+                                  </select>
+                                )}
+                              </td>
+
+                              {/* 5. Category */}
+                              <td className="py-2.5 px-3">
+                                {isSuccess && (
+                                  <select
+                                    value={item.category}
+                                    onChange={(e) => handleUpdateItem(item.id, 'category', e.target.value)}
+                                    className="w-full px-2 py-1 text-xs border border-slate-200 rounded-lg outline-none focus:border-emerald-500 bg-white"
+                                  >
+                                    {(item.type === 'EXPENSE'
+                                      ? expenseCategories
+                                      : item.type === 'INCOME'
+                                      ? incomeCategories
+                                      : transferCategories
+                                    ).map((cat) => (
+                                      <option key={cat} value={cat}>
+                                        {cat}
+                                      </option>
+                                    ))}
+                                  </select>
+                                )}
+                              </td>
+
+                              {/* 6. Amount */}
+                              <td className="py-2.5 px-3">
+                                {isSuccess && (
+                                  <div className="relative">
+                                    <span className="absolute left-2 top-1/2 -translate-y-1/2 font-bold text-slate-400 text-xs">฿</span>
+                                    <input
+                                      type="number"
+                                      step="any"
+                                      value={item.amount}
+                                      onChange={(e) => handleUpdateItem(item.id, 'amount', e.target.value)}
+                                      placeholder="0.00"
+                                      className="w-full pl-5 pr-2 py-1 text-xs font-bold font-mono text-slate-900 border border-slate-200 rounded-lg outline-none focus:border-emerald-500 bg-white text-right"
+                                    />
+                                  </div>
+                                )}
+                              </td>
+
+                              {/* 7. Accounts */}
+                              <td className="py-2.5 px-3">
+                                {isSuccess && (
+                                  <div className="space-y-1">
                                     <select
-                                      value={item.toAccountId}
-                                      onChange={(e) => handleUpdateItem(item.id, 'toAccountId', e.target.value)}
-                                      className="w-full px-2 py-0.5 text-[11px] border border-indigo-200 rounded-lg outline-none focus:border-indigo-500 bg-indigo-50/50 text-indigo-800"
+                                      value={item.accountId}
+                                      onChange={(e) => handleUpdateItem(item.id, 'accountId', e.target.value)}
+                                      className="w-full px-2 py-1 text-xs border border-slate-200 rounded-lg outline-none focus:border-emerald-500 bg-white"
                                     >
-                                      <option value="">➔ บัญชีปลายทาง</option>
+                                      <option value="">-- ไม่ระบุบัญชี --</option>
                                       {accounts.map((acc) => (
                                         <option key={acc.id} value={acc.id}>
-                                          ➔ {acc.account_name} ({acc.bank_name || acc.account_type})
+                                          {acc.account_name} ({acc.bank_name || acc.account_type})
                                         </option>
                                       ))}
                                     </select>
-                                  )}
-                                </div>
-                              )}
-                            </td>
 
-                            {/* 8. Note & Model Badge */}
-                            <td className="py-2.5 px-3">
-                              {isSuccess && (
-                                <div className="space-y-1">
-                                  <input
-                                    type="text"
-                                    value={item.note}
-                                    onChange={(e) => handleUpdateItem(item.id, 'note', e.target.value)}
-                                    placeholder="บันทึกช่วยจำ..."
-                                    className="w-full px-2 py-1 text-xs border border-slate-200 rounded-lg outline-none focus:border-emerald-500 bg-white"
-                                  />
-                                  {item.modelUsed && (
-                                    <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
-                                      <span
-                                        className={`inline-flex items-center gap-1 px-1.5 py-0.2 rounded font-mono ${
-                                          item.modelUsed.includes('cloudflare') || item.modelUsed.includes('@cf')
-                                            ? 'bg-sky-50 text-sky-700 border border-sky-200'
-                                            : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                        }`}
+                                    {item.type === 'TRANSFER' && (
+                                      <select
+                                        value={item.toAccountId}
+                                        onChange={(e) => handleUpdateItem(item.id, 'toAccountId', e.target.value)}
+                                        className="w-full px-2 py-0.5 text-[11px] border border-indigo-200 rounded-lg outline-none focus:border-indigo-500 bg-indigo-50/50 text-indigo-800"
                                       >
-                                        {item.modelUsed.includes('cloudflare') || item.modelUsed.includes('@cf')
-                                          ? '☁️ Workers AI'
-                                          : '⚡ Gemini'}
-                                      </span>
-                                      {item.senderBank && (
-                                        <span className="font-semibold text-slate-600">
-                                          [{item.senderBank}]
+                                        <option value="">➔ บัญชีปลายทาง</option>
+                                        {accounts.map((acc) => (
+                                          <option key={acc.id} value={acc.id}>
+                                            ➔ {acc.account_name} ({acc.bank_name || acc.account_type})
+                                          </option>
+                                        ))}
+                                      </select>
+                                    )}
+                                  </div>
+                                )}
+                              </td>
+
+                              {/* 8. Note & Model Badge */}
+                              <td className="py-2.5 px-3">
+                                {isSuccess && (
+                                  <div className="space-y-1">
+                                    <input
+                                      type="text"
+                                      value={item.note}
+                                      onChange={(e) => handleUpdateItem(item.id, 'note', e.target.value)}
+                                      placeholder="บันทึกช่วยจำ..."
+                                      className="w-full px-2 py-1 text-xs border border-slate-200 rounded-lg outline-none focus:border-emerald-500 bg-white"
+                                    />
+                                    {item.modelUsed && (
+                                      <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
+                                        <span
+                                          className={`inline-flex items-center gap-1 px-1.5 py-0.2 rounded font-mono ${
+                                            item.modelUsed.includes('cloudflare') || item.modelUsed.includes('@cf')
+                                              ? 'bg-sky-50 text-sky-700 border border-sky-200'
+                                              : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                          }`}
+                                        >
+                                          {item.modelUsed.includes('cloudflare') || item.modelUsed.includes('@cf')
+                                            ? '☁️ Workers AI'
+                                            : '⚡ Gemini'}
                                         </span>
-                                      )}
-                                    </div>
-                                  )}
-                                </div>
-                              )}
-                              {isError && (
-                                <div className="flex items-center gap-2">
-                                  <span className="text-xs text-rose-600 truncate">{item.errorMessage}</span>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleRetryItem(item)}
-                                    className="text-xs font-semibold text-emerald-700 hover:underline shrink-0 cursor-pointer"
-                                  >
-                                    ลองใหม่
-                                  </button>
-                                </div>
-                              )}
-                            </td>
+                                        {item.senderBank && (
+                                          <span className="font-semibold text-slate-600">
+                                            [{item.senderBank}]
+                                          </span>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                                {isError && (
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-xs text-rose-600 truncate">{item.errorMessage}</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleRetryItem(item)}
+                                      className="text-xs font-semibold text-emerald-700 hover:underline shrink-0 cursor-pointer"
+                                    >
+                                      ลองใหม่
+                                    </button>
+                                  </div>
+                                )}
+                              </td>
 
-                            {/* 9. Historical Switch */}
-                            <td className="py-2.5 px-3 text-center">
-                              {isSuccess && (
-                                <label className="relative inline-flex items-center cursor-pointer" title="สลิปย้อนหลัง: ไม่ปรับยอดเงินคงเหลือปัจจุบัน">
-                                  <input
-                                    type="checkbox"
-                                    checked={item.isHistorical}
-                                    onChange={(e) => handleUpdateItem(item.id, 'isHistorical', e.target.checked)}
-                                    className="sr-only peer"
-                                  />
-                                  <div className="w-8 h-4 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3.5 after:w-3.5 after:transition-all peer-checked:bg-amber-500" />
-                                </label>
-                              )}
-                            </td>
+                              {/* 9. Historical Switch */}
+                              <td className="py-2.5 px-3 text-center">
+                                {isSuccess && (
+                                  <label className="relative inline-flex items-center cursor-pointer" title="สลิปย้อนหลัง: ไม่ปรับยอดเงินคงเหลือปัจจุบัน">
+                                    <input
+                                      type="checkbox"
+                                      checked={item.isHistorical}
+                                      onChange={(e) => handleUpdateItem(item.id, 'isHistorical', e.target.checked)}
+                                      className="sr-only peer"
+                                    />
+                                    <div className="w-8 h-4 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3.5 after:w-3.5 after:transition-all peer-checked:bg-amber-500" />
+                                  </label>
+                                )}
+                              </td>
 
-                            {/* 10. Delete Button */}
-                            <td className="py-2.5 px-2 text-center">
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteItem(item.id)}
-                                className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
-                                title="ลบสลิปนี้ออกจากตาราง"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                              {/* 10. Delete Button */}
+                              <td className="py-2.5 px-2 text-center">
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteItem(item.id)}
+                                  className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
+                                  title="ลบสลิปนี้ออกจากตาราง"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           )}
         </div>
 
         {/* Footer Actions */}
         {items.length > 0 && (
-          <div className="px-5 py-3.5 border-t border-slate-100 bg-slate-50/80 flex items-center justify-between shrink-0">
+          <div className="px-4 sm:px-5 py-3 border-t border-slate-100 bg-slate-50/80 flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0">
             <div className="text-xs text-slate-500 hidden sm:block">
-              ตรวจสอบข้อมูลในตารางให้ถูกต้อง จากนั้นกดยืนยันเพื่อบันทึกลงบัญชีจริง
+              ตรวจสอบข้อมูลให้ถูกต้อง จากนั้นกดยืนยันเพื่อบันทึกลงบัญชีจริง
             </div>
-            <div className="flex items-center gap-2.5 ml-auto">
+            <div className="flex items-center gap-2.5 w-full sm:w-auto justify-end">
               <button
                 type="button"
                 onClick={onClose}
@@ -1189,7 +1637,7 @@ export default function SlipScannerModal({
                 type="button"
                 onClick={handleBulkSubmit}
                 disabled={isSubmitting || selectedCount === 0 || scanningCount > 0}
-                className="inline-flex items-center gap-1.5 px-5 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 rounded-xl transition shadow-xs cursor-pointer"
+                className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1.5 px-5 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 rounded-xl transition shadow-xs cursor-pointer"
               >
                 {isSubmitting ? (
                   <>
