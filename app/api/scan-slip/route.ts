@@ -5,6 +5,42 @@ import { GoogleGenAI } from '@google/genai';
 export const maxDuration = 60; // Allow up to 60s for vision model inference
 export const dynamic = 'force-dynamic';
 
+// GET: Healthcheck & available model providers status
+export async function GET() {
+  const cfWorkerUrl = process.env.SLIP_SCANNER_WORKER_API_URL;
+  const geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+  const isGeminiConfigured = Boolean(geminiKey && geminiKey !== 'your_gemini_api_key_here');
+
+  let cfStatus: 'ok' | 'unreachable' | 'not_configured' = 'not_configured';
+  if (cfWorkerUrl) {
+    try {
+      const cleanUrl = cfWorkerUrl.replace(/\/$/, '');
+      const res = await fetch(`${cleanUrl}/health`, {
+        signal: AbortSignal.timeout(4000),
+      });
+      cfStatus = res.ok ? 'ok' : 'unreachable';
+    } catch {
+      cfStatus = 'unreachable';
+    }
+  }
+
+  return NextResponse.json({
+    status: 'ok',
+    providers: {
+      cloudflare: {
+        configured: Boolean(cfWorkerUrl),
+        status: cfStatus,
+        url: cfWorkerUrl || null,
+        models: ['cloudflare-llama-3.2-11b-vision'],
+      },
+      gemini: {
+        configured: isGeminiConfigured,
+        models: ['gemini-2.5-flash-lite', 'gemini-2.5-flash', 'gemini-3.8-flash'],
+      },
+    },
+  });
+}
+
 // JSON Schema for Gemini Structured Output
 const slipAnalysisSchema = {
   type: 'object',
@@ -93,20 +129,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized: User session required' }, { status: 401 });
     }
 
-    // 2. Validate Gemini API Key
-    const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
-    if (!apiKey) {
-      return NextResponse.json(
-        {
-          error: 'Configuration Error',
-          message:
-            'GEMINI_API_KEY is not defined in environment variables. Please add GEMINI_API_KEY to .env.local and Vercel.',
-        },
-        { status: 500 }
-      );
-    }
-
-    // 3. Extract Image payload (support multipart/form-data or application/json base64)
+    // 2. Extract Image payload (support multipart/form-data or application/json base64)
     let base64Data = '';
     let mimeType = 'image/jpeg';
     let requestedModel = '';
@@ -134,6 +157,12 @@ export async function POST(req: NextRequest) {
       if (body.mimeType) mimeType = body.mimeType;
     }
 
+    // 3. Determine provider & model
+    const isCloudflare =
+      requestedModel.startsWith('cloudflare') ||
+      requestedModel.startsWith('cf-') ||
+      requestedModel === 'llama-3.2-11b-vision';
+
     // 4. Fetch user's financial accounts for smart matching
     const { data: accounts } = await supabase
       .from('financial_accounts')
@@ -147,10 +176,80 @@ export async function POST(req: NextRequest) {
       )
       .join('\n');
 
-    // 5. Initialize Google GenAI client
-    const ai = new GoogleGenAI({ apiKey });
+    let parsedSlip: any = null;
+    let modelNameUsed = '';
+    let usageData: any = null;
 
-    const promptText = `
+    if (isCloudflare) {
+      // --- Cloudflare Workers AI Flow ---
+      const workerUrl = process.env.SLIP_SCANNER_WORKER_API_URL;
+      if (!workerUrl) {
+        return NextResponse.json(
+          {
+            error: 'Configuration Error',
+            message:
+              'SLIP_SCANNER_WORKER_API_URL is not defined in environment variables. Please add SLIP_SCANNER_WORKER_API_URL to .env.local and Vercel.',
+          },
+          { status: 500 }
+        );
+      }
+
+      const cleanUrl = workerUrl.replace(/\/$/, '');
+      const cfResponse = await fetch(cleanUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageBase64: base64Data }),
+      });
+
+      if (!cfResponse.ok) {
+        const errorText = await cfResponse.text();
+        return NextResponse.json(
+          {
+            error: 'Cloudflare Worker Scan Failed',
+            message: `Worker returned status ${cfResponse.status}: ${errorText}`,
+          },
+          { status: 502 }
+        );
+      }
+
+      const cfResult = await cfResponse.json();
+      if (!cfResult.success || !cfResult.data) {
+        return NextResponse.json(
+          {
+            error: 'Cloudflare Worker Scan Failed',
+            message: cfResult.error || 'Worker did not return valid data',
+          },
+          { status: 502 }
+        );
+      }
+
+      parsedSlip = cfResult.data;
+      modelNameUsed = cfResult.model || 'cloudflare-llama-3.2-11b-vision';
+      usageData = cfResult.usage
+        ? {
+            model: modelNameUsed,
+            input_tokens: cfResult.usage.prompt_tokens,
+            output_tokens: cfResult.usage.completion_tokens,
+            total_tokens: cfResult.usage.total_tokens,
+          }
+        : null;
+    } else {
+      // --- Google Gemini Flow ---
+      const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+      if (!apiKey || apiKey === 'your_gemini_api_key_here') {
+        return NextResponse.json(
+          {
+            error: 'Configuration Error',
+            message:
+              'GEMINI_API_KEY is not defined or is placeholder. Please configure GEMINI_API_KEY or select Cloudflare Workers AI model.',
+          },
+          { status: 500 }
+        );
+      }
+
+      const ai = new GoogleGenAI({ apiKey });
+
+      const promptText = `
 You are an expert OCR & financial auditor AI specialized in Thai bank transfer slips (สลิปโอนเงิน ธนาคารไทย), QR PromptPay, credit card slips, and receipt vouchers.
 
 Analyze this Thai bank slip image accurately and extract all financial details according to the provided schema.
@@ -166,56 +265,76 @@ User's Financial Accounts List:
 ${userAccountsContext}
 `;
 
-    // 6. Call Gemini Model with Multimodal Image and Structured Output
-    const ALLOWED_MODELS = [
-      'gemini-2.5-flash-lite',
-      'gemini-2.5-flash',
-      'gemini-3.8-flash',
-      'gemini-3.5-flash-lite',
-    ];
+      const ALLOWED_MODELS = [
+        'gemini-2.5-flash-lite',
+        'gemini-2.5-flash',
+        'gemini-3.8-flash',
+        'gemini-3.5-flash-lite',
+      ];
 
-    const modelName = ALLOWED_MODELS.includes(requestedModel)
-      ? requestedModel
-      : (process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite');
+      modelNameUsed = ALLOWED_MODELS.includes(requestedModel)
+        ? requestedModel
+        : (process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite');
 
-    const response = await ai.interactions.create({
-      model: modelName,
-      input: [
-        { type: 'text', text: promptText },
-        {
-          type: 'image',
-          data: base64Data,
-          mime_type: mimeType,
+      const response = await ai.interactions.create({
+        model: modelNameUsed,
+        input: [
+          { type: 'text', text: promptText },
+          {
+            type: 'image',
+            data: base64Data,
+            mime_type: mimeType,
+          },
+        ],
+        generation_config: {
+          thinking_level: 'low',
+          max_output_tokens: 800,
         },
-      ],
-      generation_config: {
-        thinking_level: 'low',
-        max_output_tokens: 800,
-      },
-      response_format: {
-        type: 'text',
-        mime_type: 'application/json',
-        schema: slipAnalysisSchema,
-      },
-    });
+        response_format: {
+          type: 'text',
+          mime_type: 'application/json',
+          schema: slipAnalysisSchema,
+        },
+      });
 
-    const outputText = response.output_text;
-    if (!outputText) {
-      return NextResponse.json(
-        { error: 'Gemini returned an empty response. The slip could not be parsed.' },
-        { status: 502 }
-      );
+      const outputText = response.output_text;
+      if (!outputText) {
+        return NextResponse.json(
+          { error: 'Gemini returned an empty response. The slip could not be parsed.' },
+          { status: 502 }
+        );
+      }
+
+      parsedSlip = JSON.parse(outputText);
+      usageData = response.usage
+        ? {
+            model: modelNameUsed,
+            input_tokens: response.usage.total_input_tokens,
+            output_tokens: response.usage.total_output_tokens,
+            thought_tokens: response.usage.total_thought_tokens || 0,
+            total_tokens: response.usage.total_tokens,
+          }
+        : null;
     }
 
-    if (response.usage) {
-      console.log(
-        `[Gemini Scan (${modelName})] Tokens - Input: ${response.usage.total_input_tokens}, Output: ${response.usage.total_output_tokens}, Thoughts: ${response.usage.total_thought_tokens || 0}, Total: ${response.usage.total_tokens}`
-      );
+    // --- Normalization & Sanitization ---
+    if (parsedSlip.amount && typeof parsedSlip.amount === 'string') {
+      parsedSlip.amount = parseFloat(parsedSlip.amount.replace(/,/g, '')) || 0;
     }
 
-    const parsedSlip = JSON.parse(outputText);
+    if (parsedSlip.transaction_date && parsedSlip.transaction_time && !parsedSlip.transaction_date.includes('T')) {
+      parsedSlip.transaction_date = `${parsedSlip.transaction_date}T${parsedSlip.transaction_time}:00`;
+    }
 
-    // 7. Smart Matching against User's Accounts
+    if (!parsedSlip.type || !['EXPENSE', 'INCOME', 'TRANSFER'].includes(parsedSlip.type)) {
+      parsedSlip.type = 'EXPENSE';
+    }
+
+    if (!parsedSlip.category) {
+      parsedSlip.category = 'อื่นๆ';
+    }
+
+    // --- Smart Matching against User's Accounts ---
     let matchedAccountId: string | null = null;
     let matchedToAccountId: string | null = null;
 
@@ -274,7 +393,7 @@ ${userAccountsContext}
       }
     }
 
-    // 8. Determine if this slip is historical (transaction date earlier than today)
+    // --- Determine if this slip is historical (transaction date earlier than today) ---
     let isHistoricalSuggested = false;
     if (parsedSlip.transaction_date) {
       try {
@@ -282,7 +401,6 @@ ${userAccountsContext}
         const todayStart = new Date();
         todayStart.setHours(0, 0, 0, 0);
 
-        // If slip date is before today, suggest is_historical: true to prevent altering live balance
         if (slipDate < todayStart) {
           isHistoricalSuggested = true;
         }
@@ -298,24 +416,16 @@ ${userAccountsContext}
         matched_account_id: matchedAccountId,
         matched_to_account_id: matchedToAccountId,
         is_historical_suggested: isHistoricalSuggested,
-        model_used: modelName,
+        model_used: modelNameUsed,
       },
-      usage: response.usage
-        ? {
-            model: modelName,
-            input_tokens: response.usage.total_input_tokens,
-            output_tokens: response.usage.total_output_tokens,
-            thought_tokens: response.usage.total_thought_tokens || 0,
-            total_tokens: response.usage.total_tokens,
-          }
-        : null,
+      usage: usageData,
     });
   } catch (error: any) {
     console.error('Error in /api/scan-slip:', error);
     return NextResponse.json(
       {
         error: 'Scan Failed',
-        message: error.message || 'Failed to process slip image with Gemini AI',
+        message: error.message || 'Failed to process slip image',
       },
       { status: 500 }
     );

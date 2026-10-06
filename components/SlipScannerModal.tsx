@@ -26,6 +26,10 @@ import {
   Square,
   ZoomIn,
   Cpu,
+  Activity,
+  CheckCircle2,
+  Cloud,
+  FlaskConical,
 } from 'lucide-react';
 import { AccountOption } from './ExpenseIncomeSection';
 
@@ -59,6 +63,7 @@ export interface StagedSlipItem {
   receiverName?: string;
   referenceNumber?: string;
   confidenceScore?: number;
+  modelUsed?: string;
   selected: boolean;
 }
 
@@ -113,21 +118,42 @@ function compressImageForOcr(file: File, maxDimension = 1200, quality = 0.85): P
   });
 }
 
-export const AVAILABLE_MODELS = [
+export interface ScanModelOption {
+  id: string;
+  name: string;
+  badge: string;
+  provider: 'cloudflare' | 'google';
+  description?: string;
+}
+
+export const AVAILABLE_MODELS: ScanModelOption[] = [
+  {
+    id: 'cloudflare-llama-3.2-11b-vision',
+    name: 'Cloudflare Llama 3.2 Vision (11B)',
+    badge: 'Workers AI ☁️ ฟรี',
+    provider: 'cloudflare',
+    description: 'Serverless Workers AI, ประมวลผลฟรี ไม่หักโควต้า Gemini',
+  },
   {
     id: 'gemini-2.5-flash-lite',
     name: 'Gemini 2.5 Flash-Lite',
     badge: 'ประหยัดสุด & เร็ว ⚡',
+    provider: 'google',
+    description: 'Google AI ค่าบริการต่ำ รวดเร็ว',
   },
   {
     id: 'gemini-2.5-flash',
     name: 'Gemini 2.5 Flash',
     badge: 'มาตรฐาน 🎯',
+    provider: 'google',
+    description: 'สมดุลทั้งความแม่นยำและความเร็ว',
   },
   {
     id: 'gemini-3.8-flash',
     name: 'Gemini 3.8 Flash',
     badge: 'รุ่นใหม่ล่าสุด 🚀',
+    provider: 'google',
+    description: 'โมเดลความฉลาดสูงสุด',
   },
 ];
 
@@ -147,17 +173,46 @@ export default function SlipScannerModal({
   const [items, setItems] = useState<StagedSlipItem[]>([]);
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
-  const [selectedModel, setSelectedModel] = useState<string>('gemini-2.5-flash-lite');
+  const [selectedModel, setSelectedModel] = useState<string>('cloudflare-llama-3.2-11b-vision');
 
-  // Load preferred model from localStorage
+  // Connection & provider status
+  const [providerStatus, setProviderStatus] = useState<{
+    cloudflare?: { configured: boolean; status: string; url?: string };
+    gemini?: { configured: boolean };
+  } | null>(null);
+  const [isCheckingStatus, setIsCheckingStatus] = useState<boolean>(false);
+  const [statusTooltip, setStatusTooltip] = useState<string | null>(null);
+
+  const checkProviderStatus = useCallback(async () => {
+    try {
+      setIsCheckingStatus(true);
+      const res = await fetch('/api/scan-slip', { method: 'GET' });
+      if (res.ok) {
+        const data = await res.json();
+        setProviderStatus(data.providers);
+      }
+    } catch {
+      // ignore
+    } finally {
+      setIsCheckingStatus(false);
+    }
+  }, []);
+
+  // Load preferred model from localStorage and check API providers
   useEffect(() => {
     try {
-      const saved = localStorage.getItem('gemini_scan_model');
+      const saved = localStorage.getItem('slip_scan_model') || localStorage.getItem('gemini_scan_model');
       if (saved && AVAILABLE_MODELS.some((m) => m.id === saved)) {
         setSelectedModel(saved);
       }
     } catch {}
   }, []);
+
+  useEffect(() => {
+    if (isOpen) {
+      checkProviderStatus();
+    }
+  }, [isOpen, checkProviderStatus]);
 
   // Lightbox preview for zooming image
   const [zoomedImage, setZoomedImage] = useState<{ url: string; title: string } | null>(null);
@@ -175,6 +230,7 @@ export default function SlipScannerModal({
       setZoomedImage(null);
       setIsDragging(false);
       setIsSubmitting(false);
+      setStatusTooltip(null);
     }
   }, [isOpen]);
 
@@ -239,6 +295,7 @@ export default function SlipScannerModal({
         receiverName: slip.receiver_name,
         referenceNumber: slip.reference_number,
         confidenceScore: slip.confidence_score,
+        modelUsed: slip.model_used || model,
       };
     },
     [accounts]
@@ -351,9 +408,103 @@ export default function SlipScannerModal({
     return () => window.removeEventListener('paste', handlePaste);
   }, [isOpen, handleAddFiles]);
 
+  // Generate a realistic mock Thai bank slip on HTML canvas for instant testing
+  const generateMockSlipFile = (): Promise<File> => {
+    return new Promise((resolve) => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 600;
+      canvas.height = 820;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        return resolve(new File([''], 'mock-slip.jpg', { type: 'image/jpeg' }));
+      }
+
+      // Background
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Header Banner (Kasikorn Green)
+      ctx.fillStyle = '#107C41';
+      ctx.fillRect(0, 0, canvas.width, 130);
+
+      // Header Title
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 26px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('โอนเงินสำเร็จ (Transfer Successful)', 300, 55);
+
+      ctx.font = '18px sans-serif';
+      ctx.fillText('ธนาคารกสิกรไทย (KASIKORNBANK)', 300, 95);
+
+      // Amount Section
+      ctx.fillStyle = '#0f172a';
+      ctx.font = 'bold 48px sans-serif';
+      ctx.fillText('฿ 185.00', 300, 220);
+
+      ctx.fillStyle = '#64748b';
+      ctx.font = '16px sans-serif';
+      ctx.fillText('จำนวนเงิน (Amount)', 300, 255);
+
+      // Separator Line
+      ctx.strokeStyle = '#e2e8f0';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(40, 285);
+      ctx.lineTo(560, 285);
+      ctx.stroke();
+
+      // Transaction Details (Key - Value)
+      ctx.textAlign = 'left';
+      const drawRow = (label: string, value: string, y: number) => {
+        ctx.font = '16px sans-serif';
+        ctx.fillStyle = '#64748b';
+        ctx.fillText(label, 50, y);
+        ctx.font = 'bold 18px sans-serif';
+        ctx.fillStyle = '#1e293b';
+        ctx.fillText(value, 230, y);
+      };
+
+      const now = new Date();
+      const dateStr = now.toISOString().split('T')[0];
+      drawRow('วันที่ / Date:', `${dateStr} 12:45`, 335);
+      drawRow('จาก / From:', 'นาย กิตติพงษ์ (xxx-x-x1234-x)', 390);
+      drawRow('ธนาคารต้นทาง:', 'KBANK', 440);
+      drawRow('ไปยัง / To:', 'ร้าน อเมซอน คาเฟ่ (PromptPay)', 495);
+      drawRow('เลขบัญชีปลายทาง:', 'xxx-xxx-5678', 545);
+      drawRow('บันทึกช่วยจำ:', 'ค่ากาแฟสดและขนมปัง', 600);
+      drawRow('รหัสอ้างอิง (Ref):', '20261006KB987654', 655);
+
+      // Footer
+      ctx.fillStyle = '#107C41';
+      ctx.fillRect(0, 775, canvas.width, 45);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '14px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('สลิปตัวอย่างสำหรับทดสอบระบบ AI Slip Scanner', 300, 803);
+
+      canvas.toBlob(
+        (blob) => {
+          const file = new File([blob || new Blob()], `mock_slip_${Date.now()}.jpg`, {
+            type: 'image/jpeg',
+          });
+          resolve(file);
+        },
+        'image/jpeg',
+        0.9
+      );
+    });
+  };
+
+  const handleTestWithMockSlip = async () => {
+    const mockFile = await generateMockSlipFile();
+    handleAddFiles([mockFile]);
+  };
+
   // Retry scanning an item
   const handleRetryItem = (item: StagedSlipItem) => {
-    const updated = items.map((i) => (i.id === item.id ? { ...i, status: 'pending' as const, errorMessage: undefined } : i));
+    const updated = items.map((i) =>
+      i.id === item.id ? { ...i, status: 'pending' as const, errorMessage: undefined } : i
+    );
     setItems(updated);
     processQueue(updated, selectedModel);
   };
@@ -373,9 +524,7 @@ export default function SlipScannerModal({
 
   // Update item field
   const handleUpdateItem = (id: string, field: keyof StagedSlipItem, value: any) => {
-    setItems((prev) =>
-      prev.map((i) => (i.id === id ? { ...i, [field]: value } : i))
-    );
+    setItems((prev) => prev.map((i) => (i.id === id ? { ...i, [field]: value } : i)));
   };
 
   // Bulk Actions
@@ -460,6 +609,10 @@ export default function SlipScannerModal({
     .filter((i) => i.selected && i.status === 'success')
     .reduce((sum, i) => sum + (parseFloat(i.amount) || 0), 0);
 
+  const activeModel = AVAILABLE_MODELS.find((m) => m.id === selectedModel) || AVAILABLE_MODELS[0];
+  const isCfModel = activeModel.provider === 'cloudflare';
+  const cfStatus = providerStatus?.cloudflare?.status;
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
       <div className="bg-white rounded-3xl shadow-2xl border border-slate-200/80 w-full max-w-7xl max-h-[96vh] flex flex-col overflow-hidden">
@@ -474,38 +627,88 @@ export default function SlipScannerModal({
                 <span>AI สแกนสลิปหลายรายการ (Bulk Scan & Staging)</span>
               </h2>
               <p className="text-xs text-slate-500">
-                อัปโหลดสลิปได้พร้อมกันหลายรูป ตรวจทานและแก้ไขทีละแถวก่อนบันทึกลงระบบ
+                รองรับทั้ง Cloudflare Workers AI (Llama 3.2 Vision) และ Google Gemini
               </p>
             </div>
           </div>
 
-          <div className="flex items-center justify-between sm:justify-end gap-2.5">
+          <div className="flex items-center justify-between sm:justify-end gap-2 flex-wrap">
             {/* Model Selector Dropdown */}
             <div className="flex items-center gap-1.5 bg-white border border-slate-200/90 shadow-2xs rounded-xl px-2.5 py-1.5">
-              <Cpu className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-              <label htmlFor="gemini-model-select" className="text-[11px] font-medium text-slate-500 hidden md:inline shrink-0">
+              {isCfModel ? (
+                <Cloud className="w-3.5 h-3.5 text-sky-600 shrink-0" />
+              ) : (
+                <Cpu className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+              )}
+              <label htmlFor="slip-model-select" className="text-[11px] font-medium text-slate-500 hidden md:inline shrink-0">
                 โมเดล:
               </label>
               <select
-                id="gemini-model-select"
+                id="slip-model-select"
                 value={selectedModel}
                 onChange={(e) => {
                   const newModel = e.target.value;
                   setSelectedModel(newModel);
                   try {
+                    localStorage.setItem('slip_scan_model', newModel);
                     localStorage.setItem('gemini_scan_model', newModel);
                   } catch {}
                 }}
                 className="bg-transparent text-xs font-semibold text-slate-800 focus:outline-none cursor-pointer pr-1"
-                title="เลือกโมเดล Gemini สำหรับประมวลผลสลิป"
+                title="เลือกโมเดล AI สำหรับประมวลผลสลิป"
               >
-                {AVAILABLE_MODELS.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.name} ({m.badge})
-                  </option>
-                ))}
+                <optgroup label="Cloudflare Workers AI (ฟรี)">
+                  {AVAILABLE_MODELS.filter((m) => m.provider === 'cloudflare').map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name} ({m.badge})
+                    </option>
+                  ))}
+                </optgroup>
+                <optgroup label="Google Gemini">
+                  {AVAILABLE_MODELS.filter((m) => m.provider === 'google').map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name} ({m.badge})
+                    </option>
+                  ))}
+                </optgroup>
               </select>
             </div>
+
+            {/* Provider Status Indicator / Refresh */}
+            <button
+              type="button"
+              onClick={checkProviderStatus}
+              disabled={isCheckingStatus}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-white border border-slate-200 rounded-xl text-[11px] font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-50 transition shadow-2xs cursor-pointer"
+              title="ตรวจสอบสถานะการเชื่อมต่อ API"
+            >
+              {isCheckingStatus ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-500" />
+              ) : isCfModel ? (
+                cfStatus === 'ok' ? (
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 ring-2 ring-emerald-200 shrink-0" />
+                ) : cfStatus === 'unreachable' ? (
+                  <span className="w-2 h-2 rounded-full bg-rose-500 ring-2 ring-rose-200 shrink-0" />
+                ) : (
+                  <span className="w-2 h-2 rounded-full bg-amber-400 ring-2 ring-amber-200 shrink-0" />
+                )
+              ) : providerStatus?.gemini?.configured ? (
+                <span className="w-2 h-2 rounded-full bg-emerald-500 ring-2 ring-emerald-200 shrink-0" />
+              ) : (
+                <span className="w-2 h-2 rounded-full bg-amber-400 ring-2 ring-amber-200 shrink-0" />
+              )}
+              <span className="hidden sm:inline">
+                {isCheckingStatus
+                  ? 'กำลังเช็ค...'
+                  : isCfModel
+                  ? cfStatus === 'ok'
+                    ? 'Worker พร้อม'
+                    : 'เช็ค Worker'
+                  : providerStatus?.gemini?.configured
+                  ? 'Gemini พร้อม'
+                  : 'เช็ค API'}
+              </span>
+            </button>
 
             <button
               type="button"
@@ -521,7 +724,7 @@ export default function SlipScannerModal({
         <div className="p-4 sm:p-5 overflow-y-auto flex-1 space-y-4">
           {/* VIEW A: No items yet -> Large Drag & Drop Box */}
           {items.length === 0 ? (
-            <div className="space-y-4 max-w-2xl mx-auto py-6">
+            <div className="space-y-4 max-w-2xl mx-auto py-4">
               <div
                 onDragOver={(e) => {
                   e.preventDefault();
@@ -534,7 +737,7 @@ export default function SlipScannerModal({
                   if (e.dataTransfer.files) handleAddFiles(e.dataTransfer.files);
                 }}
                 onClick={() => fileInputRef.current?.click()}
-                className={`border-2 border-dashed rounded-3xl p-10 text-center cursor-pointer transition-all duration-200 flex flex-col items-center justify-center gap-3.5 ${
+                className={`border-2 border-dashed rounded-3xl p-8 sm:p-10 text-center cursor-pointer transition-all duration-200 flex flex-col items-center justify-center gap-3.5 ${
                   isDragging
                     ? 'border-emerald-500 bg-emerald-50/60 scale-[0.99]'
                     : 'border-slate-300 hover:border-emerald-500 hover:bg-slate-50/70 bg-white'
@@ -550,7 +753,7 @@ export default function SlipScannerModal({
                   <p className="text-xs text-slate-500">
                     เลือกสลิปพร้อมกันได้หลายรูป (JPG, PNG, WEBP) ระบบจะสแกนและนำมาพักในตารางให้ตรวจทาน
                   </p>
-                  <div className="pt-2 flex items-center justify-center gap-2">
+                  <div className="pt-2 flex flex-wrap items-center justify-center gap-2">
                     <span className="text-xs font-semibold text-emerald-700 bg-emerald-100/70 px-2.5 py-1 rounded-lg">
                       💡 กด Ctrl + V เพื่อวางรูปจากคลิปบอร์ดได้ทันที
                     </span>
@@ -568,8 +771,24 @@ export default function SlipScannerModal({
                 />
               </div>
 
+              {/* Instant Test Button & Tips */}
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 p-3.5 bg-slate-50 border border-slate-200 rounded-2xl">
+                <div className="flex items-center gap-2 text-xs text-slate-600">
+                  <FlaskConical className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>ไม่มีสลิปในเครื่องตอนนี้? ทดลองทดสอบความสามารถของระบบได้ทันที</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleTestWithMockSlip}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-emerald-700 bg-emerald-100/90 hover:bg-emerald-200 border border-emerald-300 rounded-xl transition shadow-2xs shrink-0 cursor-pointer"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>🧪 ทดสอบด้วยสลิปตัวอย่าง</span>
+                </button>
+              </div>
+
               {/* Tips Banner */}
-              <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs text-slate-600 space-y-1">
+              <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs text-slate-600 space-y-1.5">
                 <p className="font-semibold text-slate-800 flex items-center gap-1.5">
                   <Info className="w-4 h-4 text-emerald-600" />
                   <span>ระบบพักข้อมูลชั่วคราว (Temporary Staging Table):</span>
@@ -577,6 +796,13 @@ export default function SlipScannerModal({
                 <p>
                   เมื่ออัปโหลดสลิป ข้อมูลจะถูกจัดเก็บไว้ในตารางจำลองบนหน้าจอนี้ก่อน คุณสามารถแก้ไข ยอดเงิน หมวดหมู่ บัญชี หรือลบรายการที่ไม่ถูกต้องออกได้ตามสะดวก ก่อนกดบันทึกจริงเข้าฐานข้อมูล
                 </p>
+                <div className="pt-1 text-[11px] text-slate-500 flex items-center gap-2">
+                  <span className="font-medium text-slate-700">โมเดลที่เลือก:</span>
+                  <span className="bg-white px-2 py-0.5 rounded border border-slate-200 font-semibold text-slate-800">
+                    {activeModel.name}
+                  </span>
+                  <span>— {activeModel.description}</span>
+                </div>
               </div>
             </div>
           ) : (
@@ -604,7 +830,17 @@ export default function SlipScannerModal({
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-800 bg-emerald-100 hover:bg-emerald-200 border border-emerald-300 rounded-xl transition shadow-2xs cursor-pointer"
                   >
                     <Plus className="w-3.5 h-3.5" />
-                    <span>+ เพิ่มรูปสลิปเพิ่ม</span>
+                    <span>+ เพิ่มรูปสลิป</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleTestWithMockSlip}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-100 border border-slate-300 rounded-xl transition shadow-2xs cursor-pointer"
+                    title="สร้างสลิปจำลองสำหรับทดสอบ"
+                  >
+                    <FlaskConical className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>+ สลิปตัวอย่าง</span>
                   </button>
 
                   <input
@@ -671,7 +907,7 @@ export default function SlipScannerModal({
                         <th className="py-2.5 px-3 w-40">หมวดหมู่</th>
                         <th className="py-2.5 px-3 w-32">จำนวนเงิน (฿)</th>
                         <th className="py-2.5 px-3 w-48">บัญชีที่ใช้</th>
-                        <th className="py-2.5 px-3 min-w-[180px]">บันทึกช่วยจำ (Note)</th>
+                        <th className="py-2.5 px-3 min-w-[200px]">บันทึกช่วยจำ (Note)</th>
                         <th className="py-2.5 px-3 w-28 text-center">สลิปย้อนหลัง</th>
                         <th className="py-2.5 px-2 w-12 text-center">ลบ</th>
                       </tr>
@@ -851,16 +1087,38 @@ export default function SlipScannerModal({
                               )}
                             </td>
 
-                            {/* 8. Note */}
+                            {/* 8. Note & Model Badge */}
                             <td className="py-2.5 px-3">
                               {isSuccess && (
-                                <input
-                                  type="text"
-                                  value={item.note}
-                                  onChange={(e) => handleUpdateItem(item.id, 'note', e.target.value)}
-                                  placeholder="บันทึกช่วยจำ..."
-                                  className="w-full px-2 py-1 text-xs border border-slate-200 rounded-lg outline-none focus:border-emerald-500 bg-white"
-                                />
+                                <div className="space-y-1">
+                                  <input
+                                    type="text"
+                                    value={item.note}
+                                    onChange={(e) => handleUpdateItem(item.id, 'note', e.target.value)}
+                                    placeholder="บันทึกช่วยจำ..."
+                                    className="w-full px-2 py-1 text-xs border border-slate-200 rounded-lg outline-none focus:border-emerald-500 bg-white"
+                                  />
+                                  {item.modelUsed && (
+                                    <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
+                                      <span
+                                        className={`inline-flex items-center gap-1 px-1.5 py-0.2 rounded font-mono ${
+                                          item.modelUsed.includes('cloudflare') || item.modelUsed.includes('@cf')
+                                            ? 'bg-sky-50 text-sky-700 border border-sky-200'
+                                            : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                        }`}
+                                      >
+                                        {item.modelUsed.includes('cloudflare') || item.modelUsed.includes('@cf')
+                                          ? '☁️ Workers AI'
+                                          : '⚡ Gemini'}
+                                      </span>
+                                      {item.senderBank && (
+                                        <span className="font-semibold text-slate-600">
+                                          [{item.senderBank}]
+                                        </span>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
                               )}
                               {isError && (
                                 <div className="flex items-center gap-2">
