@@ -18,6 +18,13 @@ import {
   History,
   Info,
   RotateCcw,
+  Trash2,
+  Plus,
+  Eye,
+  Loader2,
+  CheckSquare,
+  Square,
+  ZoomIn,
 } from 'lucide-react';
 import { AccountOption } from './ExpenseIncomeSection';
 
@@ -31,23 +38,27 @@ interface SlipScannerModalProps {
   transferCategories: string[];
 }
 
-interface ParsedSlipData {
-  amount: number;
-  transaction_date: string;
+export interface StagedSlipItem {
+  id: string; // client-side temp id
+  file: File;
+  previewUrl: string;
+  status: 'pending' | 'scanning' | 'success' | 'error';
+  errorMessage?: string;
+  date: string;
+  time: string;
   type: 'EXPENSE' | 'INCOME' | 'TRANSFER';
   category: string;
-  sender_bank?: string;
-  sender_account_masked?: string;
-  sender_name?: string;
-  receiver_bank?: string;
-  receiver_account_masked?: string;
-  receiver_name?: string;
-  memo?: string;
-  reference_number?: string;
-  confidence_score?: number;
-  matched_account_id?: string | null;
-  matched_to_account_id?: string | null;
-  is_historical_suggested?: boolean;
+  amount: string; // formatted string for inputs
+  accountId: string;
+  toAccountId: string;
+  note: string;
+  isHistorical: boolean;
+  senderBank?: string;
+  senderAccountMasked?: string;
+  receiverName?: string;
+  referenceNumber?: string;
+  confidenceScore?: number;
+  selected: boolean;
 }
 
 export default function SlipScannerModal({
@@ -61,57 +72,36 @@ export default function SlipScannerModal({
 }: SlipScannerModalProps) {
   const supabase = createClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const additionalFileInputRef = useRef<HTMLInputElement>(null);
 
-  const [step, setStep] = useState<'upload' | 'scanning' | 'review'>('upload');
-  const [imagePreview, setImagePreview] = useState<string | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [items, setItems] = useState<StagedSlipItem[]>([]);
+  const [isDragging, setIsDragging] = useState<boolean>(false);
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
-  // Form review fields
-  const [parsedData, setParsedData] = useState<ParsedSlipData | null>(null);
-  const [date, setDate] = useState<string>('');
-  const [time, setTime] = useState<string>('12:00');
-  const [type, setType] = useState<'EXPENSE' | 'INCOME' | 'TRANSFER'>('EXPENSE');
-  const [category, setCategory] = useState<string>('อาหาร & เครื่องดื่ม');
-  const [amount, setAmount] = useState<string>('');
-  const [accountId, setAccountId] = useState<string>('');
-  const [toAccountId, setToAccountId] = useState<string>('');
-  const [note, setNote] = useState<string>('');
-  const [isHistorical, setIsHistorical] = useState<boolean>(false);
-  const [isSaving, setIsSaving] = useState<boolean>(false);
+  // Lightbox preview for zooming image
+  const [zoomedImage, setZoomedImage] = useState<{ url: string; title: string } | null>(null);
 
-  // Reset state when modal opens or closes
+  // Reset state when modal is opened/closed
   useEffect(() => {
     if (!isOpen) {
-      setStep('upload');
-      setImagePreview(null);
-      setErrorMessage(null);
-      setParsedData(null);
+      // Clean up object URLs to prevent memory leaks
+      items.forEach((item) => {
+        try {
+          URL.revokeObjectURL(item.previewUrl);
+        } catch {}
+      });
+      setItems([]);
+      setZoomedImage(null);
+      setIsDragging(false);
+      setIsSubmitting(false);
     }
   }, [isOpen]);
 
-  // Handle Drag & Drop
-  const [isDragging, setIsDragging] = useState<boolean>(false);
-
-  // Process File and call /api/scan-slip
-  const handleProcessFile = useCallback(async (file: File) => {
-    if (!file.type.startsWith('image/')) {
-      setErrorMessage('กรุณาอัปโหลดไฟล์รูปภาพสลิปเท่านั้น (PNG, JPG, WEBP)');
-      return;
-    }
-
-    setErrorMessage(null);
-    setStep('scanning');
-
-    // Create local preview URL
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      setImagePreview(e.target?.result as string);
-    };
-    reader.readAsDataURL(file);
-
-    try {
+  // Scan a single item through /api/scan-slip
+  const scanSingleItem = useCallback(
+    async (item: StagedSlipItem): Promise<Partial<StagedSlipItem>> => {
       const formData = new FormData();
-      formData.append('file', file);
+      formData.append('file', item.file);
 
       const res = await fetch('/api/scan-slip', {
         method: 'POST',
@@ -119,15 +109,16 @@ export default function SlipScannerModal({
       });
 
       const result = await res.json();
-
       if (!res.ok) {
         throw new Error(result.message || result.error || 'ไม่สามารถสแกนสลิปได้');
       }
 
-      const slip: ParsedSlipData = result.data;
-      setParsedData(slip);
+      const slip = result.data;
 
       // Parse Date & Time
+      let parsedDate = new Date().toISOString().split('T')[0];
+      let parsedTime = '12:00';
+
       if (slip.transaction_date) {
         try {
           const d = new Date(slip.transaction_date);
@@ -136,138 +127,274 @@ export default function SlipScannerModal({
           const dd = String(d.getDate()).padStart(2, '0');
           const hh = String(d.getHours()).padStart(2, '0');
           const min = String(d.getMinutes()).padStart(2, '0');
-          setDate(`${yyyy}-${mm}-${dd}`);
-          setTime(`${hh}:${min}`);
+          parsedDate = `${yyyy}-${mm}-${dd}`;
+          parsedTime = `${hh}:${min}`;
         } catch {
-          setDate(new Date().toISOString().split('T')[0]);
-          setTime('12:00');
+          // fallback
         }
-      } else {
-        setDate(new Date().toISOString().split('T')[0]);
-        setTime('12:00');
       }
 
-      // Populate form state
-      setType(slip.type || 'EXPENSE');
-      setCategory(slip.category || 'อาหาร & เครื่องดื่ม');
-      setAmount(slip.amount != null ? String(slip.amount) : '');
-      setAccountId(slip.matched_account_id || (accounts[0]?.id ? String(accounts[0].id) : ''));
-      setToAccountId(slip.matched_to_account_id || '');
-
-      // Construct note from memo and ref
+      // Build initial note
       const noteParts: string[] = [];
       if (slip.receiver_name) noteParts.push(`ถึง: ${slip.receiver_name}`);
       if (slip.memo) noteParts.push(`[${slip.memo}]`);
       if (slip.reference_number) noteParts.push(`Ref: ${slip.reference_number}`);
-      setNote(noteParts.join(' '));
 
-      // Set is_historical flag based on suggestion
-      setIsHistorical(Boolean(slip.is_historical_suggested));
+      return {
+        status: 'success',
+        date: parsedDate,
+        time: parsedTime,
+        type: slip.type || 'EXPENSE',
+        category: slip.category || 'อาหาร & เครื่องดื่ม',
+        amount: slip.amount != null ? String(slip.amount) : '',
+        accountId: slip.matched_account_id || (accounts[0]?.id ? String(accounts[0].id) : ''),
+        toAccountId: slip.matched_to_account_id || '',
+        note: noteParts.join(' '),
+        isHistorical: Boolean(slip.is_historical_suggested),
+        senderBank: slip.sender_bank,
+        senderAccountMasked: slip.sender_account_masked,
+        receiverName: slip.receiver_name,
+        referenceNumber: slip.reference_number,
+        confidenceScore: slip.confidence_score,
+      };
+    },
+    [accounts]
+  );
 
-      setStep('review');
-    } catch (err: any) {
-      console.error('Slip scan error:', err);
-      setErrorMessage(err.message || 'เกิดข้อผิดพลาดในการเชื่อมต่อกับ Gemini AI');
-      setStep('upload');
-    }
-  }, [accounts]);
+  // Queue runner: processes pending items with concurrency of 2
+  const processQueue = useCallback(
+    async (currentItems: StagedSlipItem[]) => {
+      const pendingItems = currentItems.filter((i) => i.status === 'pending');
+      if (pendingItems.length === 0) return;
+
+      const CONCURRENCY = 2;
+      let index = 0;
+
+      const runWorker = async () => {
+        while (index < pendingItems.length) {
+          const currentIndex = index++;
+          const target = pendingItems[currentIndex];
+          if (!target) break;
+
+          // Set status to scanning
+          setItems((prev) =>
+            prev.map((it) => (it.id === target.id ? { ...it, status: 'scanning' } : it))
+          );
+
+          try {
+            const updates = await scanSingleItem(target);
+            setItems((prev) =>
+              prev.map((it) => (it.id === target.id ? { ...it, ...updates } : it))
+            );
+          } catch (err: any) {
+            setItems((prev) =>
+              prev.map((it) =>
+                it.id === target.id
+                  ? {
+                      ...it,
+                      status: 'error',
+                      errorMessage: err.message || 'สแกนไม่สำเร็จ',
+                    }
+                  : it
+              )
+            );
+          }
+        }
+      };
+
+      const workers = Array.from({ length: Math.min(CONCURRENCY, pendingItems.length) }, () =>
+        runWorker()
+      );
+      await Promise.all(workers);
+    },
+    [scanSingleItem]
+  );
+
+  // Add multiple files into the staging queue
+  const handleAddFiles = useCallback(
+    (files: FileList | File[]) => {
+      const fileList = Array.from(files).filter((f) => f.type.startsWith('image/'));
+      if (fileList.length === 0) return;
+
+      const newItems: StagedSlipItem[] = fileList.map((file) => ({
+        id: `staged_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        file,
+        previewUrl: URL.createObjectURL(file),
+        status: 'pending',
+        date: new Date().toISOString().split('T')[0],
+        time: '12:00',
+        type: 'EXPENSE',
+        category: 'อาหาร & เครื่องดื่ม',
+        amount: '',
+        accountId: accounts[0]?.id ? String(accounts[0].id) : '',
+        toAccountId: '',
+        note: '',
+        isHistorical: false,
+        selected: true,
+      }));
+
+      setItems((prev) => {
+        const combined = [...prev, ...newItems];
+        // Trigger queue processing
+        setTimeout(() => processQueue(combined), 50);
+        return combined;
+      });
+    },
+    [accounts, processQueue]
+  );
 
   // Support Clipboard Paste (Ctrl + V)
   useEffect(() => {
-    if (!isOpen || step !== 'upload') return;
+    if (!isOpen) return;
 
     const handlePaste = (e: ClipboardEvent) => {
-      const items = e.clipboardData?.items;
-      if (!items) return;
+      const itemsList = e.clipboardData?.items;
+      if (!itemsList) return;
 
-      for (let i = 0; i < items.length; i++) {
-        if (items[i].type.startsWith('image/')) {
-          const file = items[i].getAsFile();
-          if (file) {
-            handleProcessFile(file);
-            break;
-          }
+      const pastedFiles: File[] = [];
+      for (let i = 0; i < itemsList.length; i++) {
+        if (itemsList[i].type.startsWith('image/')) {
+          const file = itemsList[i].getAsFile();
+          if (file) pastedFiles.push(file);
         }
+      }
+
+      if (pastedFiles.length > 0) {
+        handleAddFiles(pastedFiles);
       }
     };
 
     window.addEventListener('paste', handlePaste);
     return () => window.removeEventListener('paste', handlePaste);
-  }, [isOpen, step, handleProcessFile]);
+  }, [isOpen, handleAddFiles]);
 
-  // Save reviewed transaction to Supabase
-  const handleSaveTransaction = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!amount || parseFloat(amount) <= 0) {
-      alert('กรุณาระบุจำนวนเงินที่มากกว่า 0');
+  // Retry scanning an item
+  const handleRetryItem = (item: StagedSlipItem) => {
+    const updated = items.map((i) => (i.id === item.id ? { ...i, status: 'pending' as const, errorMessage: undefined } : i));
+    setItems(updated);
+    processQueue(updated);
+  };
+
+  // Delete an item from the staging list
+  const handleDeleteItem = (id: string) => {
+    setItems((prev) => {
+      const target = prev.find((i) => i.id === id);
+      if (target) {
+        try {
+          URL.revokeObjectURL(target.previewUrl);
+        } catch {}
+      }
+      return prev.filter((i) => i.id !== id);
+    });
+  };
+
+  // Update item field
+  const handleUpdateItem = (id: string, field: keyof StagedSlipItem, value: any) => {
+    setItems((prev) =>
+      prev.map((i) => (i.id === id ? { ...i, [field]: value } : i))
+    );
+  };
+
+  // Bulk Actions
+  const handleToggleSelectAll = () => {
+    const allSelected = items.every((i) => i.selected);
+    setItems((prev) => prev.map((i) => ({ ...i, selected: !allSelected })));
+  };
+
+  const handleBulkSetHistorical = (val: boolean) => {
+    setItems((prev) => prev.map((i) => ({ ...i, isHistorical: val })));
+  };
+
+  // Bulk Submit to Supabase
+  const handleBulkSubmit = async () => {
+    const validSelected = items.filter(
+      (i) => i.selected && i.status === 'success' && parseFloat(i.amount) > 0
+    );
+
+    if (validSelected.length === 0) {
+      alert('กรุณาเลือกรายการที่สแกนสำเร็จและมียอดเงินมากกว่า 0 อย่างน้อย 1 รายการ');
       return;
     }
 
-    if (type === 'TRANSFER') {
-      if (!accountId) {
-        alert('กรุณาเลือกบัญชีต้นทาง (From Account)');
-        return;
-      }
-      if (!toAccountId) {
-        alert('กรุณาเลือกบัญชีปลายทาง (To Account)');
-        return;
-      }
-      if (accountId === toAccountId) {
-        alert('บัญชีต้นทางและบัญชีปลายทางต้องไม่ใช่บัญชีเดียวกัน');
-        return;
+    // Validate TRANSFER accounts
+    for (const item of validSelected) {
+      if (item.type === 'TRANSFER') {
+        if (!item.accountId) {
+          alert(`รายการยอด ฿${item.amount} (${item.note || 'โอนเงิน'}): กรุณาเลือกบัญชีต้นทาง`);
+          return;
+        }
+        if (!item.toAccountId) {
+          alert(`รายการยอด ฿${item.amount} (${item.note || 'โอนเงิน'}): กรุณาเลือกบัญชีปลายทาง`);
+          return;
+        }
+        if (item.accountId === item.toAccountId) {
+          alert(`รายการยอด ฿${item.amount}: บัญชีต้นทางและปลายทางต้องไม่ใช่บัญชีเดียวกัน`);
+          return;
+        }
       }
     }
 
     try {
-      setIsSaving(true);
-      const fullDateTime = time ? `${date}T${time}:00` : `${date}T12:00:00`;
+      setIsSubmitting(true);
 
-      const payload: any = {
-        account_id: accountId || null,
-        to_account_id: type === 'TRANSFER' ? toAccountId || null : null,
-        type,
-        transaction_type: type.toLowerCase(),
-        category: category.trim(),
-        amount: parseFloat(amount) || 0,
-        note: note.trim() || null,
-        transaction_date: fullDateTime,
-        is_historical: isHistorical,
-      };
+      const payloads = validSelected.map((item) => {
+        const fullDateTime = item.time ? `${item.date}T${item.time}:00` : `${item.date}T12:00:00`;
+        return {
+          account_id: item.accountId || null,
+          to_account_id: item.type === 'TRANSFER' ? item.toAccountId || null : null,
+          type: item.type,
+          transaction_type: item.type.toLowerCase(),
+          category: item.category.trim(),
+          amount: parseFloat(item.amount) || 0,
+          note: item.note.trim() || null,
+          transaction_date: fullDateTime,
+          is_historical: item.isHistorical,
+        };
+      });
 
-      const { error } = await supabase.from('expense_income_transactions').insert([payload]);
-
+      const { error } = await supabase.from('expense_income_transactions').insert(payloads);
       if (error) throw error;
 
       onTransactionSaved();
       onClose();
     } catch (err: any) {
-      console.error('Error saving transaction from slip:', err);
+      console.error('Error saving bulk slip transactions:', err);
       alert(`ไม่สามารถบันทึกรายการได้: ${err.message}`);
     } finally {
-      setIsSaving(false);
+      setIsSubmitting(false);
     }
   };
 
   if (!isOpen) return null;
 
+  // Stats
+  const totalCount = items.length;
+  const successCount = items.filter((i) => i.status === 'success').length;
+  const scanningCount = items.filter((i) => i.status === 'scanning' || i.status === 'pending').length;
+  const errorCount = items.filter((i) => i.status === 'error').length;
+  const selectedCount = items.filter((i) => i.selected && i.status === 'success').length;
+  const selectedTotalAmount = items
+    .filter((i) => i.selected && i.status === 'success')
+    .reduce((sum, i) => sum + (parseFloat(i.amount) || 0), 0);
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
-      <div className="bg-white rounded-3xl shadow-2xl border border-slate-200/80 w-full max-w-xl max-h-[92vh] flex flex-col overflow-hidden">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
+      <div className="bg-white rounded-3xl shadow-2xl border border-slate-200/80 w-full max-w-7xl max-h-[96vh] flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between shrink-0 bg-slate-50/70">
+        <div className="px-5 py-3.5 border-b border-slate-100 flex items-center justify-between shrink-0 bg-slate-50/70">
           <div className="flex items-center gap-2.5">
             <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-600">
               <Sparkles className="w-5 h-5" />
             </div>
             <div>
               <h2 className="text-base font-bold text-slate-800 tracking-tight flex items-center gap-2">
-                <span>AI สแกนสลิปโอนเงิน</span>
+                <span>AI สแกนสลิปหลายรายการ (Bulk Scan & Staging)</span>
                 <span className="text-[10px] font-semibold bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full">
                   Gemini 3.8 Flash
                 </span>
               </h2>
               <p className="text-xs text-slate-500">
-                สแกนรูปสลิปธนาคารและกรอกข้อมูลรายรับ-จ่ายให้อัตโนมัติ
+                อัปโหลดสลิปได้พร้อมกันหลายรูป ตรวจทานและแก้ไขทีละแถวก่อนบันทึกลงระบบ
               </p>
             </div>
           </div>
@@ -281,21 +408,10 @@ export default function SlipScannerModal({
         </div>
 
         {/* Content Body */}
-        <div className="p-5 overflow-y-auto flex-1 space-y-4">
-          {/* Error Message Banner */}
-          {errorMessage && (
-            <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-2xl flex items-start gap-2.5 text-xs text-rose-700 animate-in fade-in">
-              <AlertCircle className="w-4 h-4 shrink-0 text-rose-600 mt-0.5" />
-              <div className="flex-1">
-                <p className="font-semibold">เกิดข้อผิดพลาดในการสแกนสลิป</p>
-                <p className="text-rose-600/90 mt-0.5">{errorMessage}</p>
-              </div>
-            </div>
-          )}
-
-          {/* STEP 1: Upload Drag & Drop Zone */}
-          {step === 'upload' && (
-            <div className="space-y-4">
+        <div className="p-4 sm:p-5 overflow-y-auto flex-1 space-y-4">
+          {/* VIEW A: No items yet -> Large Drag & Drop Box */}
+          {items.length === 0 ? (
+            <div className="space-y-4 max-w-2xl mx-auto py-6">
               <div
                 onDragOver={(e) => {
                   e.preventDefault();
@@ -305,320 +421,451 @@ export default function SlipScannerModal({
                 onDrop={(e) => {
                   e.preventDefault();
                   setIsDragging(false);
-                  const file = e.dataTransfer.files?.[0];
-                  if (file) handleProcessFile(file);
+                  if (e.dataTransfer.files) handleAddFiles(e.dataTransfer.files);
                 }}
                 onClick={() => fileInputRef.current?.click()}
-                className={`border-2 border-dashed rounded-3xl p-8 text-center cursor-pointer transition-all duration-200 flex flex-col items-center justify-center gap-3 ${
+                className={`border-2 border-dashed rounded-3xl p-10 text-center cursor-pointer transition-all duration-200 flex flex-col items-center justify-center gap-3.5 ${
                   isDragging
                     ? 'border-emerald-500 bg-emerald-50/60 scale-[0.99]'
                     : 'border-slate-300 hover:border-emerald-500 hover:bg-slate-50/70 bg-white'
                 }`}
               >
-                <div className="p-3.5 rounded-2xl bg-emerald-50 text-emerald-600 shadow-xs">
-                  <UploadCloud className="w-8 h-8" />
+                <div className="p-4 rounded-2xl bg-emerald-50 text-emerald-600 shadow-xs">
+                  <UploadCloud className="w-10 h-10" />
                 </div>
                 <div className="space-y-1">
-                  <p className="text-sm font-bold text-slate-800">
-                    ลากรูปสลิปมาวางที่นี่ หรือคลิกเพื่อเลือกไฟล์
+                  <p className="text-base font-bold text-slate-800">
+                    ลากรูปสลิปมาวางที่นี่ หรือคลิกเพื่อเลือกหลายไฟล์
                   </p>
                   <p className="text-xs text-slate-500">
-                    รองรับรูปภาพ JPG, PNG, WEBP หรือกดถ่ายรูปด้วยกล้องมือถือ
+                    เลือกสลิปพร้อมกันได้หลายรูป (JPG, PNG, WEBP) ระบบจะสแกนและนำมาพักในตารางให้ตรวจทาน
                   </p>
-                  <p className="text-[11px] text-emerald-600 font-medium pt-1">
-                    💡 กดปุ่ม <span className="font-mono bg-emerald-100 px-1 py-0.5 rounded">Ctrl + V</span> เพื่อวางรูปจากคลิปบอร์ดได้ทันที
-                  </p>
+                  <div className="pt-2 flex items-center justify-center gap-2">
+                    <span className="text-xs font-semibold text-emerald-700 bg-emerald-100/70 px-2.5 py-1 rounded-lg">
+                      💡 กด Ctrl + V เพื่อวางรูปจากคลิปบอร์ดได้ทันที
+                    </span>
+                  </div>
                 </div>
                 <input
                   ref={fileInputRef}
                   type="file"
+                  multiple
                   accept="image/*"
                   className="hidden"
                   onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) handleProcessFile(file);
+                    if (e.target.files) handleAddFiles(e.target.files);
                   }}
                 />
               </div>
 
-              {/* Supported Banks info pills */}
-              <div className="p-3 bg-slate-50 border border-slate-200/80 rounded-2xl text-[11px] text-slate-600">
-                <span className="font-semibold text-slate-700">ครอบคลุมทุกธนาคารไทย:</span> KBank, SCB, BBL, Krungthai, TTB, Bay, GSB, PromptPay, TrueMoney ฯลฯ
-              </div>
-            </div>
-          )}
-
-          {/* STEP 2: Scanning & Processing Animation */}
-          {step === 'scanning' && (
-            <div className="py-8 flex flex-col items-center justify-center gap-4 text-center">
-              {imagePreview && (
-                <div className="relative w-40 h-52 rounded-2xl overflow-hidden shadow-lg border border-slate-200">
-                  <img
-                    src={imagePreview}
-                    alt="Slip Preview"
-                    className="w-full h-full object-cover filter brightness-95"
-                  />
-                  {/* Glowing Laser Scan Line Animation */}
-                  <div className="absolute inset-x-0 h-1 bg-gradient-to-r from-emerald-400 via-emerald-300 to-emerald-500 shadow-[0_0_12px_#10b981] animate-bounce" />
-                </div>
-              )}
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-center gap-2 text-emerald-700 font-bold text-sm">
-                  <Sparkles className="w-4 h-4 animate-spin text-emerald-500" />
-                  <span>Gemini 3.8 Flash กำลังอ่านข้อมูลสลิป...</span>
-                </div>
-                <p className="text-xs text-slate-500">
-                  กำลังถอดรหัสยอดเงิน วันที่ ธนาคาร และจับคู่บัญชีอัตโนมัติ
+              {/* Tips Banner */}
+              <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs text-slate-600 space-y-1">
+                <p className="font-semibold text-slate-800 flex items-center gap-1.5">
+                  <Info className="w-4 h-4 text-emerald-600" />
+                  <span>ระบบพักข้อมูลชั่วคราว (Temporary Staging Table):</span>
+                </p>
+                <p>
+                  เมื่ออัปโหลดสลิป ข้อมูลจะถูกจัดเก็บไว้ในตารางจำลองบนหน้าจอนี้ก่อน คุณสามารถแก้ไข ยอดเงิน หมวดหมู่ บัญชี หรือลบรายการที่ไม่ถูกต้องออกได้ตามสะดวก ก่อนกดบันทึกจริงเข้าฐานข้อมูล
                 </p>
               </div>
             </div>
-          )}
-
-          {/* STEP 3: Review & Edit Form */}
-          {step === 'review' && (
-            <form onSubmit={handleSaveTransaction} className="space-y-4">
-              {/* Slip thumbnail + Extracted Highlights */}
-              <div className="flex items-center gap-3.5 p-3 bg-emerald-50/70 border border-emerald-200 rounded-2xl">
-                {imagePreview && (
-                  <div className="w-14 h-16 shrink-0 rounded-xl overflow-hidden border border-emerald-300 shadow-xs">
-                    <img src={imagePreview} alt="Slip" className="w-full h-full object-cover" />
-                  </div>
-                )}
-                <div className="min-w-0 flex-1 text-xs">
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-emerald-800">
-                      ตรวจพบ: {parsedData?.sender_bank || 'สลิปโอนเงิน'} ฿{parsedData?.amount?.toLocaleString('th-TH', { minimumFractionDigits: 2 })}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setStep('upload')}
-                      className="text-[11px] text-emerald-700 hover:underline flex items-center gap-1 font-semibold cursor-pointer"
-                    >
-                      <RotateCcw className="w-3 h-3" />
-                      <span>สแกนรูปอื่น</span>
-                    </button>
-                  </div>
-                  <p className="text-emerald-700/80 truncate mt-0.5">
-                    {parsedData?.receiver_name ? `ผู้รับ: ${parsedData.receiver_name}` : 'สลิปสำเร็จ'}
-                    {parsedData?.sender_account_masked && ` • จาก ${parsedData.sender_account_masked}`}
-                  </p>
-                </div>
-              </div>
-
-              {/* Form Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                {/* 1. ประเภทธุรกรรม */}
-                <div className="space-y-1">
-                  <label className="text-xs font-semibold text-slate-700">ประเภทรายการ</label>
-                  <div className="grid grid-cols-3 gap-1 bg-slate-100 p-1 rounded-xl">
-                    <button
-                      type="button"
-                      onClick={() => setType('EXPENSE')}
-                      className={`py-1.5 text-xs font-semibold rounded-lg transition ${
-                        type === 'EXPENSE' ? 'bg-rose-500 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                      }`}
-                    >
-                      รายจ่าย
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setType('INCOME')}
-                      className={`py-1.5 text-xs font-semibold rounded-lg transition ${
-                        type === 'INCOME' ? 'bg-emerald-500 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                      }`}
-                    >
-                      รายรับ
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setType('TRANSFER')}
-                      className={`py-1.5 text-xs font-semibold rounded-lg transition ${
-                        type === 'TRANSFER' ? 'bg-indigo-500 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                      }`}
-                    >
-                      โอนเงิน
-                    </button>
-                  </div>
-                </div>
-
-                {/* 2. ยอดเงิน */}
-                <div className="space-y-1">
-                  <label className="text-xs font-semibold text-slate-700">ยอดเงิน (บาท)</label>
-                  <div className="relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 font-bold text-slate-400 text-xs">฿</span>
-                    <input
-                      type="number"
-                      step="any"
-                      required
-                      value={amount}
-                      onChange={(e) => setAmount(e.target.value)}
-                      placeholder="0.00"
-                      className="w-full pl-7 pr-3 py-1.5 text-sm font-bold font-mono text-slate-900 bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none"
-                    />
-                  </div>
-                </div>
-
-                {/* 3. วันที่ */}
-                <div className="space-y-1">
-                  <label className="text-xs font-semibold text-slate-700">วันที่</label>
-                  <input
-                    type="date"
-                    required
-                    value={date}
-                    onChange={(e) => setDate(e.target.value)}
-                    className="w-full px-3 py-1.5 text-xs text-slate-800 bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none"
-                  />
-                </div>
-
-                {/* 4. เวลา */}
-                <div className="space-y-1">
-                  <label className="text-xs font-semibold text-slate-700">เวลา</label>
-                  <input
-                    type="time"
-                    value={time}
-                    onChange={(e) => setTime(e.target.value)}
-                    className="w-full px-3 py-1.5 text-xs text-slate-800 bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none"
-                  />
-                </div>
-
-                {/* 5. หมวดหมู่ */}
-                <div className="space-y-1 sm:col-span-2">
-                  <label className="text-xs font-semibold text-slate-700">หมวดหมู่</label>
-                  <select
-                    value={category}
-                    onChange={(e) => setCategory(e.target.value)}
-                    className="w-full px-3 py-1.5 text-xs text-slate-800 bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none"
+          ) : (
+            /* VIEW B: Staging Table & Toolbar */
+            <div className="space-y-3.5">
+              {/* Toolbar & Progress Bar */}
+              <div className="bg-slate-50 p-3 sm:p-4 rounded-2xl border border-slate-200/80 flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={handleToggleSelectAll}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-xl hover:bg-slate-100 transition shadow-2xs cursor-pointer"
                   >
-                    {(type === 'EXPENSE'
-                      ? expenseCategories
-                      : type === 'INCOME'
-                      ? incomeCategories
-                      : transferCategories
-                    ).map((cat) => (
-                      <option key={cat} value={cat}>
-                        {cat}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                    {items.every((i) => i.selected) ? (
+                      <CheckSquare className="w-3.5 h-3.5 text-emerald-600" />
+                    ) : (
+                      <Square className="w-3.5 h-3.5 text-slate-400" />
+                    )}
+                    <span>{items.every((i) => i.selected) ? 'ยกเลิกเลือกทั้งหมด' : 'เลือกทั้งหมด'}</span>
+                  </button>
 
-                {/* 6. บัญชีต้นทาง */}
-                <div className="space-y-1">
-                  <label className="text-xs font-semibold text-slate-700">
-                    {type === 'TRANSFER' ? 'จากบัญชีต้นทาง (From)' : 'บันทึกเข้า/ตัดจากบัญชี'}
-                  </label>
-                  <select
-                    value={accountId}
-                    onChange={(e) => setAccountId(e.target.value)}
-                    className="w-full px-3 py-1.5 text-xs text-slate-800 bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none"
+                  <button
+                    type="button"
+                    onClick={() => additionalFileInputRef.current?.click()}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-800 bg-emerald-100 hover:bg-emerald-200 border border-emerald-300 rounded-xl transition shadow-2xs cursor-pointer"
                   >
-                    <option value="">-- ไม่ระบุบัญชี --</option>
-                    {accounts.map((acc) => (
-                      <option key={acc.id} value={acc.id}>
-                        {acc.account_name} ({acc.bank_name || acc.account_type})
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>+ เพิ่มรูปสลิปเพิ่ม</span>
+                  </button>
 
-                {/* 7. บัญชีปลายทาง (สำหรับโอนเงิน) */}
-                {type === 'TRANSFER' && (
-                  <div className="space-y-1">
-                    <label className="text-xs font-semibold text-slate-700">
-                      เข้าบัญชีปลายทาง (To)
-                    </label>
-                    <select
-                      value={toAccountId}
-                      onChange={(e) => setToAccountId(e.target.value)}
-                      className="w-full px-3 py-1.5 text-xs text-slate-800 bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none"
-                    >
-                      <option value="">-- เลือกบัญชีปลายทาง --</option>
-                      {accounts.map((acc) => (
-                        <option key={acc.id} value={acc.id}>
-                          {acc.account_name} ({acc.bank_name || acc.account_type})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                )}
-
-                {/* 8. หมายเหตุ */}
-                <div className="space-y-1 sm:col-span-2">
-                  <label className="text-xs font-semibold text-slate-700">บันทึกช่วยจำ (Note)</label>
                   <input
-                    type="text"
-                    value={note}
-                    onChange={(e) => setNote(e.target.value)}
-                    placeholder="รายละเอียดเพิ่มเติม หรือร้านค้า"
-                    className="w-full px-3 py-1.5 text-xs text-slate-800 bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none"
+                    ref={additionalFileInputRef}
+                    type="file"
+                    multiple
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => {
+                      if (e.target.files) handleAddFiles(e.target.files);
+                    }}
                   />
-                </div>
-              </div>
 
-              {/* 9. Historical Slip Toggle Switch (is_historical) */}
-              <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl flex items-center justify-between gap-3">
-                <div className="flex items-start gap-2.5 min-w-0">
-                  <div className={`p-1.5 rounded-lg shrink-0 mt-0.5 ${isHistorical ? 'bg-amber-100 text-amber-700' : 'bg-slate-200 text-slate-600'}`}>
-                    <History className="w-4 h-4" />
+                  {/* Bulk Historical Toggles */}
+                  <div className="flex items-center gap-1 pl-1">
+                    <button
+                      type="button"
+                      onClick={() => handleBulkSetHistorical(true)}
+                      className="px-2.5 py-1 text-[11px] font-medium text-amber-800 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-lg transition cursor-pointer"
+                      title="ตั้งค่าให้ทุกรายการเป็นสลิปย้อนหลัง (ไม่ปรับยอดเงินคงเหลือปัจจุบัน)"
+                    >
+                      เปิดย้อนหลังทั้งหมด
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleBulkSetHistorical(false)}
+                      className="px-2.5 py-1 text-[11px] font-medium text-slate-600 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg transition cursor-pointer"
+                    >
+                      ปิดย้อนหลังทั้งหมด
+                    </button>
                   </div>
-                  <div>
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-xs font-bold text-slate-800">
-                        สลิปย้อนหลัง (Historical Record)
-                      </span>
-                      {isHistorical && (
-                        <span className="text-[10px] bg-amber-100 text-amber-800 font-semibold px-2 py-0.2 rounded-full">
-                          ไม่ปรับยอดเงินคงเหลือ
-                        </span>
-                      )}
+                </div>
+
+                {/* Progress / Status Metrics */}
+                <div className="flex items-center gap-3 text-xs">
+                  {scanningCount > 0 ? (
+                    <div className="flex items-center gap-2 text-emerald-700 font-semibold animate-pulse">
+                      <Loader2 className="w-4 h-4 animate-spin text-emerald-600" />
+                      <span>กำลังสแกน {scanningCount} รูป...</span>
                     </div>
-                    <p className="text-[11px] text-slate-500 mt-0.5">
-                      {isHistorical
-                        ? 'บันทึกเป็นประวัติย้อนหลังเท่านั้น เพื่อดูรายงานสถิติ โดยไม่ไปหักลบยอดเงินคงเหลือปัจจุบันในบัญชี'
-                        : 'ปรับยอดเงินคงเหลือในบัญชีตามรายการปกติ'}
-                    </p>
+                  ) : (
+                    <span className="font-semibold text-slate-700">
+                      สแกนเสร็จสิ้น ({successCount}/{totalCount} รายการ)
+                      {errorCount > 0 && <span className="text-rose-600 ml-1">ผิดพลาด {errorCount}</span>}
+                    </span>
+                  )}
+                  <div className="h-4 w-[1px] bg-slate-300 hidden sm:block" />
+                  <div className="font-bold text-slate-900 bg-white px-3 py-1 rounded-xl border border-slate-200 shadow-2xs">
+                    เลือก {selectedCount} รายการ • รวม ฿{selectedTotalAmount.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </div>
                 </div>
-
-                <label className="relative inline-flex items-center cursor-pointer shrink-0">
-                  <input
-                    type="checkbox"
-                    checked={isHistorical}
-                    onChange={(e) => setIsHistorical(e.target.checked)}
-                    className="sr-only peer"
-                  />
-                  <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-500" />
-                </label>
               </div>
 
-              {/* Actions Footer */}
-              <div className="pt-2 flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={onClose}
-                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition cursor-pointer"
-                >
-                  ยกเลิก
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSaving}
-                  className="inline-flex items-center gap-1.5 px-5 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 rounded-xl transition shadow-xs cursor-pointer"
-                >
-                  {isSaving ? (
-                    <span>กำลังบันทึก...</span>
-                  ) : (
-                    <>
-                      <Check className="w-3.5 h-3.5" />
-                      <span>ยืนยันบันทึกรายการ</span>
-                    </>
-                  )}
-                </button>
+              {/* Staging Data Table */}
+              <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-2xs bg-white">
+                <div className="overflow-x-auto max-h-[55vh]">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead className="bg-slate-50 border-b border-slate-200 sticky top-0 z-10 text-slate-500 font-semibold text-[11px] select-none">
+                      <tr>
+                        <th className="py-2.5 px-3 w-10 text-center">เลือก</th>
+                        <th className="py-2.5 px-2 w-16 text-center">รูปสลิป</th>
+                        <th className="py-2.5 px-3 w-40">วันที่ & เวลา</th>
+                        <th className="py-2.5 px-3 w-28">ประเภท</th>
+                        <th className="py-2.5 px-3 w-40">หมวดหมู่</th>
+                        <th className="py-2.5 px-3 w-32">จำนวนเงิน (฿)</th>
+                        <th className="py-2.5 px-3 w-48">บัญชีที่ใช้</th>
+                        <th className="py-2.5 px-3 min-w-[180px]">บันทึกช่วยจำ (Note)</th>
+                        <th className="py-2.5 px-3 w-28 text-center">สลิปย้อนหลัง</th>
+                        <th className="py-2.5 px-2 w-12 text-center">ลบ</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {items.map((item, idx) => {
+                        const isSuccess = item.status === 'success';
+                        const isScanning = item.status === 'scanning' || item.status === 'pending';
+                        const isError = item.status === 'error';
+
+                        return (
+                          <tr
+                            key={item.id}
+                            className={`transition hover:bg-slate-50/70 ${
+                              !item.selected ? 'opacity-50 bg-slate-50/40' : isError ? 'bg-rose-50/30' : ''
+                            }`}
+                          >
+                            {/* 1. Checkbox */}
+                            <td className="py-2.5 px-3 text-center">
+                              <input
+                                type="checkbox"
+                                checked={item.selected}
+                                onChange={(e) => handleUpdateItem(item.id, 'selected', e.target.checked)}
+                                disabled={!isSuccess}
+                                className="w-4 h-4 text-emerald-600 rounded focus:ring-emerald-500 cursor-pointer disabled:opacity-30"
+                              />
+                            </td>
+
+                            {/* 2. Slip Thumbnail with Zoom */}
+                            <td className="py-2.5 px-2 text-center">
+                              <div
+                                onClick={() =>
+                                  setZoomedImage({
+                                    url: item.previewUrl,
+                                    title: item.note || `สลิปที่ ${idx + 1}`,
+                                  })
+                                }
+                                className="relative w-12 h-14 mx-auto rounded-lg overflow-hidden border border-slate-200 cursor-pointer group shadow-2xs"
+                                title="คลิกเพื่อดูรูปขยาย"
+                              >
+                                <img
+                                  src={item.previewUrl}
+                                  alt="Slip"
+                                  className="w-full h-full object-cover group-hover:scale-105 transition"
+                                />
+                                <div className="absolute inset-0 bg-slate-900/30 opacity-0 group-hover:opacity-100 flex items-center justify-center transition text-white">
+                                  <ZoomIn className="w-3.5 h-3.5" />
+                                </div>
+                              </div>
+                            </td>
+
+                            {/* 3. Date & Time */}
+                            <td className="py-2.5 px-3">
+                              {isScanning ? (
+                                <div className="flex items-center gap-1.5 text-slate-400">
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  <span>กำลังอ่าน...</span>
+                                </div>
+                              ) : isError ? (
+                                <span className="text-rose-600 font-medium">สแกนไม่สำเร็จ</span>
+                              ) : (
+                                <div className="space-y-1">
+                                  <input
+                                    type="date"
+                                    value={item.date}
+                                    onChange={(e) => handleUpdateItem(item.id, 'date', e.target.value)}
+                                    className="w-full px-2 py-1 text-xs border border-slate-200 rounded-lg outline-none focus:border-emerald-500 bg-white"
+                                  />
+                                  <input
+                                    type="time"
+                                    value={item.time}
+                                    onChange={(e) => handleUpdateItem(item.id, 'time', e.target.value)}
+                                    className="w-full px-2 py-0.5 text-[11px] border border-slate-200 rounded-lg outline-none focus:border-emerald-500 bg-white text-slate-600"
+                                  />
+                                </div>
+                              )}
+                            </td>
+
+                            {/* 4. Type */}
+                            <td className="py-2.5 px-3">
+                              {isSuccess && (
+                                <select
+                                  value={item.type}
+                                  onChange={(e) =>
+                                    handleUpdateItem(
+                                      item.id,
+                                      'type',
+                                      e.target.value as 'EXPENSE' | 'INCOME' | 'TRANSFER'
+                                    )
+                                  }
+                                  className={`w-full px-2 py-1 text-xs font-semibold rounded-lg border outline-none ${
+                                    item.type === 'EXPENSE'
+                                      ? 'border-rose-200 bg-rose-50/70 text-rose-700'
+                                      : item.type === 'INCOME'
+                                      ? 'border-emerald-200 bg-emerald-50/70 text-emerald-700'
+                                      : 'border-indigo-200 bg-indigo-50/70 text-indigo-700'
+                                  }`}
+                                >
+                                  <option value="EXPENSE">รายจ่าย</option>
+                                  <option value="INCOME">รายรับ</option>
+                                  <option value="TRANSFER">โอนเงิน</option>
+                                </select>
+                              )}
+                            </td>
+
+                            {/* 5. Category */}
+                            <td className="py-2.5 px-3">
+                              {isSuccess && (
+                                <select
+                                  value={item.category}
+                                  onChange={(e) => handleUpdateItem(item.id, 'category', e.target.value)}
+                                  className="w-full px-2 py-1 text-xs border border-slate-200 rounded-lg outline-none focus:border-emerald-500 bg-white"
+                                >
+                                  {(item.type === 'EXPENSE'
+                                    ? expenseCategories
+                                    : item.type === 'INCOME'
+                                    ? incomeCategories
+                                    : transferCategories
+                                  ).map((cat) => (
+                                    <option key={cat} value={cat}>
+                                      {cat}
+                                    </option>
+                                  ))}
+                                </select>
+                              )}
+                            </td>
+
+                            {/* 6. Amount */}
+                            <td className="py-2.5 px-3">
+                              {isSuccess && (
+                                <div className="relative">
+                                  <span className="absolute left-2 top-1/2 -translate-y-1/2 font-bold text-slate-400 text-xs">฿</span>
+                                  <input
+                                    type="number"
+                                    step="any"
+                                    value={item.amount}
+                                    onChange={(e) => handleUpdateItem(item.id, 'amount', e.target.value)}
+                                    placeholder="0.00"
+                                    className="w-full pl-5 pr-2 py-1 text-xs font-bold font-mono text-slate-900 border border-slate-200 rounded-lg outline-none focus:border-emerald-500 bg-white text-right"
+                                  />
+                                </div>
+                              )}
+                            </td>
+
+                            {/* 7. Accounts */}
+                            <td className="py-2.5 px-3">
+                              {isSuccess && (
+                                <div className="space-y-1">
+                                  <select
+                                    value={item.accountId}
+                                    onChange={(e) => handleUpdateItem(item.id, 'accountId', e.target.value)}
+                                    className="w-full px-2 py-1 text-xs border border-slate-200 rounded-lg outline-none focus:border-emerald-500 bg-white"
+                                  >
+                                    <option value="">-- ไม่ระบุบัญชี --</option>
+                                    {accounts.map((acc) => (
+                                      <option key={acc.id} value={acc.id}>
+                                        {acc.account_name} ({acc.bank_name || acc.account_type})
+                                      </option>
+                                    ))}
+                                  </select>
+
+                                  {item.type === 'TRANSFER' && (
+                                    <select
+                                      value={item.toAccountId}
+                                      onChange={(e) => handleUpdateItem(item.id, 'toAccountId', e.target.value)}
+                                      className="w-full px-2 py-0.5 text-[11px] border border-indigo-200 rounded-lg outline-none focus:border-indigo-500 bg-indigo-50/50 text-indigo-800"
+                                    >
+                                      <option value="">➔ บัญชีปลายทาง</option>
+                                      {accounts.map((acc) => (
+                                        <option key={acc.id} value={acc.id}>
+                                          ➔ {acc.account_name} ({acc.bank_name || acc.account_type})
+                                        </option>
+                                      ))}
+                                    </select>
+                                  )}
+                                </div>
+                              )}
+                            </td>
+
+                            {/* 8. Note */}
+                            <td className="py-2.5 px-3">
+                              {isSuccess && (
+                                <input
+                                  type="text"
+                                  value={item.note}
+                                  onChange={(e) => handleUpdateItem(item.id, 'note', e.target.value)}
+                                  placeholder="บันทึกช่วยจำ..."
+                                  className="w-full px-2 py-1 text-xs border border-slate-200 rounded-lg outline-none focus:border-emerald-500 bg-white"
+                                />
+                              )}
+                              {isError && (
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs text-rose-600 truncate">{item.errorMessage}</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRetryItem(item)}
+                                    className="text-xs font-semibold text-emerald-700 hover:underline shrink-0 cursor-pointer"
+                                  >
+                                    ลองใหม่
+                                  </button>
+                                </div>
+                              )}
+                            </td>
+
+                            {/* 9. Historical Switch */}
+                            <td className="py-2.5 px-3 text-center">
+                              {isSuccess && (
+                                <label className="relative inline-flex items-center cursor-pointer" title="สลิปย้อนหลัง: ไม่ปรับยอดเงินคงเหลือปัจจุบัน">
+                                  <input
+                                    type="checkbox"
+                                    checked={item.isHistorical}
+                                    onChange={(e) => handleUpdateItem(item.id, 'isHistorical', e.target.checked)}
+                                    className="sr-only peer"
+                                  />
+                                  <div className="w-8 h-4 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3.5 after:w-3.5 after:transition-all peer-checked:bg-amber-500" />
+                                </label>
+                              )}
+                            </td>
+
+                            {/* 10. Delete Button */}
+                            <td className="py-2.5 px-2 text-center">
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteItem(item.id)}
+                                className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
+                                title="ลบสลิปนี้ออกจากตาราง"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               </div>
-            </form>
+            </div>
           )}
         </div>
+
+        {/* Footer Actions */}
+        {items.length > 0 && (
+          <div className="px-5 py-3.5 border-t border-slate-100 bg-slate-50/80 flex items-center justify-between shrink-0">
+            <div className="text-xs text-slate-500 hidden sm:block">
+              ตรวจสอบข้อมูลในตารางให้ถูกต้อง จากนั้นกดยืนยันเพื่อบันทึกลงบัญชีจริง
+            </div>
+            <div className="flex items-center gap-2.5 ml-auto">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-200/60 rounded-xl transition cursor-pointer"
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="button"
+                onClick={handleBulkSubmit}
+                disabled={isSubmitting || selectedCount === 0 || scanningCount > 0}
+                className="inline-flex items-center gap-1.5 px-5 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 rounded-xl transition shadow-xs cursor-pointer"
+              >
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>กำลังบันทึก {selectedCount} รายการ...</span>
+                  </>
+                ) : (
+                  <>
+                    <Check className="w-3.5 h-3.5" />
+                    <span>บันทึก {selectedCount} รายการที่เลือก</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
+
+      {/* Lightbox Image Preview Modal */}
+      {zoomedImage && (
+        <div
+          onClick={() => setZoomedImage(null)}
+          className="fixed inset-0 z-60 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white rounded-2xl overflow-hidden shadow-2xl max-w-lg w-full max-h-[90vh] flex flex-col"
+          >
+            <div className="p-3 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+              <span className="text-xs font-semibold text-slate-700 truncate">{zoomedImage.title}</span>
+              <button
+                type="button"
+                onClick={() => setZoomedImage(null)}
+                className="p-1 text-slate-400 hover:text-slate-700 rounded-lg cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-2 overflow-auto flex items-center justify-center bg-slate-900/5">
+              <img src={zoomedImage.url} alt="Slip Full" className="max-h-[75vh] w-auto object-contain rounded-lg shadow-sm" />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
