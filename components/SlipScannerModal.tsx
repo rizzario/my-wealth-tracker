@@ -61,6 +61,57 @@ export interface StagedSlipItem {
   selected: boolean;
 }
 
+// Helper to resize/compress slip image before uploading for OCR to dramatically reduce input tokens
+function compressImageForOcr(file: File, maxDimension = 1200, quality = 0.85): Promise<Blob> {
+  if (!file.type.startsWith('image/')) return Promise.resolve(file);
+
+  return new Promise((resolve) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      let { width, height } = img;
+
+      // Skip resize if image is already compact
+      if (width <= maxDimension && height <= maxDimension && file.size < 400 * 1024) {
+        return resolve(file);
+      }
+
+      if (width > height) {
+        if (width > maxDimension) {
+          height = Math.round((height * maxDimension) / width);
+          width = maxDimension;
+        }
+      } else {
+        if (height > maxDimension) {
+          width = Math.round((width * maxDimension) / height);
+          height = maxDimension;
+        }
+      }
+
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return resolve(file);
+
+      ctx.drawImage(img, 0, 0, width, height);
+      canvas.toBlob(
+        (blob) => {
+          resolve(blob || file);
+        },
+        'image/jpeg',
+        quality
+      );
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      resolve(file);
+    };
+    img.src = url;
+  });
+}
+
 export default function SlipScannerModal({
   isOpen,
   onClose,
@@ -100,8 +151,9 @@ export default function SlipScannerModal({
   // Scan a single item through /api/scan-slip
   const scanSingleItem = useCallback(
     async (item: StagedSlipItem): Promise<Partial<StagedSlipItem>> => {
+      const optimizedBlob = await compressImageForOcr(item.file);
       const formData = new FormData();
-      formData.append('file', item.file);
+      formData.append('file', optimizedBlob, item.file.name.replace(/\.[^.]+$/, '.jpg'));
 
       const res = await fetch('/api/scan-slip', {
         method: 'POST',

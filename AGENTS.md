@@ -388,8 +388,8 @@ Scheduled by `vercel.json` Cron:
 | `components/CashAndPvdSection.tsx` | Client | Fixed deposits, Provident Fund (PVD), and long-term bonds with promo countdown badges. |
 | `components/CashFlowSection.tsx` | Client | Debt & cash flow manager: operating accounts, credit cards, projected statement balances, pending commitments accordion, one-click reconciliation (`[⚡ บันทึกตัดเงินจริง]`), and recurring commitments CRUD modal. |
 | `components/ExpenseIncomeSection.tsx` | Client | Daily income, expense, and internal transfer tracking with category breakdowns. |
-| `components/SlipScannerModal.tsx` | Client | AI slip scanner modal powered by Gemini 3.8 Flash: multi-image bulk scan, drag & drop, clipboard paste (Ctrl+V), in-memory staging review table (edit/delete row-by-row), auto bank account matching, and historical slip toggle. |
-| `app/api/scan-slip/route.ts` | Route Handler | POST endpoint using `@google/genai` (Gemini 3.8 Flash) with structured JSON schema for Thai bank slip analysis and account matching. |
+| `components/SlipScannerModal.tsx` | Client | AI slip scanner modal powered by Gemini: client-side image downscaling (saves ~60% input tokens), multi-image bulk scan, drag & drop, clipboard paste (Ctrl+V), in-memory staging review table (edit/delete row-by-row), auto bank account matching, and historical slip toggle. |
+| `app/api/scan-slip/route.ts` | Route Handler | POST endpoint using `@google/genai` (Gemini Flash-Lite, low thinking level, max 800 output tokens) with structured JSON schema for Thai bank slip analysis and account matching. |
 | `lib/performance.ts` | Shared Utility | Pure calculation engine for trade ledger: Realized P&L (FIFO/Average Cost), broker win rates, profit factor, fee totals, and Top Gainer/Loser ranking. |
 | `lib/recurringCommitments.ts` | Shared Utility | Pure functions for recurring commitments eligibility, due-date calculations, confirmed transaction matching, and pending liability calculations. |
 | `lib/networth.ts` | Shared Utility | Canonical net worth calculation helper (§3.8). |

@@ -163,9 +163,12 @@ User's Financial Accounts List:
 ${userAccountsContext}
 `;
 
-    // 6. Call Gemini 3.8 Flash with Multimodal Image and Structured Output
+    // 6. Call Gemini Flash-Lite with Multimodal Image and Structured Output
+    // Default to gemini-2.5-flash-lite (lowest cost, fast, minimal thinking) or GEMINI_MODEL env var
+    const modelName = process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite';
+
     const response = await ai.interactions.create({
-      model: 'gemini-2.5-flash-lite',
+      model: modelName,
       input: [
         { type: 'text', text: promptText },
         {
@@ -174,6 +177,10 @@ ${userAccountsContext}
           mime_type: mimeType,
         },
       ],
+      generation_config: {
+        thinking_level: 'low',
+        max_output_tokens: 800,
+      },
       response_format: {
         type: 'text',
         mime_type: 'application/json',
@@ -186,6 +193,12 @@ ${userAccountsContext}
       return NextResponse.json(
         { error: 'Gemini returned an empty response. The slip could not be parsed.' },
         { status: 502 }
+      );
+    }
+
+    if (response.usage) {
+      console.log(
+        `[Gemini Scan] Tokens - Input: ${response.usage.total_input_tokens}, Output: ${response.usage.total_output_tokens}, Thoughts: ${response.usage.total_thought_tokens || 0}, Total: ${response.usage.total_tokens}`
       );
     }
 
@@ -275,6 +288,14 @@ ${userAccountsContext}
         matched_to_account_id: matchedToAccountId,
         is_historical_suggested: isHistoricalSuggested,
       },
+      usage: response.usage
+        ? {
+            input_tokens: response.usage.total_input_tokens,
+            output_tokens: response.usage.total_output_tokens,
+            thought_tokens: response.usage.total_thought_tokens || 0,
+            total_tokens: response.usage.total_tokens,
+          }
+        : null,
     });
   } catch (error: any) {
     console.error('Error in /api/scan-slip:', error);
