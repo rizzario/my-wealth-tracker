@@ -1,5 +1,3 @@
-import YahooFinance from 'yahoo-finance2';
-
 /**
  * Standard constants for gold weight and purity conversions
  * - 1 Troy Ounce (oz t) = 31.1034768 grams
@@ -32,8 +30,6 @@ export interface GoldApiResponse {
   updatedAtReadable?: string;
 }
 
-const yahooFinance = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
-
 /**
  * Parse and normalize holding symbol to identify supported gold assets.
  * Supports:
@@ -46,13 +42,13 @@ export function parseGoldSymbol(rawSymbol: string): GoldSymbolConfig | null {
   if (!rawSymbol) return null;
   const sym = rawSymbol.toUpperCase().replace(/\s+/g, ' ').trim();
 
-  // Must start with GOLD or XAU
-  if (!sym.startsWith('GOLD') && !sym.startsWith('XAU')) {
+  // Must start with GOLD or XAU or contain Thai gold terms
+  if (!sym.startsWith('GOLD') && !sym.startsWith('XAU') && !sym.includes('ทอง')) {
     return null;
   }
 
   // 1. Thai Baht weight (15.244g of 96.5% bullion)
-  if (sym.includes('BAHT') || sym.includes('บาท')) {
+  if (sym.includes('BAHT') || sym.includes('บาท') || sym.includes('ทองคำแท่ง')) {
     return {
       type: 'GOLD_965_BAHT',
       label: 'ทองคำแท่ง 96.5% (1 บาท / 15.244 กรัม)',
@@ -101,7 +97,8 @@ export function parseGoldSymbol(rawSymbol: string): GoldSymbolConfig | null {
     sym.endsWith('-OZ') ||
     sym.includes('OUNCE') ||
     sym === 'GOLD' ||
-    sym.startsWith('XAU')
+    sym.startsWith('XAU') ||
+    sym.includes('ทอง')
   ) {
     return {
       type: 'GOLD_OZ',
@@ -116,45 +113,96 @@ export function parseGoldSymbol(rawSymbol: string): GoldSymbolConfig | null {
 }
 
 /**
- * Fetch current Gold Spot price (USD per Troy Ounce) from Gold API
- * URL: https://api.gold-api.com/price/XAU/USD
- * Fallback to Yahoo Finance (GC=F Gold Futures) if gold-api.com is unreachable.
+ * Parse numeric strings with magnitude suffix (k/m/b), spaces, and commas.
+ * Examples:
+ * - "66.5k" or "66.5K" -> 66500
+ * - "1.5m" -> 1500000
+ * - "66,500" -> 66500
+ * - 0.2292 -> 0.2292
  */
-export async function fetchGoldSpotUsd(): Promise<number | null> {
-  // Primary: gold-api.com
-  try {
-    const res = await fetch('https://api.gold-api.com/price/XAU/USD', {
-      headers: {
-        'User-Agent': 'my-wealth-tracker/1.0',
-        Accept: 'application/json',
-      },
-      cache: 'no-store',
-    });
-
-    if (res.ok) {
-      const data: GoldApiResponse = await res.json();
-      const price = Number(data.price);
-      if (price && price > 0) {
-        return price;
-      }
-    }
-  } catch (err) {
-    console.warn('Gold API (gold-api.com) request failed, trying Yahoo Finance fallback:', err);
+export function parseNumberWithSuffix(val: string | number | null | undefined): number {
+  if (typeof val === 'number') return isNaN(val) ? 0 : val;
+  if (!val) return 0;
+  const clean = String(val).trim().replace(/,/g, '');
+  if (!clean) return 0;
+  const lower = clean.toLowerCase();
+  if (lower.endsWith('k')) {
+    const n = parseFloat(lower.slice(0, -1).trim());
+    return isNaN(n) ? 0 : n * 1000;
   }
-
-  // Fallback: Yahoo Finance Gold Futures (GC=F)
-  try {
-    const quote: any = await yahooFinance.quote('GC=F');
-    const price = Number(quote?.regularMarketPrice);
-    if (price && price > 0) {
-      return price;
-    }
-  } catch (err) {
-    console.error('All Gold price providers failed:', err);
+  if (lower.endsWith('m')) {
+    const n = parseFloat(lower.slice(0, -1).trim());
+    return isNaN(n) ? 0 : n * 1000000;
   }
-
-  return null;
+  if (lower.endsWith('b')) {
+    const n = parseFloat(lower.slice(0, -1).trim());
+    return isNaN(n) ? 0 : n * 1000000000;
+  }
+  const n = parseFloat(clean);
+  return isNaN(n) ? 0 : n;
 }
+
+export interface GoldConversionDetail {
+  units: number;
+  unitType: 'BAHT' | 'G' | 'OZ';
+  totalCashThb: number;
+  bahtWeight: number;    // จำนวนบาททองคำ
+  grams: number;         // จำนวนกรัม
+  salung: number;        // จำนวนสลึง
+  pricePerBaht: number;  // ราคาต่อ 1 บาททอง
+  pricePerGram: number;  // ราคาต่อ 1 กรัม
+  pricePerSalung: number;// ราคาต่อ 1 สลึง
+}
+
+export function calculateGoldMetrics(
+  config: GoldSymbolConfig,
+  units: number,
+  pricePerUnit: number
+): GoldConversionDetail {
+  const totalCashThb = units * pricePerUnit;
+  let bahtWeight = 0;
+  let grams = 0;
+  let salung = 0;
+  let pricePerBaht = 0;
+  let pricePerGram = 0;
+  let pricePerSalung = 0;
+
+  if (config.unit === 'BAHT') {
+    bahtWeight = units;
+    grams = units * THAI_BAHT_WEIGHT_GRAMS;
+    salung = units * 4;
+    pricePerBaht = pricePerUnit;
+    pricePerGram = pricePerUnit / THAI_BAHT_WEIGHT_GRAMS;
+    pricePerSalung = pricePerUnit / 4;
+  } else if (config.unit === 'G') {
+    grams = units;
+    bahtWeight = units / THAI_BAHT_WEIGHT_GRAMS;
+    salung = (units / THAI_BAHT_WEIGHT_GRAMS) * 4;
+    pricePerGram = pricePerUnit;
+    pricePerBaht = pricePerUnit * THAI_BAHT_WEIGHT_GRAMS;
+    pricePerSalung = (pricePerUnit * THAI_BAHT_WEIGHT_GRAMS) / 4;
+  } else if (config.unit === 'OZ') {
+    grams = units * TROY_OUNCE_IN_GRAMS;
+    bahtWeight = grams / THAI_BAHT_WEIGHT_GRAMS;
+    salung = bahtWeight * 4;
+    pricePerGram = pricePerUnit / TROY_OUNCE_IN_GRAMS;
+    pricePerBaht = pricePerGram * THAI_BAHT_WEIGHT_GRAMS;
+    pricePerSalung = pricePerBaht / 4;
+  }
+
+  return {
+    units,
+    unitType: config.unit,
+    totalCashThb,
+    bahtWeight,
+    grams,
+    salung,
+    pricePerBaht,
+    pricePerGram,
+    pricePerSalung,
+  };
+}
+
 
 /**
  * Calculate the present price per unit in the holding's currency.

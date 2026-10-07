@@ -9,9 +9,9 @@ import {
 } from '@/lib/exchangeRates';
 import {
   parseGoldSymbol,
-  fetchGoldSpotUsd,
   calculateGoldHoldingPrice,
 } from '@/lib/gold';
+import { fetchGoldSpotUsd } from '@/lib/gold-server';
 
 const yahooFinance = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
 

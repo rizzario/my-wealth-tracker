@@ -21,9 +21,17 @@ import {
   TrendingUp,
   Coins,
   CheckCircle2,
+  Sparkles,
 } from 'lucide-react';
 import { CURRENCY_OPTIONS, getCurrencySymbol } from '@/lib/currency';
 import { POPULAR_BROKERS } from './TradeTransactionsSection';
+import {
+  parseGoldSymbol,
+  parseNumberWithSuffix,
+  calculateGoldMetrics,
+  THAI_BAHT_WEIGHT_GRAMS,
+  TROY_OUNCE_IN_GRAMS,
+} from '@/lib/gold';
 
 export interface Holding {
   id: string;
@@ -118,14 +126,16 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
 
   // Buy on Dip & Stop Loss calculator helper states
   const [calcMode, setCalcMode] = useState<'dip' | 'sell'>('dip');
+  const [dipInputMode, setDipInputMode] = useState<'units' | 'budget'>('units');
   const [dipAddUnits, setDipAddUnits] = useState('');
   const [dipAddPrice, setDipAddPrice] = useState('');
+  const [dipBudget, setDipBudget] = useState('');
   const [sellUnits, setSellUnits] = useState('');
   const [calcNotice, setCalcNotice] = useState<string | null>(null);
 
   // Pending calculator trade states for Edit mode
   const [recordDipTrade, setRecordDipTrade] = useState(true);
-  const [pendingDipTrade, setPendingDipTrade] = useState<{ units: number; price: number } | null>(null);
+  const [pendingDipTrade, setPendingDipTrade] = useState<{ units: number; price: number; reason?: string } | null>(null);
 
   const [recordSellTrade, setRecordSellTrade] = useState(true);
   const [pendingSellTrade, setPendingSellTrade] = useState<{ units: number } | null>(null);
@@ -347,8 +357,10 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
       recordTrade: true,
     });
     setCalcMode('dip');
+    setDipInputMode('units');
     setDipAddUnits('');
     setDipAddPrice('');
+    setDipBudget('');
     setSellUnits('');
     setCalcNotice(null);
     setPendingDipTrade(null);
@@ -376,8 +388,16 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
       recordTrade: false,
     });
     setCalcMode('dip');
+    setDipInputMode('units');
     setDipAddUnits('');
-    setDipAddPrice('');
+    setDipAddPrice(
+      holding.present_price != null && Number(holding.present_price) > 0
+        ? String(holding.present_price)
+        : holding.initial_cost != null
+        ? String(holding.initial_cost)
+        : ''
+    );
+    setDipBudget('');
     setSellUnits('');
     setCalcNotice(null);
     setPendingDipTrade(null);
@@ -389,6 +409,11 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
     setIsModalOpen(false);
     setSelectedHolding(null);
     setFormData(initialHoldingForm);
+    setDipInputMode('units');
+    setDipAddUnits('');
+    setDipAddPrice('');
+    setDipBudget('');
+    setSellUnits('');
     setCalcNotice(null);
     setPendingDipTrade(null);
     setPendingSellTrade(null);
@@ -443,41 +468,80 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
   const handleApplyDipCalc = () => {
     const curVol = parseFloat(formData.volume) || 0;
     const curCost = parseFloat(formData.initial_cost) || 0;
-    const addVol = parseFloat(dipAddUnits);
-    const addPrice = parseFloat(dipAddPrice);
+    const addPrice = parseNumberWithSuffix(dipAddPrice);
 
-    if (isNaN(addVol) || addVol <= 0) {
-      alert('กรุณาระบุจำนวนหน่วยที่ซื้อเพิ่มที่ถูกต้อง (> 0)');
-      return;
-    }
     if (isNaN(addPrice) || addPrice < 0) {
       alert('กรุณาระบุราคาที่ซื้อเพิ่มที่ถูกต้อง (>= 0)');
       return;
     }
 
+    let addVol = 0;
+    if (dipInputMode === 'budget') {
+      const budget = parseNumberWithSuffix(dipBudget);
+      if (isNaN(budget) || budget <= 0) {
+        alert('กรุณาระบุงบประมาณที่ซื้อที่ถูกต้อง (> 0)');
+        return;
+      }
+      if (addPrice <= 0) {
+        alert('กรุณาระบุราคาที่ซื้อเพิ่มเพื่อคำนวณจำนวนหน่วย');
+        return;
+      }
+      addVol = budget / addPrice;
+    } else {
+      addVol = parseNumberWithSuffix(dipAddUnits);
+      if (isNaN(addVol) || addVol <= 0) {
+        alert('กรุณาระบุจำนวนหน่วยที่ซื้อเพิ่มที่ถูกต้อง (> 0)');
+        return;
+      }
+    }
+
     const newVol = curVol + addVol;
-    const newCost = (curVol * curCost + addVol * addPrice) / newVol;
+    const newCost = (curVol * curCost + addVol * addPrice) / (newVol || 1);
+
+    // ตรวจสอบว่าเป็นสินทรัพย์ทองคำหรือไม่ เพื่อจัด format ข้อความและหน่วยให้แม่นยำ
+    const goldConfig = parseGoldSymbol(formData.symbol);
+    let tradeReason = 'ซื้อถัวเฉลี่ย (Buy on Dip)';
+    if (goldConfig) {
+      const goldMetrics = calculateGoldMetrics(goldConfig, addVol, addPrice);
+      if (goldConfig.unit === 'BAHT') {
+        tradeReason = `ซื้อถัวเฉลี่ยทองคำ ${addVol.toLocaleString(undefined, { maximumFractionDigits: 4 })} บาททอง (≈ ${goldMetrics.grams.toFixed(3)}g) @ ฿${addPrice.toLocaleString()}`;
+      } else if (goldConfig.unit === 'G') {
+        tradeReason = `ซื้อถัวเฉลี่ยทองคำ ${addVol.toLocaleString(undefined, { maximumFractionDigits: 3 })} กรัม (≈ ${goldMetrics.bahtWeight.toFixed(4)} บาททอง) @ ฿${addPrice.toLocaleString()}/g`;
+      } else if (goldConfig.unit === 'OZ') {
+        tradeReason = `ซื้อถัวเฉลี่ยทองคำ ${addVol.toLocaleString(undefined, { maximumFractionDigits: 4 })} oz t @ $${addPrice.toLocaleString()}`;
+      }
+    }
+
+    // Format volume ให้สอดคล้องกับสินทรัพย์ที่มีทศนิยมละเอียด
+    const formattedNewVol = goldConfig || ['BTC', 'ETH', 'SOL'].includes(formData.symbol.toUpperCase())
+      ? parseFloat(newVol.toFixed(6))
+      : parseFloat(newVol.toFixed(4));
 
     setFormData((prev) => ({
       ...prev,
-      volume: String(newVol),
+      volume: String(formattedNewVol),
       initial_cost: String(parseFloat(newCost.toFixed(4))),
     }));
 
-    setPendingDipTrade({ units: addVol, price: addPrice });
+    setPendingDipTrade({ units: addVol, price: addPrice, reason: tradeReason });
     setRecordDipTrade(true);
 
+    const costDiff = newCost - curCost;
+    const costDiffStr = costDiff >= 0 ? `+${costDiff.toFixed(2)}` : `${costDiff.toFixed(2)}`;
+
     setCalcNotice(
-      `คำนวณสำเร็จ: ปรับจำนวนเป็น ${newVol.toLocaleString()} หน่วย, ต้นทุนเฉลี่ยใหม่ ${newCost.toFixed(4)} (พร้อมบันทึก BUY ${addVol.toLocaleString()} หุ้น)`
+      goldConfig
+        ? `คำนวณสำเร็จ: ปรับจำนวนเป็น ${formattedNewVol.toLocaleString()} หน่วย, ต้นทุนเฉลี่ยใหม่ ${newCost.toFixed(2)} (${costDiffStr}) พร้อมบันทึก BUY`
+        : `คำนวณสำเร็จ: ปรับจำนวนเป็น ${formattedNewVol.toLocaleString()} หน่วย, ต้นทุนเฉลี่ยใหม่ ${newCost.toFixed(4)} (${costDiffStr}) พร้อมบันทึก BUY`
     );
     setDipAddUnits('');
-    setDipAddPrice('');
+    setDipBudget('');
   };
 
   // คำนวณลดจำนวนหุ้น (Stop Loss / Partial Sell Calculator)
   const handleApplySellCalc = () => {
     const curVol = parseFloat(formData.volume) || 0;
-    const sold = parseFloat(sellUnits);
+    const sold = parseNumberWithSuffix(sellUnits);
 
     if (isNaN(sold) || sold <= 0) {
       alert('กรุณาระบุจำนวนหน่วยที่ขายออกที่ถูกต้อง (> 0)');
@@ -489,17 +553,20 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
     }
 
     const newVol = Math.max(0, curVol - sold);
+    const formattedNewVol = ['BTC', 'ETH', 'SOL'].includes(formData.symbol.toUpperCase()) || parseGoldSymbol(formData.symbol)
+      ? parseFloat(newVol.toFixed(6))
+      : parseFloat(newVol.toFixed(4));
 
     setFormData((prev) => ({
       ...prev,
-      volume: String(newVol),
+      volume: String(formattedNewVol),
     }));
 
     setPendingSellTrade({ units: sold });
     setRecordSellTrade(true);
 
     setCalcNotice(
-      `คำนวณสำเร็จ: ปรับลดจำนวนคงเหลือเป็น ${newVol.toLocaleString()} หน่วย (พร้อมบันทึก SELL ${sold.toLocaleString()} หุ้น)`
+      `คำนวณสำเร็จ: ปรับลดจำนวนคงเหลือเป็น ${formattedNewVol.toLocaleString()} หน่วย (พร้อมบันทึก SELL ${sold.toLocaleString()} หุ้น)`
     );
     setSellUnits('');
   };
@@ -735,7 +802,7 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
             gross_amount_thb: grossThb,
             fee_thb: 0,
             net_amount_thb: grossThb,
-            reason: 'ซื้อถัวเฉลี่ย (Buy on Dip)',
+            reason: pendingDipTrade.reason || 'ซื้อถัวเฉลี่ย (Buy on Dip)',
             account_id: formData.accountId || null,
           };
 
@@ -1036,13 +1103,66 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
   };
 
   // Live Calculations for the Modal Form Preview
-  const previewVol = parseFloat(formData.volume) || 0;
-  const previewCost = parseFloat(formData.initial_cost) || 0;
-  const previewPrice = formData.present_price !== '' ? parseFloat(formData.present_price) || 0 : previewCost;
+  const previewVol = parseNumberWithSuffix(formData.volume);
+  const previewCost = parseNumberWithSuffix(formData.initial_cost);
+  const previewPrice = formData.present_price !== '' ? parseNumberWithSuffix(formData.present_price) : previewCost;
   const previewTotalCost = previewVol * previewCost;
   const previewTotalPrice = previewVol * previewPrice;
   const previewPnl = previewTotalCost > 0 ? ((previewTotalPrice - previewTotalCost) / previewTotalCost) * 100 : 0;
   const previewCurrencySymbol = getCurrencySymbol(formData.currency);
+
+  // ตรวจจับสินทรัพย์ทองคำสำหรับแบบฟอร์มปัจจุบัน
+  const activeGoldConfig = useMemo(() => {
+    return parseGoldSymbol(formData.symbol);
+  }, [formData.symbol]);
+
+  // ตัวเลขราคาและหน่วยที่คำนวณแบบยืดหยุ่น (รองรับตัวย่อ เช่น 66.5k, 15k)
+  const parsedDipAddPrice = useMemo(() => {
+    return parseNumberWithSuffix(dipAddPrice);
+  }, [dipAddPrice]);
+
+  const parsedDipAddUnits = useMemo(() => {
+    if (dipInputMode === 'budget') {
+      const budget = parseNumberWithSuffix(dipBudget);
+      const price = parsedDipAddPrice;
+      return price > 0 ? budget / price : 0;
+    }
+    return parseNumberWithSuffix(dipAddUnits);
+  }, [dipInputMode, dipBudget, dipAddUnits, parsedDipAddPrice]);
+
+  // คำนวณรายละเอียดราคาทองคำสำหรับ Buy on Dip แบบ Real-time
+  const liveDipGoldMetrics = useMemo(() => {
+    if (!activeGoldConfig || parsedDipAddUnits <= 0 || parsedDipAddPrice <= 0) return null;
+    return calculateGoldMetrics(activeGoldConfig, parsedDipAddUnits, parsedDipAddPrice);
+  }, [activeGoldConfig, parsedDipAddUnits, parsedDipAddPrice]);
+
+  // คำนวณผลกระทบต่อพอร์ต (DCA Impact) สำหรับ Buy on Dip แบบ Real-time
+  const liveDipDcaImpact = useMemo(() => {
+    if (parsedDipAddUnits <= 0 || parsedDipAddPrice <= 0) return null;
+    const curVol = parseFloat(formData.volume) || 0;
+    const curCost = parseFloat(formData.initial_cost) || 0;
+    const newVol = curVol + parsedDipAddUnits;
+    const newCost = (curVol * curCost + parsedDipAddUnits * parsedDipAddPrice) / (newVol || 1);
+    const diff = newCost - curCost;
+    const percentDiff = curCost > 0 ? (diff / curCost) * 100 : 0;
+    return {
+      curVol,
+      curCost,
+      newVol,
+      newCost,
+      diff,
+      percentDiff,
+    };
+  }, [formData.volume, formData.initial_cost, parsedDipAddUnits, parsedDipAddPrice]);
+
+  // คำนวณรายละเอียดทองคำสำหรับหน้าต่างเพิ่มสินทรัพย์ (Add Holding Modal)
+  const liveAddGoldMetrics = useMemo(() => {
+    if (!activeGoldConfig) return null;
+    const vol = parseNumberWithSuffix(formData.volume);
+    const cost = parseNumberWithSuffix(formData.initial_cost);
+    if (vol <= 0 || cost <= 0) return null;
+    return calculateGoldMetrics(activeGoldConfig, vol, cost);
+  }, [activeGoldConfig, formData.volume, formData.initial_cost]);
 
   if (loadingData) {
     return (
@@ -1531,6 +1651,50 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
                 </div>
               )}
 
+              {/* Gold Asset Detection Banner & Breakdown (Add/Edit) */}
+              {activeGoldConfig && (
+                <div className="p-3 bg-gradient-to-r from-amber-50 to-yellow-50/70 border border-amber-200/90 rounded-xl space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-base">👑</span>
+                      <div>
+                        <span className="text-xs font-bold text-amber-950 block">{activeGoldConfig.label}</span>
+                        <span className="text-[10px] text-amber-700">ตรวจพบสินทรัพย์ทองคำมาตรฐาน</span>
+                      </div>
+                    </div>
+                    <span className="text-[10px] font-semibold bg-amber-200/80 text-amber-900 px-2 py-0.5 rounded-full shrink-0">
+                      หน่วย: {activeGoldConfig.unit === 'BAHT' ? 'บาททองคำ (15.244g)' : activeGoldConfig.unit === 'G' ? 'กรัม (g)' : 'ทรอยออนซ์ (oz)'}
+                    </span>
+                  </div>
+
+                  {liveAddGoldMetrics && (
+                    <div className="grid grid-cols-3 gap-1.5 text-center bg-white/80 p-2 rounded-lg border border-amber-200/60 text-xs">
+                      <div>
+                        <span className="text-[10px] text-slate-500 block">น้ำหนักรวม</span>
+                        <span className="font-bold font-mono text-amber-950">
+                          {liveAddGoldMetrics.bahtWeight.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+                        </span>
+                        <span className="text-[9px] text-amber-700 block">บาททอง</span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-slate-500 block">กรัมสุทธิ</span>
+                        <span className="font-bold font-mono text-amber-950">
+                          {liveAddGoldMetrics.grams.toLocaleString(undefined, { minimumFractionDigits: 3, maximumFractionDigits: 4 })}
+                        </span>
+                        <span className="text-[9px] text-amber-700 block">กรัม (g)</span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-slate-500 block">เทียบเท่าสลึง</span>
+                        <span className="font-bold font-mono text-amber-950">
+                          {liveAddGoldMetrics.salung.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+                        </span>
+                        <span className="text-[9px] text-amber-700 block">สลึง</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* จำนวนที่ถือครอง, ต้นทุนเฉลี่ย, ราคาตลาด */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
@@ -1546,7 +1710,15 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
                     onChange={(e) => setFormData({ ...formData, volume: e.target.value })}
                     className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl bg-white outline-none focus:ring-2 focus:ring-blue-500 font-semibold"
                   />
-                  <span className="text-[11px] text-slate-500 mt-0.5 block">หุ้น / เหรียญ</span>
+                  <span className="text-[11px] text-slate-500 mt-0.5 block">
+                    {activeGoldConfig?.unit === 'BAHT'
+                      ? 'บาททองคำ (15.244g)'
+                      : activeGoldConfig?.unit === 'G'
+                      ? 'กรัม (g)'
+                      : activeGoldConfig?.unit === 'OZ'
+                      ? 'ทรอยออนซ์ (oz)'
+                      : 'หุ้น / เหรียญ'}
+                  </span>
                 </div>
 
                 <div>
@@ -1562,7 +1734,13 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
                     onChange={(e) => setFormData({ ...formData, initial_cost: e.target.value })}
                     className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl bg-white outline-none focus:ring-2 focus:ring-blue-500 font-semibold"
                   />
-                  <span className="text-[11px] text-slate-500 mt-0.5 block">ราคาซื้อเฉลี่ย</span>
+                  <span className="text-[11px] text-slate-500 mt-0.5 block">
+                    {activeGoldConfig?.unit === 'BAHT'
+                      ? 'ราคาเฉลี่ยต่อน้ำหนัก 1 บาททอง'
+                      : activeGoldConfig?.unit === 'G'
+                      ? 'ราคาเฉลี่ยต่อ 1 กรัม'
+                      : 'ราคาซื้อเฉลี่ย'}
+                  </span>
                 </div>
 
                 <div>
@@ -1621,43 +1799,296 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
                   </div>
 
                   {calcMode === 'dip' ? (
-                    <div className="space-y-2.5">
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 items-end">
-                        <div>
-                          <label className="block text-[11px] font-medium text-slate-600 mb-0.5">
-                            ซื้อเพิ่มกี่หน่วย (Units)
-                          </label>
-                          <input
-                            type="number"
-                            step="any"
-                            placeholder="เช่น 50"
-                            value={dipAddUnits}
-                            onChange={(e) => setDipAddUnits(e.target.value)}
-                            className="w-full px-2.5 py-1.5 text-xs border border-slate-300 rounded-lg bg-white outline-none focus:ring-2 focus:ring-blue-500"
-                          />
+                    <div className="space-y-3">
+                      {/* Mode Toggle: By Units vs By Budget */}
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-1 bg-slate-200/70 p-0.5 rounded-lg">
+                          <button
+                            type="button"
+                            onClick={() => setDipInputMode('units')}
+                            className={`px-2 py-1 text-[11px] font-semibold rounded-md transition cursor-pointer flex items-center gap-1 ${
+                              dipInputMode === 'units'
+                                ? 'bg-white text-blue-700 shadow-xs'
+                                : 'text-slate-600 hover:text-slate-900'
+                            }`}
+                          >
+                            <span>🪙</span>
+                            <span>
+                              ระบุจำนวนหน่วย ({activeGoldConfig?.unit === 'BAHT' ? 'บาททอง' : activeGoldConfig?.unit === 'G' ? 'กรัม' : 'Units'})
+                            </span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setDipInputMode('budget')}
+                            className={`px-2 py-1 text-[11px] font-semibold rounded-md transition cursor-pointer flex items-center gap-1 ${
+                              dipInputMode === 'budget'
+                                ? 'bg-white text-blue-700 shadow-xs'
+                                : 'text-slate-600 hover:text-slate-900'
+                            }`}
+                          >
+                            <span>💵</span>
+                            <span>ระบุงบเงิน (Budget)</span>
+                          </button>
                         </div>
+
+                        {/* Quick Market Price Button */}
+                        {(formData.present_price || selectedHolding?.present_price) && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const p = formData.present_price || selectedHolding?.present_price;
+                              if (p) setDipAddPrice(String(p));
+                            }}
+                            className="text-[10px] font-semibold text-blue-700 hover:text-blue-900 bg-blue-100/70 hover:bg-blue-200/80 px-2 py-1 rounded-md transition cursor-pointer shrink-0"
+                          >
+                            ⚡ ใช้ราคาตลาด ({previewCurrencySymbol}
+                            {Number(formData.present_price || selectedHolding?.present_price).toLocaleString()})
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Gold Quick Weight Presets (if asset is Gold) */}
+                      {activeGoldConfig && (
+                        <div className="flex items-center gap-1.5 flex-wrap bg-amber-50/80 p-2 rounded-lg border border-amber-200/70">
+                          <span className="text-[10px] text-amber-900 font-bold shrink-0">
+                            น้ำหนักด่วน:
+                          </span>
+                          {activeGoldConfig.unit === 'BAHT' ? (
+                            <>
+                              {[
+                                { label: '+0.25 (1 สลึง)', val: 0.25 },
+                                { label: '+0.5 (2 สลึง)', val: 0.5 },
+                                { label: '+1 บาท', val: 1 },
+                                { label: '+2 บาท', val: 2 },
+                                { label: '+5 บาท', val: 5 },
+                              ].map((preset) => (
+                                <button
+                                  key={preset.label}
+                                  type="button"
+                                  onClick={() => {
+                                    setDipInputMode('units');
+                                    setDipAddUnits(String(preset.val));
+                                  }}
+                                  className="text-[10px] font-medium bg-white hover:bg-amber-100 text-amber-950 px-2 py-0.5 rounded-md border border-amber-300/80 transition cursor-pointer shadow-xs"
+                                >
+                                  {preset.label}
+                                </button>
+                              ))}
+                            </>
+                          ) : activeGoldConfig.unit === 'G' ? (
+                            <>
+                              {[
+                                { label: '+1g', val: 1 },
+                                { label: '+3.811g (1 สลึง)', val: 3.811 },
+                                { label: '+7.622g (2 สลึง)', val: 7.622 },
+                                { label: '+15.244g (1 บาท)', val: 15.244 },
+                              ].map((preset) => (
+                                <button
+                                  key={preset.label}
+                                  type="button"
+                                  onClick={() => {
+                                    setDipInputMode('units');
+                                    setDipAddUnits(String(preset.val));
+                                  }}
+                                  className="text-[10px] font-medium bg-white hover:bg-amber-100 text-amber-950 px-2 py-0.5 rounded-md border border-amber-300/80 transition cursor-pointer shadow-xs"
+                                >
+                                  {preset.label}
+                                </button>
+                              ))}
+                            </>
+                          ) : null}
+                        </div>
+                      )}
+
+                      {/* Main Input Grid */}
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 items-end">
+                        {dipInputMode === 'units' ? (
+                          <div>
+                            <label className="block text-[11px] font-medium text-slate-600 mb-0.5">
+                              ซื้อเพิ่มกี่หน่วย ({activeGoldConfig?.unit === 'BAHT' ? 'บาททองคำ' : activeGoldConfig?.unit === 'G' ? 'กรัม' : 'Units'})
+                            </label>
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              placeholder={activeGoldConfig?.unit === 'BAHT' ? 'เช่น 0.2292 หรือ 1' : 'เช่น 50'}
+                              value={dipAddUnits}
+                              onChange={(e) => setDipAddUnits(e.target.value)}
+                              className="w-full px-2.5 py-1.5 text-xs border border-slate-300 rounded-lg bg-white outline-none focus:ring-2 focus:ring-blue-500 font-mono font-medium"
+                            />
+                            {dipAddUnits && dipAddUnits.toLowerCase().match(/[kmb]/) && (
+                              <span className="text-[10px] text-blue-600 font-medium block mt-0.5">
+                                💡 {dipAddUnits} = {parseNumberWithSuffix(dipAddUnits).toLocaleString()}
+                              </span>
+                            )}
+                          </div>
+                        ) : (
+                          <div>
+                            <label className="block text-[11px] font-medium text-slate-600 mb-0.5">
+                              งบเงินที่ต้องการซื้อ ({previewCurrencySymbol})
+                            </label>
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              placeholder="เช่น 15000 หรือ 15.2k"
+                              value={dipBudget}
+                              onChange={(e) => setDipBudget(e.target.value)}
+                              className="w-full px-2.5 py-1.5 text-xs border border-slate-300 rounded-lg bg-white outline-none focus:ring-2 focus:ring-blue-500 font-mono font-medium"
+                            />
+                            {dipBudget && dipBudget.toLowerCase().match(/[kmb]/) && (
+                              <span className="text-[10px] text-blue-600 font-medium block mt-0.5">
+                                💡 {dipBudget} = ฿{parseNumberWithSuffix(dipBudget).toLocaleString()}
+                              </span>
+                            )}
+                          </div>
+                        )}
+
                         <div>
                           <label className="block text-[11px] font-medium text-slate-600 mb-0.5">
                             ราคาที่ซื้อเพิ่ม ({previewCurrencySymbol})
                           </label>
                           <input
-                            type="number"
-                            step="any"
-                            placeholder="เช่น 120.00"
+                            type="text"
+                            inputMode="decimal"
+                            placeholder={activeGoldConfig ? 'เช่น 66.5k หรือ 66,500' : 'เช่น 120.00'}
                             value={dipAddPrice}
                             onChange={(e) => setDipAddPrice(e.target.value)}
-                            className="w-full px-2.5 py-1.5 text-xs border border-slate-300 rounded-lg bg-white outline-none focus:ring-2 focus:ring-blue-500"
+                            className="w-full px-2.5 py-1.5 text-xs border border-slate-300 rounded-lg bg-white outline-none focus:ring-2 focus:ring-blue-500 font-mono font-medium"
                           />
+                          {dipAddPrice && dipAddPrice.toLowerCase().match(/[kmb]/) && (
+                            <span className="text-[10px] text-blue-600 font-medium block mt-0.5">
+                              💡 {dipAddPrice} = {previewCurrencySymbol}{parseNumberWithSuffix(dipAddPrice).toLocaleString()}
+                            </span>
+                          )}
                         </div>
+
                         <button
                           type="button"
                           onClick={handleApplyDipCalc}
-                          disabled={!dipAddUnits || !dipAddPrice}
+                          disabled={
+                            (dipInputMode === 'units' ? !dipAddUnits : !dipBudget) || !dipAddPrice
+                          }
                           className="w-full px-3 py-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition disabled:opacity-50 cursor-pointer shadow-xs"
                         >
                           คำนวณ & ใส่ค่าให้อัตโนมัติ
                         </button>
                       </div>
+
+                      {/* Live Gold Conversion Details (Shown when price & units/budget are filled) */}
+                      {activeGoldConfig && liveDipGoldMetrics && (
+                        <div className="p-3 rounded-xl bg-gradient-to-br from-amber-50/90 via-amber-100/40 to-yellow-50/80 border border-amber-300/80 shadow-xs space-y-2.5">
+                          <div className="flex flex-wrap items-center justify-between gap-1.5 border-b border-amber-200/80 pb-2">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-base">👑</span>
+                              <div>
+                                <span className="text-xs font-bold text-amber-950 block">
+                                  {activeGoldConfig.label}
+                                </span>
+                                <span className="text-[10px] text-amber-700">
+                                  คำนวณราคาทองคำ & น้ำหนักมาตรฐาน
+                                </span>
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <span className="text-[10px] text-amber-800 block">ยอดเงินที่ซื้อ (Total Cost)</span>
+                              <span className="text-sm font-bold font-mono text-amber-950">
+                                ฿{liveDipGoldMetrics.totalCashThb.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Weight Breakdown */}
+                          <div className="grid grid-cols-3 gap-2 text-center bg-white/70 backdrop-blur-xs p-2 rounded-lg border border-amber-200/60">
+                            <div>
+                              <span className="text-[10px] text-slate-500 block">บาททองคำ</span>
+                              <span className="text-xs font-bold font-mono text-amber-950">
+                                {liveDipGoldMetrics.bahtWeight.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+                              </span>
+                              <span className="text-[9px] text-amber-700 block">บาท</span>
+                            </div>
+                            <div>
+                              <span className="text-[10px] text-slate-500 block">น้ำหนักสุทธิ</span>
+                              <span className="text-xs font-bold font-mono text-amber-950">
+                                {liveDipGoldMetrics.grams.toLocaleString(undefined, { minimumFractionDigits: 3, maximumFractionDigits: 4 })}
+                              </span>
+                              <span className="text-[9px] text-amber-700 block">กรัม (g)</span>
+                            </div>
+                            <div>
+                              <span className="text-[10px] text-slate-500 block">เทียบเท่าสลึง</span>
+                              <span className="text-xs font-bold font-mono text-amber-950">
+                                {liveDipGoldMetrics.salung.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+                              </span>
+                              <span className="text-[9px] text-amber-700 block">สลึง</span>
+                            </div>
+                          </div>
+
+                          {/* Rate Equivalents Breakdown */}
+                          <div className="grid grid-cols-3 gap-2 text-center bg-white/70 backdrop-blur-xs p-2 rounded-lg border border-amber-200/60">
+                            <div>
+                              <span className="text-[10px] text-slate-500 block">ราคา/บาททอง</span>
+                              <span className="text-xs font-bold font-mono text-slate-900">
+                                ฿{liveDipGoldMetrics.pricePerBaht.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-[10px] text-slate-500 block">ราคา/สลึง</span>
+                              <span className="text-xs font-bold font-mono text-slate-900">
+                                ฿{liveDipGoldMetrics.pricePerSalung.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-[10px] text-slate-500 block">ราคา/กรัม</span>
+                              <span className="text-xs font-bold font-mono text-slate-900">
+                                ฿{liveDipGoldMetrics.pricePerGram.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* DCA Portfolio Impact */}
+                          {liveDipDcaImpact && (
+                            <div className="p-2 rounded-lg bg-amber-100/60 border border-amber-200/80 flex flex-wrap items-center justify-between text-xs gap-1.5">
+                              <div className="space-y-0.5">
+                                <span className="text-[10px] text-amber-800 font-semibold block">ผลกระทบต่อพอร์ต (DCA Impact)</span>
+                                <span className="text-[11px] text-slate-700 font-mono block">
+                                  จำนวน: {liveDipDcaImpact.curVol.toLocaleString(undefined, { maximumFractionDigits: 4 })} ➜{' '}
+                                  <strong className="text-amber-950">{liveDipDcaImpact.newVol.toLocaleString(undefined, { maximumFractionDigits: 4 })}</strong> หน่วย
+                                </span>
+                              </div>
+                              <div className="text-right space-y-0.5">
+                                <span className="text-[10px] text-amber-800 font-semibold block">ต้นทุนเฉลี่ยใหม่</span>
+                                <span className="text-xs font-bold font-mono text-amber-950">
+                                  {previewCurrencySymbol}{liveDipDcaImpact.newCost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}{' '}
+                                  <span className={`text-[10px] font-semibold ${liveDipDcaImpact.diff >= 0 ? 'text-amber-800' : 'text-emerald-700'}`}>
+                                    ({liveDipDcaImpact.diff >= 0 ? '+' : ''}{liveDipDcaImpact.diff.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
+                                  </span>
+                                </span>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* General Non-Gold Live Preview */}
+                      {!activeGoldConfig && parsedDipAddUnits > 0 && parsedDipAddPrice > 0 && (
+                        <div className="p-2.5 bg-blue-50/70 rounded-lg border border-blue-200/80 flex flex-wrap items-center justify-between gap-2 text-xs">
+                          <div>
+                            <span className="text-[10px] text-blue-700 font-medium block">ยอดเงินที่ต้องใช้ (Total Cost)</span>
+                            <span className="font-bold font-mono text-blue-950 text-sm">
+                              {previewCurrencySymbol}{(parsedDipAddUnits * parsedDipAddPrice).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </span>
+                          </div>
+                          {liveDipDcaImpact && (
+                            <div className="text-right">
+                              <span className="text-[10px] text-blue-700 font-medium block">ต้นทุนเฉลี่ยหลังซื้อ</span>
+                              <span className="font-bold font-mono text-blue-950">
+                                {previewCurrencySymbol}{liveDipDcaImpact.newCost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}{' '}
+                                <span className={`text-[10px] font-semibold ${liveDipDcaImpact.diff >= 0 ? 'text-amber-700' : 'text-emerald-600'}`}>
+                                  ({liveDipDcaImpact.diff >= 0 ? '+' : ''}{liveDipDcaImpact.diff.toFixed(2)})
+                                </span>
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      )}
 
                       {pendingDipTrade && (
                         <div className="p-2.5 bg-blue-50/80 rounded-lg border border-blue-200">
@@ -1669,7 +2100,7 @@ export default function PortfolioTable({ onHoldingsUpdated }: PortfolioTableProp
                               className="mt-0.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500 h-3.5 w-3.5 cursor-pointer"
                             />
                             <span className="text-[11px] font-medium text-blue-900 leading-relaxed">
-                              บันทึกเป็น Trade BUY ({pendingDipTrade.units.toLocaleString()} หน่วย @ {previewCurrencySymbol}
+                              บันทึกเป็น Trade BUY ({pendingDipTrade.units.toLocaleString(undefined, { maximumFractionDigits: 4 })} หน่วย @ {previewCurrencySymbol}
                               {pendingDipTrade.price.toLocaleString()})
                               {formData.accountId
                                 ? ' และหักเงินสดจากบัญชีที่ผูกอัตโนมัติ'
