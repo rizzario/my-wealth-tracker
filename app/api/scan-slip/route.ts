@@ -10,6 +10,8 @@ export async function GET() {
   const cfWorkerUrl = process.env.SLIP_SCANNER_WORKER_API_URL;
   const geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
   const isGeminiConfigured = Boolean(geminiKey && geminiKey !== 'your_gemini_api_key_here');
+  const typhoonKey = process.env.TYPHOON_API_KEY || process.env.OPENTYPHOON_API_KEY;
+  const isTyphoonConfigured = Boolean(typhoonKey && typhoonKey !== 'your_typhoon_api_key_here');
 
   let cfStatus: 'ok' | 'unreachable' | 'not_configured' = 'not_configured';
   if (cfWorkerUrl) {
@@ -27,6 +29,10 @@ export async function GET() {
   return NextResponse.json({
     status: 'ok',
     providers: {
+      typhoon: {
+        configured: isTyphoonConfigured,
+        models: ['typhoon-ocr', 'typhoon-ocr-preview', 'typhoon-ocr-v1.5'],
+      },
       cloudflare: {
         configured: Boolean(cfWorkerUrl),
         status: cfStatus,
@@ -158,10 +164,15 @@ export async function POST(req: NextRequest) {
     }
 
     // 3. Determine provider & model
+    const isTyphoon =
+      requestedModel.startsWith('typhoon') ||
+      requestedModel === 'typhoon-ocr';
+
     const isCloudflare =
-      requestedModel.startsWith('cloudflare') ||
-      requestedModel.startsWith('cf-') ||
-      requestedModel === 'llama-3.2-11b-vision';
+      !isTyphoon &&
+      (requestedModel.startsWith('cloudflare') ||
+        requestedModel.startsWith('cf-') ||
+        requestedModel === 'llama-3.2-11b-vision');
 
     // 4. Fetch user's financial accounts for smart matching
     const { data: accounts } = await supabase
@@ -180,7 +191,132 @@ export async function POST(req: NextRequest) {
     let modelNameUsed = '';
     let usageData: any = null;
 
-    if (isCloudflare) {
+    if (isTyphoon) {
+      // --- OpenTyphoon OCR (SCB 10X Thai Specialist) Flow ---
+      const apiKey = process.env.TYPHOON_API_KEY || process.env.OPENTYPHOON_API_KEY;
+      if (!apiKey || apiKey === 'your_typhoon_api_key_here') {
+        return NextResponse.json(
+          {
+            error: 'Configuration Error',
+            message:
+              'TYPHOON_API_KEY is not defined. Please configure TYPHOON_API_KEY in your environment variables.',
+          },
+          { status: 500 }
+        );
+      }
+
+      const baseUrl = (process.env.TYPHOON_API_URL || 'https://api.opentyphoon.ai/v1').replace(/\/$/, '');
+      const ALLOWED_TYPHOON_MODELS = ['typhoon-ocr', 'typhoon-ocr-preview', 'typhoon-ocr-v1.5'];
+      modelNameUsed = ALLOWED_TYPHOON_MODELS.includes(requestedModel)
+        ? requestedModel
+        : 'typhoon-ocr';
+
+      const promptText = `
+You are an expert OCR & financial auditor AI specialized in Thai bank transfer slips (สลิปโอนเงิน ธนาคารไทย), QR PromptPay, credit card slips, and receipt vouchers.
+
+Analyze this Thai bank slip image accurately and extract financial details into a strict JSON object with this exact structure:
+{
+  "amount": 185.00,
+  "transaction_date": "2025-10-06T12:45:00",
+  "type": "EXPENSE",
+  "category": "อาหาร & เครื่องดื่ม",
+  "sender_bank": "KBANK",
+  "sender_account_masked": "xxx-x-x1234-x",
+  "sender_name": "นาย กิตติพงษ์",
+  "receiver_bank": "PROMPTPAY",
+  "receiver_account_masked": "xxx-xxx-5678",
+  "receiver_name": "ร้าน อเมซอน คาเฟ่",
+  "memo": "ค่ากาแฟสดและขนมปัง",
+  "reference_number": "20261006KB987654",
+  "confidence_score": 0.95
+}
+
+Rules:
+1. Date & Time: Convert Buddhist Era (พ.ศ.) to Christian Era (ค.ศ. เช่น 2568 -> 2025, 2569 -> 2026). Ensure full ISO-8601 timestamp (YYYY-MM-DDTHH:mm:ss). If seconds are not shown, use :00.
+2. Amount: Extract the exact transfer amount in THB as a positive number.
+3. Type: Select "EXPENSE", "INCOME", or "TRANSFER".
+4. Category: Match best category among: "อาหาร & เครื่องดื่ม", "ช้อปปิ้ง", "เดินทาง", "ค่าน้ำ-ค่าไฟ-เน็ต", "ค่าที่พัก & คอนโด", "บันเทิง & ท่องเที่ยว", "สุขภาพ & ประกัน", "การศึกษา", "ลงทุน & ออมเงิน", "โอนเงินระหว่างบัญชี", "ชำระค่าบัตรเครดิต", "อื่นๆ".
+5. Sender & Receiver Bank: Use standard uppercase abbreviation (KBANK, SCB, BBL, TTB, KTB, BAY, GSB, TRUEMONEY, DIME, INNOVESTX, PROMPTPAY).
+6. Return ONLY the raw JSON object. Do not include markdown code fences or conversational text.
+
+User's Financial Accounts:
+${userAccountsContext}
+`;
+
+      const typhoonRes = await fetch(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: modelNameUsed,
+          messages: [
+            {
+              role: 'user',
+              content: [
+                { type: 'text', text: promptText.trim() },
+                {
+                  type: 'image_url',
+                  image_url: {
+                    url: `data:${mimeType};base64,${base64Data}`,
+                  },
+                },
+              ],
+            },
+          ],
+          max_tokens: 1000,
+          temperature: 0.1,
+        }),
+      });
+
+      if (!typhoonRes.ok) {
+        const errorText = await typhoonRes.text();
+        return NextResponse.json(
+          {
+            error: 'Typhoon OCR Scan Failed',
+            message: `Typhoon API returned status ${typhoonRes.status}: ${errorText}`,
+          },
+          { status: 502 }
+        );
+      }
+
+      const typhoonResult = await typhoonRes.json();
+      const rawContent = typhoonResult.choices?.[0]?.message?.content || '';
+
+      // Clean JSON extraction
+      let cleanedJson = rawContent.trim();
+      if (cleanedJson.includes('```')) {
+        cleanedJson = cleanedJson.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
+      }
+      const jsonMatch = cleanedJson.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        cleanedJson = jsonMatch[0];
+      }
+
+      try {
+        parsedSlip = JSON.parse(cleanedJson);
+      } catch (parseErr) {
+        console.error('Failed to parse Typhoon JSON output:', rawContent);
+        return NextResponse.json(
+          {
+            error: 'Typhoon OCR Output Parsing Error',
+            message: 'Typhoon OCR returned an unparseable response. The slip could not be processed.',
+            raw: rawContent,
+          },
+          { status: 502 }
+        );
+      }
+
+      usageData = typhoonResult.usage
+        ? {
+            model: modelNameUsed,
+            input_tokens: typhoonResult.usage.prompt_tokens,
+            output_tokens: typhoonResult.usage.completion_tokens,
+            total_tokens: typhoonResult.usage.total_tokens,
+          }
+        : null;
+    } else if (isCloudflare) {
       // --- Cloudflare Workers AI Flow ---
       const workerUrl = process.env.SLIP_SCANNER_WORKER_API_URL;
       if (!workerUrl) {
@@ -320,6 +456,28 @@ ${userAccountsContext}
     // --- Normalization & Sanitization ---
     if (parsedSlip.amount && typeof parsedSlip.amount === 'string') {
       parsedSlip.amount = parseFloat(parsedSlip.amount.replace(/,/g, '')) || 0;
+    } else if (typeof parsedSlip.amount === 'number') {
+      parsedSlip.amount = Math.abs(parsedSlip.amount);
+    }
+
+    // Clean HTML entities if any (e.g. &amp; -> &)
+    if (typeof parsedSlip.category === 'string') {
+      parsedSlip.category = parsedSlip.category.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').trim();
+    }
+    if (typeof parsedSlip.memo === 'string') {
+      parsedSlip.memo = parsedSlip.memo.replace(/&amp;/g, '&').trim();
+    }
+
+    // Convert Buddhist Era (พ.ศ.) year to Christian Era (ค.ศ.) if year > 2400
+    if (parsedSlip.transaction_date && typeof parsedSlip.transaction_date === 'string') {
+      parsedSlip.transaction_date = parsedSlip.transaction_date.replace(
+        /^(\d{4})([-\/.].*)/,
+        (_: string, y: string, rest: string) => {
+          const yr = parseInt(y, 10);
+          return yr > 2400 ? `${yr - 543}${rest}` : `${y}${rest}`;
+        }
+      );
+      parsedSlip.transaction_date = parsedSlip.transaction_date.replace(/\//g, '-');
     }
 
     if (parsedSlip.transaction_date && parsedSlip.transaction_time && !parsedSlip.transaction_date.includes('T')) {

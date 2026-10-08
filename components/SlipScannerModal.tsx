@@ -127,11 +127,18 @@ export interface ScanModelOption {
   id: string;
   name: string;
   badge: string;
-  provider: 'cloudflare' | 'google';
+  provider: 'cloudflare' | 'google' | 'typhoon';
   description?: string;
 }
 
 export const AVAILABLE_MODELS: ScanModelOption[] = [
+  {
+    id: 'typhoon-ocr',
+    name: 'Typhoon OCR 1.5 (SCB 10X)',
+    badge: 'Thai Specialist 🇹🇭 แนะนำ',
+    provider: 'typhoon',
+    description: 'SCB 10X โมเดล OCR ภาษาไทยเฉพาะทาง อ่านสลิปและใบเสร็จแม่นยำสูงสุด',
+  },
   {
     id: 'cloudflare-llama-3.2-11b-vision',
     name: 'Cloudflare Llama 3.2 Vision (11B)',
@@ -178,7 +185,7 @@ export default function SlipScannerModal({
   const [items, setItems] = useState<StagedSlipItem[]>([]);
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
-  const [selectedModel, setSelectedModel] = useState<string>('cloudflare-llama-3.2-11b-vision');
+  const [selectedModel, setSelectedModel] = useState<string>('typhoon-ocr');
 
   // View mode: 'cards' (stacked review cards - mobile optimized) vs 'table' (traditional spreadsheet)
   const [viewMode, setViewMode] = useState<'cards' | 'table'>('cards');
@@ -206,6 +213,7 @@ export default function SlipScannerModal({
   const [providerStatus, setProviderStatus] = useState<{
     cloudflare?: { configured: boolean; status: string; url?: string };
     gemini?: { configured: boolean };
+    typhoon?: { configured: boolean; models?: string[] };
   } | null>(null);
   const [isCheckingStatus, setIsCheckingStatus] = useState<boolean>(false);
   const [statusTooltip, setStatusTooltip] = useState<string | null>(null);
@@ -655,7 +663,7 @@ export default function SlipScannerModal({
                   <span>AI สแกนสลิปหลายรายการ (Bulk Scan & Staging)</span>
                 </h2>
                 <p className="text-[11px] sm:text-xs text-slate-500">
-                  รองรับ Cloudflare Workers AI (ฟรี) และ Google Gemini
+                  รองรับ Typhoon OCR (🇹🇭 แนะนำ), Cloudflare Workers AI (ฟรี) และ Google Gemini
                 </p>
               </div>
             </div>
@@ -673,7 +681,9 @@ export default function SlipScannerModal({
           <div className="flex items-center justify-between sm:justify-end gap-2 flex-wrap">
             {/* Model Selector Dropdown */}
             <div className="flex items-center gap-1.5 bg-white border border-slate-200/90 shadow-2xs rounded-xl px-2.5 py-1.5 flex-1 sm:flex-initial">
-              {isCfModel ? (
+              {activeModel.provider === 'typhoon' ? (
+                <span className="text-sm shrink-0 select-none">🇹🇭</span>
+              ) : isCfModel ? (
                 <Cloud className="w-3.5 h-3.5 text-sky-600 shrink-0" />
               ) : (
                 <Cpu className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
@@ -695,6 +705,13 @@ export default function SlipScannerModal({
                 className="bg-transparent text-xs font-semibold text-slate-800 focus:outline-none cursor-pointer pr-1 w-full sm:w-auto"
                 title="เลือกโมเดล AI สำหรับประมวลผลสลิป"
               >
+                <optgroup label="SCB 10X Typhoon OCR (เฉพาะทางไทย 🇹🇭)">
+                  {AVAILABLE_MODELS.filter((m) => m.provider === 'typhoon').map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name} ({m.badge})
+                    </option>
+                  ))}
+                </optgroup>
                 <optgroup label="Cloudflare Workers AI (ฟรี)">
                   {AVAILABLE_MODELS.filter((m) => m.provider === 'cloudflare').map((m) => (
                     <option key={m.id} value={m.id}>
@@ -722,6 +739,12 @@ export default function SlipScannerModal({
             >
               {isCheckingStatus ? (
                 <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-500" />
+              ) : activeModel.provider === 'typhoon' ? (
+                providerStatus?.typhoon?.configured ? (
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 ring-2 ring-emerald-200 shrink-0" />
+                ) : (
+                  <span className="w-2 h-2 rounded-full bg-amber-400 ring-2 ring-amber-200 shrink-0" />
+                )
               ) : isCfModel ? (
                 cfStatus === 'ok' ? (
                   <span className="w-2 h-2 rounded-full bg-emerald-500 ring-2 ring-emerald-200 shrink-0" />
@@ -738,6 +761,10 @@ export default function SlipScannerModal({
               <span className="hidden sm:inline">
                 {isCheckingStatus
                   ? 'กำลังเช็ค...'
+                  : activeModel.provider === 'typhoon'
+                  ? providerStatus?.typhoon?.configured
+                    ? 'Typhoon พร้อม'
+                    : 'เช็ค Typhoon'
                   : isCfModel
                   ? cfStatus === 'ok'
                     ? 'Worker พร้อม'
@@ -1033,12 +1060,16 @@ export default function SlipScannerModal({
                             {item.modelUsed && (
                               <span
                                 className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono ${
-                                  item.modelUsed.includes('cloudflare') || item.modelUsed.includes('@cf')
+                                  item.modelUsed.toLowerCase().includes('typhoon')
+                                    ? 'bg-amber-50 text-amber-800 border border-amber-200'
+                                    : item.modelUsed.includes('cloudflare') || item.modelUsed.includes('@cf')
                                     ? 'bg-sky-50 text-sky-700 border border-sky-200'
                                     : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                                 }`}
                               >
-                                {item.modelUsed.includes('cloudflare') || item.modelUsed.includes('@cf')
+                                {item.modelUsed.toLowerCase().includes('typhoon')
+                                  ? '🇹🇭 Typhoon'
+                                  : item.modelUsed.includes('cloudflare') || item.modelUsed.includes('@cf')
                                   ? '☁️ Workers AI'
                                   : '⚡ Gemini'}
                               </span>
@@ -1549,12 +1580,16 @@ export default function SlipScannerModal({
                                       <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
                                         <span
                                           className={`inline-flex items-center gap-1 px-1.5 py-0.2 rounded font-mono ${
-                                            item.modelUsed.includes('cloudflare') || item.modelUsed.includes('@cf')
+                                            item.modelUsed.toLowerCase().includes('typhoon')
+                                              ? 'bg-amber-50 text-amber-800 border border-amber-200'
+                                              : item.modelUsed.includes('cloudflare') || item.modelUsed.includes('@cf')
                                               ? 'bg-sky-50 text-sky-700 border border-sky-200'
                                               : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                                           }`}
                                         >
-                                          {item.modelUsed.includes('cloudflare') || item.modelUsed.includes('@cf')
+                                          {item.modelUsed.toLowerCase().includes('typhoon')
+                                            ? '🇹🇭 Typhoon'
+                                            : item.modelUsed.includes('cloudflare') || item.modelUsed.includes('@cf')
                                             ? '☁️ Workers AI'
                                             : '⚡ Gemini'}
                                         </span>
