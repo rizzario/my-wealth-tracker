@@ -90,10 +90,14 @@ Ownership column notes:
 | Column | Type | Notes |
 |---|---|---|
 | `id` | UUID, PK, FK → `auth.users(id)` ON DELETE CASCADE | also the owner column |
-| `full_name` | TEXT, nullable | |
-| `avatar_url` | TEXT, nullable | |
+| `full_name` | TEXT, nullable | combined display name |
+| `first_name` | TEXT, nullable | given name |
+| `last_name` | TEXT, nullable | surname |
+| `avatar_url` | TEXT, nullable | URL pointing to `avatars` bucket or OAuth picture |
+| `gender` | TEXT, nullable | 'male', 'female', 'other', 'unspecified' |
+| `age` | INTEGER, nullable | age in years (0-150) |
 | `preferred_currency` | VARCHAR(3), default `'THB'` | **not currently honoured** — the app hard-codes THB |
-| `updated_at` | TIMESTAMPTZ, default `now()` | |
+| `updated_at` | TIMESTAMPTZ, default `now()` | auto-updated on edit |
 
 ### 3.3 `portfolio_holdings`
 

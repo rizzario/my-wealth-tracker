@@ -163,7 +163,11 @@ create index IF not exists idx_holdings_broker on public.portfolio_holdings usin
 create table public.profiles (
   id uuid not null,
   full_name text null,
+  first_name text null,
+  last_name text null,
   avatar_url text null,
+  gender text null,
+  age integer null,
   preferred_currency character varying(3) null default 'THB'::character varying,
   updated_at timestamp with time zone null default now(),
   constraint profiles_pkey primary key (id),

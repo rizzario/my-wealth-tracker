@@ -23,6 +23,7 @@ import {
   ChevronDown,
   Check,
   BarChart3,
+  User,
 } from 'lucide-react';
 import PortfolioTable from '../components/PortfolioTable';
 import CashAndPVDTable from '../components/CashAndPvdSection';
@@ -33,6 +34,7 @@ import OverviewSection from '../components/OverviewSection';
 import PerformanceAnalyticsSection from '../components/PerformanceAnalyticsSection';
 import { useIdleTimer } from './hooks/useIdleTimer';
 import { calculateNetWorthSummary } from '@/lib/networth';
+import { UserProfile, getInitials } from '@/lib/profile';
 
 type TabKey = 'overview' | 'holdings' | 'trades' | 'analytics' | 'cash_pvd' | 'cashflow' | 'expenses';
 
@@ -139,6 +141,7 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState<TabKey>('overview');
   const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
   const [openDropdown, setOpenDropdown] = useState<'investment' | 'asset' | null>(null);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
 
   const desktopNavRef = useRef<HTMLElement>(null);
 
@@ -250,6 +253,35 @@ export default function Home() {
     // 5. ดึงภาระประจำ (Recurring Commitments)
     const { data: rcData } = await supabase.from('recurring_commitments').select('*');
     if (rcData) setRecurringCommitments(rcData);
+
+    // 6. ดึงข้อมูลโปรไฟล์ผู้ใช้ (User Profile สำหรับแสดง Avatar & ชื่อบน Header)
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (user) {
+      const { data: prof } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', user.id)
+        .maybeSingle();
+
+      if (prof) {
+        setUserProfile({ ...prof, email: user.email });
+      } else {
+        const rawMeta = user.user_metadata || {};
+        const fullName = rawMeta.full_name || rawMeta.name || user.email?.split('@')[0] || '';
+        setUserProfile({
+          id: user.id,
+          full_name: fullName,
+          first_name: rawMeta.first_name || fullName.split(' ')[0] || '',
+          last_name: rawMeta.last_name || '',
+          avatar_url: rawMeta.avatar_url || rawMeta.picture || null,
+          gender: null,
+          age: null,
+          email: user.email,
+        });
+      }
+    }
   }, [supabase]);
 
   useEffect(() => {
@@ -478,6 +510,29 @@ export default function Home() {
 
               <div className="h-5 w-[1px] bg-emerald-800" />
 
+              {/* Profile Avatar Button (Desktop) */}
+              <button
+                type="button"
+                onClick={() => router.push('/profile')}
+                className="flex items-center gap-2 p-1 pl-1.5 pr-2.5 rounded-xl bg-emerald-900/60 hover:bg-emerald-900 border border-emerald-800/80 hover:border-emerald-700 text-xs font-semibold text-emerald-100 transition-colors cursor-pointer group shadow-xs"
+                title="จัดการโปรไฟล์ส่วนตัว"
+              >
+                <div className="w-6 h-6 rounded-full overflow-hidden bg-emerald-800 border border-emerald-400/50 flex items-center justify-center shrink-0 text-[10px] font-bold text-white">
+                  {userProfile?.avatar_url ? (
+                    <img
+                      src={userProfile.avatar_url}
+                      alt="Avatar"
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <span>{getInitials(userProfile, userProfile?.email)}</span>
+                  )}
+                </div>
+                <span className="max-w-[100px] truncate group-hover:text-white">
+                  {userProfile?.first_name || userProfile?.full_name?.split(' ')[0] || 'โปรไฟล์'}
+                </span>
+              </button>
+
               <button
                 type="button"
                 onClick={handleSignOut}
@@ -489,8 +544,28 @@ export default function Home() {
               </button>
             </div>
 
-            {/* Mobile Actions: Compact Sign Out + Hamburger Menu Toggle (< md) */}
+            {/* Mobile Actions: Profile Avatar + Sign Out + Hamburger Menu Toggle (< md) */}
             <div className="flex md:hidden items-center space-x-1 shrink-0">
+              <button
+                type="button"
+                onClick={() => router.push('/profile')}
+                className="p-1 rounded-xl bg-emerald-900/70 border border-emerald-800/90 hover:border-emerald-600 transition cursor-pointer"
+                title="โปรไฟล์"
+                aria-label="โปรไฟล์"
+              >
+                <div className="w-6 h-6 rounded-full overflow-hidden bg-emerald-800 border border-emerald-400/50 flex items-center justify-center text-[10px] font-bold text-white">
+                  {userProfile?.avatar_url ? (
+                    <img
+                      src={userProfile.avatar_url}
+                      alt="Avatar"
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <span>{getInitials(userProfile, userProfile?.email)}</span>
+                  )}
+                </div>
+              </button>
+
               <button
                 type="button"
                 onClick={handleSignOut}
@@ -670,6 +745,39 @@ export default function Home() {
                   </div>
                   <p className={`text-xs mt-0.5 ${activeTab === 'expenses' ? 'text-emerald-100' : 'text-emerald-300/70'}`}>
                     บันทึกรายรับ-รายจ่ายประจำวัน และวิเคราะห์ค่าใช้จ่าย
+                  </p>
+                </div>
+              </button>
+            </div>
+
+            {/* Mobile Drawer Profile Link */}
+            <div className="pt-2 border-t border-emerald-900/80">
+              <button
+                type="button"
+                onClick={() => {
+                  setMobileMenuOpen(false);
+                  router.push('/profile');
+                }}
+                className="w-full flex items-center gap-3 p-2.5 rounded-xl bg-emerald-900/60 hover:bg-emerald-900 border border-emerald-800 text-left transition-colors cursor-pointer"
+              >
+                <div className="w-8 h-8 rounded-full overflow-hidden bg-emerald-800 border-2 border-emerald-400/60 flex items-center justify-center shrink-0 text-xs font-bold text-white shadow-xs">
+                  {userProfile?.avatar_url ? (
+                    <img src={userProfile.avatar_url} alt="Avatar" className="w-full h-full object-cover" />
+                  ) : (
+                    <span>{getInitials(userProfile, userProfile?.email)}</span>
+                  )}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-xs text-white truncate">
+                      {userProfile?.first_name || userProfile?.full_name || 'โปรไฟล์ส่วนตัว'}
+                    </span>
+                    <span className="text-[10px] text-emerald-300 bg-emerald-800/80 px-2 py-0.5 rounded-full">
+                      แก้ไข
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-emerald-300/80 truncate">
+                    {userProfile?.email || 'จัดการข้อมูลส่วนตัว & รูปภาพ'}
                   </p>
                 </div>
               </button>
