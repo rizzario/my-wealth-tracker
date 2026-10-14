@@ -489,34 +489,88 @@ export async function POST(req: NextRequest) {
 }
 
 /**
- * DELETE: Dismiss or delete an inbox slip item
+ * DELETE: Dismiss or delete inbox slip items (supports single & bulk)
  */
 export async function DELETE(req: NextRequest) {
   try {
     const auth = await authenticateRequest(req);
-    if (!auth.authenticated || !auth.user) {
+    if (!auth.authenticated) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     const { searchParams } = new URL(req.url);
-    const id = searchParams.get('id');
+    const ids: string[] = [];
 
-    if (!id) {
-      return NextResponse.json({ error: 'Missing slip id' }, { status: 400 });
+    const idParam = searchParams.get('id');
+    const idsParam = searchParams.get('ids');
+
+    if (idParam) {
+      ids.push(...idParam.split(',').map((s) => s.trim()).filter(Boolean));
+    }
+    if (idsParam) {
+      ids.push(...idsParam.split(',').map((s) => s.trim()).filter(Boolean));
     }
 
-    const { error } = await auth.supabase
-      .from('slip_inbox')
-      .update({ status: 'dismissed', updated_at: new Date().toISOString() })
-      .eq('id', id)
-      .eq('user_id', auth.user.id);
+    // Also check if ids are passed in the request body
+    if (ids.length === 0) {
+      try {
+        const body = await req.json();
+        if (body.id) {
+          ids.push(String(body.id).trim());
+        }
+        if (Array.isArray(body.ids)) {
+          ids.push(...body.ids.map((s: any) => String(s).trim()).filter(Boolean));
+        }
+      } catch {
+        // Body might be empty, that's fine
+      }
+    }
+
+    const validIds = Array.from(new Set(ids)).filter(
+      (id) => id && !id.startsWith('ephemeral_')
+    );
+
+    if (validIds.length === 0) {
+      return NextResponse.json({ error: 'Missing slip id or ids to delete' }, { status: 400 });
+    }
+
+    const isSoft =
+      searchParams.get('action') === 'dismiss' ||
+      searchParams.get('mode') === 'dismiss' ||
+      searchParams.get('soft') === 'true';
+
+    let error: any = null;
+
+    if (isSoft) {
+      // Soft-delete: update status to 'dismissed'
+      const { error: updateError } = await auth.supabase
+        .from('slip_inbox')
+        .update({ status: 'dismissed', updated_at: new Date().toISOString() })
+        .in('id', validIds);
+      error = updateError;
+    } else {
+      // Hard-delete: permanently remove from staging table
+      const { error: deleteError } = await auth.supabase
+        .from('slip_inbox')
+        .delete()
+        .in('id', validIds);
+      error = deleteError;
+    }
 
     if (error) {
+      console.error('Failed to delete/dismiss slip_inbox items:', error);
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    return NextResponse.json({ status: 'success', message: 'Item dismissed' });
+    return NextResponse.json({
+      status: 'success',
+      message: isSoft
+        ? `Successfully dismissed ${validIds.length} slip(s)`
+        : `Successfully deleted ${validIds.length} slip(s)`,
+      count: validIds.length,
+    });
   } catch (err: any) {
+    console.error('Error in DELETE /api/slip-inbox:', err);
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
 }

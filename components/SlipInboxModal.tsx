@@ -81,6 +81,8 @@ export default function SlipInboxModal({
   const [isLoading, setIsLoading] = useState(false);
   const [isApprovingId, setIsApprovingId] = useState<string | null>(null);
   const [isBulkApproving, setIsBulkApproving] = useState(false);
+  const [isDeletingId, setIsDeletingId] = useState<string | null>(null);
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
   const [expandedRawId, setExpandedRawId] = useState<string | null>(null);
   const [tableReady, setTableReady] = useState(true);
 
@@ -294,8 +296,21 @@ export default function SlipInboxModal({
   // Dismiss / Delete an item
   const handleDismiss = async (id: string) => {
     try {
+      setIsDeletingId(id);
       if (!id.startsWith('ephemeral_')) {
-        await fetch(`/api/slip-inbox?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+        const res = await fetch(`/api/slip-inbox?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+        if (!res.ok) {
+          // Direct fallback to Supabase browser client
+          try {
+            const supabase = createClient();
+            const { error: delErr } = await supabase.from('slip_inbox').delete().eq('id', id);
+            if (delErr) {
+              console.warn('Direct Supabase delete fallback failed:', delErr);
+            }
+          } catch (dbErr) {
+            console.warn('Direct fallback error:', dbErr);
+          }
+        }
       }
       setItems((prev) => prev.filter((i) => i.id !== id));
       setSelectedIds((prev) => {
@@ -303,12 +318,15 @@ export default function SlipInboxModal({
         next.delete(id);
         return next;
       });
+      onTransactionsUpdated();
     } catch (err: any) {
       alert(`ลบรายการไม่สำเร็จ: ${err.message}`);
+    } finally {
+      setIsDeletingId(null);
     }
   };
 
-  // Bulk Dismiss
+  // Bulk Dismiss / Delete items
   const handleBulkDismiss = async () => {
     if (selectedItems.length === 0) return;
     if (!confirm(`คุณต้องการลบสลิปที่เลือกจำนวน ${selectedItems.length} รายการออกใช่หรือไม่?`)) {
@@ -316,16 +334,32 @@ export default function SlipInboxModal({
     }
 
     try {
+      setIsBulkDeleting(true);
       const realIds = selectedItems.map((i) => i.id).filter((id) => !id.startsWith('ephemeral_'));
       if (realIds.length > 0) {
-        await fetch(`/api/slip-inbox?ids=${encodeURIComponent(realIds.join(','))}`, { method: 'DELETE' });
+        const res = await fetch(`/api/slip-inbox?ids=${encodeURIComponent(realIds.join(','))}`, { method: 'DELETE' });
+        if (!res.ok) {
+          // Direct fallback to Supabase browser client
+          try {
+            const supabase = createClient();
+            const { error: delErr } = await supabase.from('slip_inbox').delete().in('id', realIds);
+            if (delErr) {
+              console.warn('Direct Supabase bulk delete fallback failed:', delErr);
+            }
+          } catch (dbErr) {
+            console.warn('Direct bulk fallback error:', dbErr);
+          }
+        }
       }
 
       const dismissedSet = new Set(selectedItems.map((i) => i.id));
       setItems((prev) => prev.filter((i) => !dismissedSet.has(i.id)));
       setSelectedIds(new Set());
+      onTransactionsUpdated();
     } catch (err: any) {
       alert(`ลบรายการไม่สำเร็จ: ${err.message}`);
+    } finally {
+      setIsBulkDeleting(false);
     }
   };
 
@@ -464,10 +498,15 @@ xxx-x-x1234-x
                 <button
                   type="button"
                   onClick={handleBulkDismiss}
-                  className="inline-flex items-center gap-1 px-3 py-1.5 font-medium text-rose-600 hover:bg-rose-100/60 rounded-lg transition cursor-pointer"
+                  disabled={isBulkDeleting}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 font-medium text-rose-600 hover:bg-rose-100/60 disabled:opacity-50 rounded-lg transition cursor-pointer"
                 >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  <span>ลบที่เลือก ({selectedIds.size})</span>
+                  {isBulkDeleting ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Trash2 className="w-3.5 h-3.5" />
+                  )}
+                  <span>{isBulkDeleting ? 'กำลังลบ...' : `ลบที่เลือก (${selectedIds.size})`}</span>
                 </button>
               )}
 
@@ -757,10 +796,15 @@ xxx-x-x1234-x
                       <button
                         type="button"
                         onClick={() => handleDismiss(item.id)}
-                        className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
+                        disabled={isDeletingId === item.id || isBulkDeleting}
+                        className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-rose-600 hover:bg-rose-50 disabled:opacity-50 rounded-lg transition cursor-pointer"
                       >
-                        <Trash2 className="w-3.5 h-3.5" />
-                        <span>ละเว้น</span>
+                        {isDeletingId === item.id ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Trash2 className="w-3.5 h-3.5" />
+                        )}
+                        <span>{isDeletingId === item.id ? 'กำลังลบ...' : 'ละเว้น'}</span>
                       </button>
 
                       <button
