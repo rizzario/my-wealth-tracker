@@ -333,6 +333,35 @@ Commitments represent future obligations. To preserve ledger integrity and preve
 
 ---
 
+### 3.12 `slip_inbox`
+
+Staging buffer table for incoming slips from external sources (iOS Shortcuts, mobile app / Expo Go, or OCR tuner) before being committed to `expense_income_transactions`.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | UUID, PK, default `gen_random_uuid()` | |
+| `user_id` | UUID, nullable, default `auth.uid()`, FK → `auth.users(id)` CASCADE | |
+| `source` | VARCHAR(50), default `'iphone_shortcut'` | `'iphone_shortcut'` \| `'expo_app'` \| `'manual_ocr'` \| `'regex_tuner'` |
+| `raw_text` | TEXT, nullable | Raw unparsed OCR text from device |
+| `amount` | NUMERIC(12,2), nullable | Extracted amount |
+| `transaction_date` | TIMESTAMPTZ, default `now()` | Standardized ISO timestamp (BE years converted to CE) |
+| `type` | VARCHAR(10), default `'EXPENSE'` | `'EXPENSE'` \| `'INCOME'` \| `'TRANSFER'` |
+| `category` | VARCHAR(50), default `'อื่นๆ'` | Auto-classified category based on keywords |
+| `matched_account_id` | UUID, nullable, FK → `financial_accounts(id)` | Matched source account |
+| `matched_to_account_id` | UUID, nullable, FK → `financial_accounts(id)` | Matched destination account (transfers/credit card) |
+| `sender_bank` / `receiver_bank` | VARCHAR(30), nullable | KBANK, SCB, BBL, BAY, KTB, TTB, GSB, TRUEMONEY, PROMPTPAY |
+| `sender_account_masked` / `receiver_account_masked` | VARCHAR(50), nullable | Masked digits |
+| `sender_name` / `receiver_name` | TEXT, nullable | |
+| `reference_number` | VARCHAR(100), nullable | Transaction reference code |
+| `memo` | TEXT, nullable | Memo / บันทึกช่วยจำ |
+| `confidence_score` | NUMERIC(3,2), default `1.0` | Heuristic confidence |
+| `status` | VARCHAR(20), default `'pending'` | `'pending'` \| `'approved'` \| `'dismissed'` |
+| `created_at` / `updated_at` | TIMESTAMPTZ, default `now()` | |
+
+**Buffer Guard Principle**: External clients push to `slip_inbox` (or `/api/slip-inbox`). The row **does not affect balances** until the user reviews and clicks `[⚡ ยืนยันบันทึกลงรายจ่าย]`. This protects financial account balances from optical recognition errors.
+
+---
+
 ## 4. Architecture & Data Flow
 
 ### 4.1 SSR session guard — `middleware.ts`
@@ -393,7 +422,11 @@ Scheduled by `vercel.json` Cron:
 | `components/CashFlowSection.tsx` | Client | Debt & cash flow manager: operating accounts, credit cards, projected statement balances, pending commitments accordion, one-click reconciliation (`[⚡ บันทึกตัดเงินจริง]`), and recurring commitments CRUD modal. |
 | `components/ExpenseIncomeSection.tsx` | Client | Daily income, expense, and internal transfer tracking with category breakdowns. |
 | `components/SlipScannerModal.tsx` | Client | AI slip scanner modal powered by SCB 10X Typhoon OCR (`typhoon-ocr`), Cloudflare Workers AI (Llama 3.2 Vision), and Google Gemini: client-side image downscaling, multi-image bulk scan, drag & drop, clipboard paste (Ctrl+V), 1-click test with mock slip, stacked review cards & table view toggle, auto bank account matching, and historical slip toggle. |
+| `components/SlipInboxModal.tsx` | Client | Staging inbox review modal for incoming slips from iPhone Shortcuts and mobile apps: interactive field editing, bank account matching, raw OCR text inspection, and single/bulk approval. |
+| `components/SlipRegexTunerModal.tsx` | Client | Interactive playground and developer tool to test, tune, and debug Regular Expressions against raw Thai bank slip OCR text in real time with rule-matching traces. |
 | `app/api/scan-slip/route.ts` | Route Handler | Multi-provider endpoint supporting SCB 10X OpenTyphoon (`TYPHOON_API_KEY`), Cloudflare Workers AI (`SLIP_SCANNER_WORKER_API_URL`), and Google Gemini (`@google/genai`) with structured Thai bank slip extraction, Buddhist -> Christian Era conversion, smart account matching against `financial_accounts`, and healthcheck GET endpoint. |
+| `app/api/slip-inbox/route.ts` | Route Handler | Ingestion and staging endpoint for external clients (iPhone Shortcuts, Expo Go). Accepts raw OCR text or images via `Authorization: Bearer <token>`, runs `parseThaiBankSlipOcr()`, and handles user approvals into `expense_income_transactions`. |
+| `lib/slip-regex-parser.ts` | Shared Utility | Zero-dependency, portable regex parser for Thai bank transfer slips (KBank, SCB, BBL, Krungsri, KTB, TTB, GSB, TrueMoney, PromptPay): BE->CE year conversion, Thai month parsing, bank detection, and auto category mapping. 100% reusable in Expo Go. |
 | `lib/performance.ts` | Shared Utility | Pure calculation engine for trade ledger: Realized P&L (FIFO/Average Cost), broker win rates, profit factor, fee totals, and Top Gainer/Loser ranking. |
 | `lib/recurringCommitments.ts` | Shared Utility | Pure functions for recurring commitments eligibility, due-date calculations, confirmed transaction matching, and pending liability calculations. |
 | `lib/networth.ts` | Shared Utility | Canonical net worth calculation helper (§3.8). |

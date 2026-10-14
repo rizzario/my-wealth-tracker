@@ -32,9 +32,13 @@ import {
   RotateCcw,
   ChevronDown,
   Sparkles,
+  Inbox,
+  Sliders,
 } from 'lucide-react';
 import { getCurrencySymbol } from '@/lib/currency';
 import SlipScannerModal from './SlipScannerModal';
+import SlipInboxModal from './SlipInboxModal';
+import SlipRegexTunerModal from './SlipRegexTunerModal';
 
 // ค่าความกว้างเริ่มต้นของแต่ละคอลัมน์ (px)
 export const DEFAULT_COLUMN_WIDTHS = {
@@ -230,8 +234,11 @@ export default function ExpenseIncomeSection({
   const [editIsHistorical, setEditIsHistorical] = useState(false);
   const [submittingEdit, setSubmittingEdit] = useState(false);
 
-  // AI Slip Scanner Modal State
+  // AI Slip Scanner & Inbox Modal States
   const [isSlipScannerOpen, setIsSlipScannerOpen] = useState(false);
+  const [isSlipInboxOpen, setIsSlipInboxOpen] = useState(false);
+  const [isRegexTunerOpen, setIsRegexTunerOpen] = useState(false);
+  const [inboxPendingCount, setInboxPendingCount] = useState<number>(0);
 
   // Pagination State
   const [currentPage, setCurrentPage] = useState(1);
@@ -391,10 +398,22 @@ export default function ExpenseIncomeSection({
     }
   };
 
+  const fetchInboxCount = async () => {
+    try {
+      const res = await fetch('/api/slip-inbox');
+      if (res.ok) {
+        const json = await res.json();
+        setInboxPendingCount((json.data || []).length);
+      }
+    } catch {
+      // silently ignore
+    }
+  };
+
   useEffect(() => {
     const initLoad = async () => {
       setLoading(true);
-      await Promise.all([fetchAccounts(), fetchTransactions()]);
+      await Promise.all([fetchAccounts(), fetchTransactions(), fetchInboxCount()]);
       setLoading(false);
     };
     initLoad();
@@ -919,10 +938,41 @@ export default function ExpenseIncomeSection({
               type="button"
               onClick={() => setIsSlipScannerOpen(true)}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300/80 rounded-xl transition shadow-xs cursor-pointer"
-              title="สแกนสลิปโอนเงินด้วย Gemini AI"
+              title="สแกนสลิปโอนเงินด้วย Typhoon / Cloudflare / Gemini AI"
             >
               <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
               <span>AI สแกนสลิป</span>
+            </button>
+
+            {/* ปุ่ม กล่องสลิป (Slip Inbox) */}
+            <button
+              type="button"
+              onClick={() => setIsSlipInboxOpen(true)}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-xl border transition shadow-xs cursor-pointer relative ${
+                inboxPendingCount > 0
+                  ? 'text-violet-900 bg-violet-100/90 border-violet-300 hover:bg-violet-200'
+                  : 'text-violet-800 bg-violet-50 hover:bg-violet-100 border-violet-200'
+              }`}
+              title="กล่องสลิปรอตรวจจาก iPhone Shortcut หรือ App"
+            >
+              <Inbox className="w-3.5 h-3.5 text-violet-600" />
+              <span>กล่องสลิป</span>
+              {inboxPendingCount > 0 && (
+                <span className="px-1.5 py-0.2 text-[10px] font-bold rounded-full bg-violet-600 text-white animate-pulse">
+                  {inboxPendingCount}
+                </span>
+              )}
+            </button>
+
+            {/* ปุ่ม จูน Regex OCR */}
+            <button
+              type="button"
+              onClick={() => setIsRegexTunerOpen(true)}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl transition shadow-xs cursor-pointer"
+              title="ทดสอบและปรับแต่ง Regular Expression ของสลิปธนาคาร"
+            >
+              <Sliders className="w-3.5 h-3.5 text-slate-500" />
+              <span className="hidden sm:inline">จูน Regex</span>
             </button>
 
             {/* ปุ่มพับ/เปิดฟอร์มบันทึก */}
@@ -936,6 +986,33 @@ export default function ExpenseIncomeSection({
             </button>
           </div>
         </div>
+
+        {/* แจ้งเตือนสลิปที่รอตรวจทานจาก iPhone Shortcut (Pending Slip Banner) */}
+        {inboxPendingCount > 0 && (
+          <div className="bg-gradient-to-r from-violet-50 via-purple-50 to-indigo-50 border border-violet-200 rounded-2xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs animate-in fade-in">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-xl bg-violet-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                <Inbox className="w-4 h-4" />
+              </div>
+              <div>
+                <div className="text-xs font-bold text-violet-900 flex items-center gap-1.5">
+                  <span>มี {inboxPendingCount} สลิปใหม่รอการตรวจสอบจาก iPhone Shortcut</span>
+                  <span className="inline-block w-2 h-2 rounded-full bg-violet-500 animate-pulse" />
+                </div>
+                <p className="text-[11px] text-violet-700">
+                  สลิปถูกสกัดข้อมูลด้วย Regex แล้ว ตรวจทานยอดเงินและหมวดหมู่ก่อนยืนยันลงตารางรายจ่าย
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsSlipInboxOpen(true)}
+              className="px-3.5 py-1.5 bg-violet-600 hover:bg-violet-700 text-white text-xs font-bold rounded-xl transition shadow-xs shrink-0 cursor-pointer text-center"
+            >
+              ตรวจทานและยืนยัน ({inboxPendingCount})
+            </button>
+          </div>
+        )}
 
         {/* แถบเลือกช่วงเวลา (Period Filter Bar) */}
         <div className="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3">
@@ -2065,6 +2142,39 @@ export default function ExpenseIncomeSection({
         expenseCategories={POPULAR_EXPENSE_CATEGORIES}
         incomeCategories={POPULAR_INCOME_CATEGORIES}
         transferCategories={POPULAR_TRANSFER_CATEGORIES}
+      />
+
+      {/* Slip Staging Inbox Modal (iPhone Shortcuts & Mobile Ingestion) */}
+      <SlipInboxModal
+        isOpen={isSlipInboxOpen}
+        onClose={() => {
+          setIsSlipInboxOpen(false);
+          fetchInboxCount();
+        }}
+        accounts={accounts}
+        onTransactionsUpdated={async () => {
+          await fetchTransactions();
+          await fetchAccounts();
+          await fetchInboxCount();
+          onTransactionsUpdated?.();
+          onCashFlowUpdated?.();
+        }}
+        expenseCategories={POPULAR_EXPENSE_CATEGORIES}
+        incomeCategories={POPULAR_INCOME_CATEGORIES}
+        transferCategories={POPULAR_TRANSFER_CATEGORIES}
+        onOpenRegexTuner={() => setIsRegexTunerOpen(true)}
+      />
+
+      {/* Slip Regex Tuner & Simulator Modal */}
+      <SlipRegexTunerModal
+        isOpen={isRegexTunerOpen}
+        onClose={() => {
+          setIsRegexTunerOpen(false);
+          fetchInboxCount();
+        }}
+        onSlipStaged={() => {
+          fetchInboxCount();
+        }}
       />
     </div>
   );
