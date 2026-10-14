@@ -156,6 +156,7 @@ export default function Home() {
   const [allTransactions, setAllTransactions] = useState<any[]>([]);
   const [recurringCommitments, setRecurringCommitments] = useState<any[]>([]);
   const [hideValues, setHideValues] = useState<boolean>(false);
+  const [pendingSlipCount, setPendingSlipCount] = useState<number>(0);
 
   // Close desktop dropdown and mobile drawer on Escape key or click outside
   useEffect(() => {
@@ -281,6 +282,17 @@ export default function Home() {
           email: user.email,
         });
       }
+    }
+
+    // 7. ดึงจำนวนสลิปรอตรวจจาก iPhone Shortcut
+    try {
+      const res = await fetch('/api/slip-inbox');
+      if (res.ok) {
+        const json = await res.json();
+        setPendingSlipCount((json.data || []).length);
+      }
+    } catch {
+      // ignore
     }
   }, [supabase]);
 
@@ -505,6 +517,11 @@ export default function Home() {
                 >
                   <Receipt className="w-3.5 h-3.5" />
                   <span>รับ-จ่าย & รายงาน</span>
+                  {pendingSlipCount > 0 && (
+                    <span className="px-1.5 py-0.2 text-[10px] font-bold rounded-full bg-violet-400 text-slate-950 animate-pulse">
+                      {pendingSlipCount}
+                    </span>
+                  )}
                 </button>
               </nav>
 
@@ -738,7 +755,14 @@ export default function Home() {
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center justify-between">
-                    <span className="font-semibold text-sm">รับ-จ่าย & รายงาน</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-semibold text-sm">รับ-จ่าย & รายงาน</span>
+                      {pendingSlipCount > 0 && (
+                        <span className="text-[10px] bg-violet-400 text-slate-950 px-1.5 py-0.2 rounded-full font-bold animate-pulse">
+                          รอตรวจ {pendingSlipCount}
+                        </span>
+                      )}
+                    </div>
                     {activeTab === 'expenses' && (
                       <span className="text-[10px] bg-white/20 px-1.5 py-0.5 rounded-full font-medium">ปัจจุบัน</span>
                     )}
@@ -887,6 +911,33 @@ export default function Home() {
             </span>
           </div>
         </section>
+
+        {/* แจ้งเตือนสลิปรอตรวจจาก iPhone Shortcut เมื่ออยู่แท็บอื่น */}
+        {pendingSlipCount > 0 && activeTab !== 'expenses' && (
+          <div className="mb-6 bg-gradient-to-r from-violet-600 via-indigo-600 to-purple-600 rounded-2xl p-4 text-white shadow-lg flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center shrink-0 backdrop-blur-xs">
+                <Receipt className="w-5 h-5 text-white" />
+              </div>
+              <div>
+                <div className="text-sm font-bold flex items-center gap-2">
+                  <span>มี {pendingSlipCount} สลิปใหม่รอตรวจทาน (จาก iPhone Shortcut)</span>
+                  <span className="w-2 h-2 rounded-full bg-amber-300 animate-ping" />
+                </div>
+                <p className="text-xs text-violet-100">
+                  สลิปถูกสกัดข้อมูลและพักไว้ใน Inbox ตรวจทานยอดเงินและหมวดหมู่ก่อนยืนยันลงบัญชีจริง
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setActiveTab('expenses')}
+              className="px-4 py-2 bg-white text-violet-900 font-bold text-xs rounded-xl hover:bg-violet-50 transition shadow-sm shrink-0 cursor-pointer text-center"
+            >
+              เปิดดูและยืนยันสลิป ({pendingSlipCount}) →
+            </button>
+          </div>
+        )}
 
         {/* Tab 1: Overview (สัดส่วนสินทรัพย์ Port Ratio, สรุปรายรับ-จ่ายประจำเดือน, และรายการล่าสุด) */}
         {activeTab === 'overview' && (

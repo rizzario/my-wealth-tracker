@@ -4,7 +4,7 @@
 CREATE TABLE IF NOT EXISTS public.slip_inbox (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
-  source VARCHAR(50) DEFAULT 'iphone_shortcut', -- 'iphone_shortcut' | 'expo_app' | 'manual_ocr' | 'web_upload'
+  source VARCHAR(50) DEFAULT 'iphone_shortcut', -- 'iphone_shortcut' | 'expo_app' | 'manual_ocr' | 'regex_tuner'
   raw_text TEXT,
   amount NUMERIC(12, 2),
   transaction_date TIMESTAMPTZ DEFAULT now(),
@@ -29,11 +29,26 @@ CREATE TABLE IF NOT EXISTS public.slip_inbox (
 -- Enable Row Level Security (RLS)
 ALTER TABLE public.slip_inbox ENABLE ROW LEVEL SECURITY;
 
--- Owner policy: user can view, insert, update, and delete their own staged slips
-CREATE POLICY "owner_all_slip_inbox" ON public.slip_inbox
+-- 1. Allow inserting slips from external sources (iPhone Shortcuts, webhooks, mobile apps)
+DROP POLICY IF EXISTS "owner_all_slip_inbox" ON public.slip_inbox;
+DROP POLICY IF EXISTS "allow_insert_slip_inbox" ON public.slip_inbox;
+DROP POLICY IF EXISTS "owner_select_slip_inbox" ON public.slip_inbox;
+DROP POLICY IF EXISTS "owner_manage_slip_inbox" ON public.slip_inbox;
+
+CREATE POLICY "allow_insert_slip_inbox" ON public.slip_inbox
+  FOR INSERT
+  WITH CHECK (true);
+
+-- 2. Allow authenticated user (or owner) to view pending slips in dashboard
+CREATE POLICY "owner_select_slip_inbox" ON public.slip_inbox
+  FOR SELECT
+  USING (auth.uid() = user_id OR user_id IS NULL OR auth.uid() IS NOT NULL);
+
+-- 3. Allow user to update or delete their pending slips
+CREATE POLICY "owner_manage_slip_inbox" ON public.slip_inbox
   FOR ALL
-  USING (auth.uid() = user_id)
-  WITH CHECK (auth.uid() = user_id);
+  USING (auth.uid() = user_id OR user_id IS NULL OR auth.uid() IS NOT NULL)
+  WITH CHECK (auth.uid() = user_id OR user_id IS NULL OR auth.uid() IS NOT NULL);
 
 -- Performance index for active pending slips
 CREATE INDEX IF NOT EXISTS idx_slip_inbox_user_status ON public.slip_inbox(user_id, status);

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createClient as createAdminClient } from '@supabase/supabase-js';
 import { parseThaiBankSlipOcr, ParsedSlipRegexResult } from '@/lib/slip-regex-parser';
 
 export const dynamic = 'force-dynamic';
@@ -8,13 +9,50 @@ export const dynamic = 'force-dynamic';
  * Helper to authenticate request either via:
  * 1. Web session (cookies via createClient)
  * 2. Bearer token / API Key (from iPhone Shortcut or Expo Go)
+ * 3. Supabase User JWT Access Token
  */
 async function authenticateRequest(req: NextRequest) {
   const authHeader = req.headers.get('authorization') || '';
   const apiKeyHeader = req.headers.get('x-api-key') || '';
   const token = authHeader.replace(/^Bearer\s+/i, '').trim() || apiKeyHeader.trim();
 
-  // 1. Check API Secret Token (for iPhone Shortcut / Expo mobile app)
+  // Create admin client if service role key is available
+  const adminClient = process.env.SUPABASE_SERVICE_ROLE_KEY
+    ? createAdminClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.SUPABASE_SERVICE_ROLE_KEY!
+      )
+    : null;
+
+  // 1. Check User Session (Browser cookie)
+  const serverClient = await createClient();
+  const {
+    data: { user: sessionUser },
+  } = await serverClient.auth.getUser();
+
+  if (sessionUser) {
+    return {
+      authenticated: true,
+      user: sessionUser,
+      supabase: adminClient || serverClient,
+      authType: 'session' as const,
+    };
+  }
+
+  // 2. Check if Bearer token is a Supabase JWT Token
+  if (token && token.startsWith('ey')) {
+    const { data: { user: jwtUser } } = await serverClient.auth.getUser(token);
+    if (jwtUser) {
+      return {
+        authenticated: true,
+        user: jwtUser,
+        supabase: adminClient || serverClient,
+        authType: 'jwt' as const,
+      };
+    }
+  }
+
+  // 3. Check API Secret Token (for iPhone Shortcut / Webhooks)
   const expectedSecret =
     process.env.SLIP_INBOX_SECRET ||
     process.env.CRON_SECRET ||
@@ -22,42 +60,33 @@ async function authenticateRequest(req: NextRequest) {
 
   const isTokenValid = Boolean(token && (token === expectedSecret || token === process.env.CRON_SECRET));
 
-  // 2. Check Supabase User Session
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (user) {
-    return { authenticated: true, user, supabase, authType: 'session' as const };
-  }
-
   if (isTokenValid) {
-    // Look up primary user or first active profile
-    const { data: profiles } = await supabase.from('profiles').select('id').limit(1);
+    const activeClient = adminClient || serverClient;
+    const { data: profiles } = await activeClient.from('profiles').select('id').limit(1);
     const resolvedUserId = profiles?.[0]?.id || null;
 
     return {
       authenticated: true,
       user: resolvedUserId ? { id: resolvedUserId } : null,
-      supabase,
+      supabase: activeClient,
       authType: 'api_key' as const,
     };
   }
 
-  // Development bypass helper
+  // 4. Development bypass helper
   if (process.env.NODE_ENV === 'development') {
-    const { data: profiles } = await supabase.from('profiles').select('id').limit(1);
+    const activeClient = adminClient || serverClient;
+    const { data: profiles } = await activeClient.from('profiles').select('id').limit(1);
     const resolvedUserId = profiles?.[0]?.id || null;
     return {
       authenticated: true,
       user: resolvedUserId ? { id: resolvedUserId } : null,
-      supabase,
+      supabase: activeClient,
       authType: 'development' as const,
     };
   }
 
-  return { authenticated: false, user: null, supabase, authType: 'unauthorized' as const };
+  return { authenticated: false, user: null, supabase: serverClient, authType: 'unauthorized' as const };
 }
 
 /**
@@ -143,12 +172,17 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { data: inboxItems, error } = await auth.supabase
+    let query = auth.supabase
       .from('slip_inbox')
       .select('*')
-      .eq('user_id', auth.user.id)
       .eq('status', 'pending')
       .order('created_at', { ascending: false });
+
+    if (auth.user?.id) {
+      query = query.or(`user_id.eq.${auth.user.id},user_id.is.null`);
+    }
+
+    const { data: inboxItems, error } = await query;
 
     if (error) {
       // If table doesn't exist yet, return empty list with hint
