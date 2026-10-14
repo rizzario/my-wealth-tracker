@@ -400,11 +400,25 @@ export default function ExpenseIncomeSection({
 
   const fetchInboxCount = async () => {
     try {
+      let count = 0;
       const res = await fetch('/api/slip-inbox');
       if (res.ok) {
         const json = await res.json();
-        setInboxPendingCount((json.data || []).length);
+        count = (json.data || []).length;
       }
+      if (count === 0) {
+        try {
+          const supabase = createClient();
+          const { data: directData } = await supabase
+            .from('slip_inbox')
+            .select('id')
+            .ilike('status', 'pending');
+          count = directData?.length || 0;
+        } catch {
+          // ignore
+        }
+      }
+      setInboxPendingCount(count);
     } catch {
       // silently ignore
     }
@@ -417,6 +431,12 @@ export default function ExpenseIncomeSection({
       setLoading(false);
     };
     initLoad();
+
+    const handleFocus = () => {
+      fetchInboxCount();
+    };
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
   }, []);
 
   // ดึงหมวดหมู่ยอดนิยมตามประเภทรายการ (พร้อมรวบรวมหมวดหมู่ที่ผู้ใช้เคยบันทึกไว้ในอดีต)

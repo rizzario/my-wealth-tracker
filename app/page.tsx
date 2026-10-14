@@ -286,11 +286,24 @@ export default function Home() {
 
     // 7. ดึงจำนวนสลิปรอตรวจจาก iPhone Shortcut
     try {
+      let count = 0;
       const res = await fetch('/api/slip-inbox');
       if (res.ok) {
         const json = await res.json();
-        setPendingSlipCount((json.data || []).length);
+        count = (json.data || []).length;
       }
+      if (count === 0) {
+        try {
+          const { data: directData } = await supabase
+            .from('slip_inbox')
+            .select('id')
+            .ilike('status', 'pending');
+          count = directData?.length || 0;
+        } catch {
+          // ignore
+        }
+      }
+      setPendingSlipCount(count);
     } catch {
       // ignore
     }
@@ -298,6 +311,12 @@ export default function Home() {
 
   useEffect(() => {
     fetchAllOverviewData();
+
+    const handleFocus = () => {
+      fetchAllOverviewData();
+    };
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
   }, [fetchAllOverviewData]);
 
   // คำนวณตัวเลขสรุปความมั่งคั่งตามสูตร Canonical Formula (AGENTS.md §3.8)

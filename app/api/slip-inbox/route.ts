@@ -168,19 +168,16 @@ async function matchAccounts(supabase: any, userId: string | null, slip: ParsedS
 export async function GET(req: NextRequest) {
   try {
     const auth = await authenticateRequest(req);
-    if (!auth.authenticated || !auth.user) {
+    if (!auth.authenticated) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    // Query pending slips (case-insensitive for 'pending' / 'Pending')
     let query = auth.supabase
       .from('slip_inbox')
       .select('*')
-      .eq('status', 'pending')
+      .ilike('status', 'pending')
       .order('created_at', { ascending: false });
-
-    if (auth.user?.id) {
-      query = query.or(`user_id.eq.${auth.user.id},user_id.is.null`);
-    }
 
     const { data: inboxItems, error } = await query;
 
@@ -228,7 +225,75 @@ export async function POST(req: NextRequest) {
 
     const body = await req.json().catch(() => ({}));
 
-    // Action 1: Approve an inbox item into expense_income_transactions
+    // Action 1: Bulk Approve multiple inbox items into expense_income_transactions
+    if (body.action === 'approve_bulk' || (body.action === 'approve' && Array.isArray(body.items))) {
+      const itemsToApprove = body.items || [];
+      if (itemsToApprove.length === 0) {
+        return NextResponse.json({ error: 'No items provided to approve' }, { status: 400 });
+      }
+
+      // Validate items
+      for (const item of itemsToApprove) {
+        if (!item.amount || parseFloat(item.amount) <= 0) {
+          return NextResponse.json(
+            { error: `Item with amount ${item.amount} must be greater than 0` },
+            { status: 400 }
+          );
+        }
+        if (item.type === 'TRANSFER' && (!item.matched_account_id || !item.matched_to_account_id)) {
+          return NextResponse.json(
+            { error: `Transfer of ฿${item.amount} requires both source and destination accounts` },
+            { status: 400 }
+          );
+        }
+      }
+
+      const payloads = itemsToApprove.map((item: any) => ({
+        user_id: auth.user?.id || null,
+        transaction_date: item.transaction_date || new Date().toISOString(),
+        type: item.type || 'EXPENSE',
+        transaction_type: (item.type || 'EXPENSE').toLowerCase(),
+        category: (item.category || 'อื่นๆ').trim(),
+        amount: parseFloat(item.amount) || 0,
+        account_id: item.matched_account_id || item.account_id || null,
+        to_account_id: item.type === 'TRANSFER' ? item.matched_to_account_id || item.to_account_id || null : null,
+        note: item.memo || item.note ? (item.memo || item.note).trim() : null,
+        is_historical: Boolean(item.is_historical),
+      }));
+
+      const { data: insertedTxns, error: insertError } = await auth.supabase
+        .from('expense_income_transactions')
+        .insert(payloads)
+        .select();
+
+      if (insertError) {
+        return NextResponse.json(
+          { error: 'Failed to insert transactions', details: insertError.message },
+          { status: 500 }
+        );
+      }
+
+      // Mark slip_inbox items as approved
+      const idsToMark = itemsToApprove
+        .map((i: any) => i.id)
+        .filter((id: string) => id && !id.startsWith('ephemeral_'));
+
+      if (idsToMark.length > 0) {
+        await auth.supabase
+          .from('slip_inbox')
+          .update({ status: 'approved', updated_at: new Date().toISOString() })
+          .in('id', idsToMark);
+      }
+
+      return NextResponse.json({
+        status: 'success',
+        message: `Successfully approved ${payloads.length} slips into expense transactions`,
+        count: payloads.length,
+        data: insertedTxns,
+      });
+    }
+
+    // Action 2: Approve single inbox item into expense_income_transactions
     if (body.action === 'approve') {
       const {
         id,
@@ -250,7 +315,6 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: 'Transfers require both source and destination accounts' }, { status: 400 });
       }
 
-      // 1. Insert into expense_income_transactions (triggers automatic balance adjustment)
       const txnPayload = {
         user_id: auth.user?.id || null,
         transaction_date: transaction_date || new Date().toISOString(),
@@ -274,8 +338,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: 'Failed to insert transaction', details: insertError.message }, { status: 500 });
       }
 
-      // 2. Mark slip_inbox item as approved if id is provided
-      if (id) {
+      if (id && !id.startsWith('ephemeral_')) {
         await auth.supabase
           .from('slip_inbox')
           .update({ status: 'approved', updated_at: new Date().toISOString() })
@@ -289,90 +352,115 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Action 2: Ingest OCR Text from iPhone Shortcut
-    const rawOcrText = body.text || body.raw_ocr || body.rawText || '';
-    const source = body.source || 'iphone_shortcut';
+    // Action 3: Ingest OCR Slips (Supports Single Slip OR Batch Array of Slips)
+    const isBatch =
+      Array.isArray(body) ||
+      Array.isArray(body.slips) ||
+      Array.isArray(body.texts) ||
+      Array.isArray(body.items);
 
-    if (!rawOcrText && !body.amount) {
+    const rawSlipsList: (string | { text?: string; amount?: number; [k: string]: any })[] =
+      Array.isArray(body)
+        ? body
+        : Array.isArray(body.slips)
+        ? body.slips
+        : Array.isArray(body.texts)
+        ? body.texts
+        : Array.isArray(body.items)
+        ? body.items
+        : [body];
+
+    const defaultSource = body.source || 'iphone_shortcut';
+    const inboxRecordsToInsert: any[] = [];
+
+    for (const rawItem of rawSlipsList) {
+      const rawText =
+        typeof rawItem === 'string'
+          ? rawItem
+          : rawItem.text || rawItem.raw_ocr || rawItem.rawText || '';
+
+      const source = (typeof rawItem === 'object' && rawItem.source) || defaultSource;
+
+      if (!rawText && (typeof rawItem !== 'object' || !rawItem.amount)) {
+        continue;
+      }
+
+      const parsed: ParsedSlipRegexResult = rawText
+        ? parseThaiBankSlipOcr(rawText)
+        : {
+            amount: typeof rawItem === 'object' && rawItem.amount != null ? Number(rawItem.amount) || null : null,
+            transaction_date: typeof rawItem === 'object' ? rawItem.transaction_date || new Date().toISOString() : new Date().toISOString(),
+            parsed_date_display: typeof rawItem === 'object' ? rawItem.date || null : null,
+            parsed_time_display: typeof rawItem === 'object' ? rawItem.time || null : null,
+            type: typeof rawItem === 'object' ? rawItem.type || 'EXPENSE' : 'EXPENSE',
+            category: typeof rawItem === 'object' ? rawItem.category || 'อื่นๆ' : 'อื่นๆ',
+            sender_bank: typeof rawItem === 'object' ? rawItem.sender_bank || null : null,
+            sender_account_masked: typeof rawItem === 'object' ? rawItem.sender_account_masked || null : null,
+            sender_name: typeof rawItem === 'object' ? rawItem.sender_name || null : null,
+            receiver_bank: typeof rawItem === 'object' ? rawItem.receiver_bank || null : null,
+            receiver_account_masked: typeof rawItem === 'object' ? rawItem.receiver_account_masked || null : null,
+            receiver_name: typeof rawItem === 'object' ? rawItem.receiver_name || null : null,
+            memo: typeof rawItem === 'object' ? rawItem.memo || null : null,
+            reference_number: typeof rawItem === 'object' ? rawItem.reference_number || null : null,
+            confidence_score: 1.0,
+            matched_rules: {},
+            raw_text: rawText,
+          };
+
+      const { matchedAccountId, matchedToAccountId, accounts } = await matchAccounts(
+        auth.supabase,
+        auth.user?.id || null,
+        parsed
+      );
+
+      const noteParts: string[] = [];
+      if (parsed.receiver_name) noteParts.push(`ถึง: ${parsed.receiver_name}`);
+      if (parsed.memo) noteParts.push(`[${parsed.memo}]`);
+      if (parsed.reference_number) noteParts.push(`Ref: ${parsed.reference_number}`);
+      const generatedNote = noteParts.join(' ');
+
+      inboxRecordsToInsert.push({
+        user_id: auth.user?.id || null,
+        source,
+        raw_text: parsed.raw_text,
+        amount: parsed.amount,
+        transaction_date: parsed.transaction_date || new Date().toISOString(),
+        type: parsed.type,
+        category: parsed.category,
+        matched_account_id: matchedAccountId || (accounts[0]?.id ? accounts[0].id : null),
+        matched_to_account_id: matchedToAccountId,
+        sender_bank: parsed.sender_bank,
+        sender_account_masked: parsed.sender_account_masked,
+        sender_name: parsed.sender_name,
+        receiver_bank: parsed.receiver_bank,
+        receiver_account_masked: parsed.receiver_account_masked,
+        receiver_name: parsed.receiver_name,
+        reference_number: parsed.reference_number,
+        memo: generatedNote,
+        confidence_score: parsed.confidence_score,
+        status: 'pending',
+      });
+    }
+
+    if (inboxRecordsToInsert.length === 0) {
       return NextResponse.json(
         {
           error: 'Missing slip content',
-          message: 'Provide "text" (raw OCR text from iPhone Shortcut) or structured slip data.',
+          message: 'Provide "text" or "slips" array (raw OCR text from iPhone Shortcut).',
         },
         { status: 400 }
       );
     }
 
-    // Run Regex Parser
-    const parsed: ParsedSlipRegexResult = rawOcrText
-      ? parseThaiBankSlipOcr(rawOcrText)
-      : {
-          amount: parseFloat(body.amount) || null,
-          transaction_date: body.transaction_date || new Date().toISOString(),
-          parsed_date_display: body.date || null,
-          parsed_time_display: body.time || null,
-          type: body.type || 'EXPENSE',
-          category: body.category || 'อื่นๆ',
-          sender_bank: body.sender_bank || null,
-          sender_account_masked: body.sender_account_masked || null,
-          sender_name: body.sender_name || null,
-          receiver_bank: body.receiver_bank || null,
-          receiver_account_masked: body.receiver_account_masked || null,
-          receiver_name: body.receiver_name || null,
-          memo: body.memo || null,
-          reference_number: body.reference_number || null,
-          confidence_score: 1.0,
-          matched_rules: {},
-          raw_text: rawOcrText,
-        };
-
-    // Smart Match Accounts
-    const { matchedAccountId, matchedToAccountId, accounts } = await matchAccounts(
-      auth.supabase,
-      auth.user?.id || null,
-      parsed
-    );
-
-    // Build human-friendly memo / note
-    const noteParts: string[] = [];
-    if (parsed.receiver_name) noteParts.push(`ถึง: ${parsed.receiver_name}`);
-    if (parsed.memo) noteParts.push(`[${parsed.memo}]`);
-    if (parsed.reference_number) noteParts.push(`Ref: ${parsed.reference_number}`);
-    const generatedNote = noteParts.join(' ');
-
-    // Staging record object
-    const inboxRecord = {
-      user_id: auth.user?.id || null,
-      source,
-      raw_text: parsed.raw_text,
-      amount: parsed.amount,
-      transaction_date: parsed.transaction_date || new Date().toISOString(),
-      type: parsed.type,
-      category: parsed.category,
-      matched_account_id: matchedAccountId || (accounts[0]?.id ? accounts[0].id : null),
-      matched_to_account_id: matchedToAccountId,
-      sender_bank: parsed.sender_bank,
-      sender_account_masked: parsed.sender_account_masked,
-      sender_name: parsed.sender_name,
-      receiver_bank: parsed.receiver_bank,
-      receiver_account_masked: parsed.receiver_account_masked,
-      receiver_name: parsed.receiver_name,
-      reference_number: parsed.reference_number,
-      memo: generatedNote,
-      confidence_score: parsed.confidence_score,
-      status: 'pending',
-    };
-
-    // Try saving to Supabase slip_inbox
-    let savedRecord = null;
+    // Insert all into slip_inbox
+    let savedRecords = null;
     let tableExists = true;
 
     try {
       const { data, error } = await auth.supabase
         .from('slip_inbox')
-        .insert([inboxRecord])
-        .select()
-        .single();
+        .insert(inboxRecordsToInsert)
+        .select();
 
       if (error) {
         if (error.message?.includes('schema cache') || error.message?.includes('does not exist')) {
@@ -381,7 +469,7 @@ export async function POST(req: NextRequest) {
           console.warn('Could not insert into slip_inbox table:', error.message);
         }
       } else {
-        savedRecord = data;
+        savedRecords = data;
       }
     } catch {
       tableExists = false;
@@ -389,17 +477,10 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       status: 'success',
-      message: 'Slip parsed and passed to dashboard staging inbox',
-      table_persisted: tableExists && Boolean(savedRecord),
-      data: savedRecord || {
-        id: `ephemeral_${Date.now()}`,
-        ...inboxRecord,
-        parsed_details: parsed,
-      },
-      parsed,
-      notice: tableExists
-        ? 'Slip safely staged in inbox. Review and approve in dashboard to update expense report.'
-        : 'Slip parsed successfully. To persist incoming slips permanently in Supabase, execute the slip_inbox SQL migration.',
+      message: `Processed and staged ${inboxRecordsToInsert.length} slip(s) in inbox`,
+      count: inboxRecordsToInsert.length,
+      table_persisted: tableExists && Boolean(savedRecords),
+      data: savedRecords || inboxRecordsToInsert.map((rec, idx) => ({ id: `ephemeral_${Date.now()}_${idx}`, ...rec })),
     });
   } catch (err: any) {
     console.error('Error in /api/slip-inbox:', err);

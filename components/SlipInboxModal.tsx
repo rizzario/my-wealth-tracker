@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   X,
   Inbox,
@@ -25,7 +25,11 @@ import {
   Plus,
   RefreshCw,
   Sparkles,
+  CheckSquare,
+  Square,
+  ListFilter,
 } from 'lucide-react';
+import { createClient } from '@/lib/supabase/client';
 import { AccountOption } from './ExpenseIncomeSection';
 
 export interface InboxSlipItem {
@@ -73,23 +77,53 @@ export default function SlipInboxModal({
   onOpenRegexTuner,
 }: SlipInboxModalProps) {
   const [items, setItems] = useState<InboxSlipItem[]>([]);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isLoading, setIsLoading] = useState(false);
   const [isApprovingId, setIsApprovingId] = useState<string | null>(null);
+  const [isBulkApproving, setIsBulkApproving] = useState(false);
   const [expandedRawId, setExpandedRawId] = useState<string | null>(null);
   const [tableReady, setTableReady] = useState(true);
 
-  // Fetch pending inbox slips
+  // Fetch pending inbox slips with direct Supabase browser client fallback
   const fetchInbox = useCallback(async () => {
     try {
       setIsLoading(true);
-      const res = await fetch('/api/slip-inbox');
-      const json = await res.json();
-      if (res.ok) {
-        setItems(json.data || []);
-        if (json.table_ready !== undefined) {
-          setTableReady(json.table_ready);
+      let fetched: InboxSlipItem[] = [];
+
+      // 1. Fetch via API
+      try {
+        const res = await fetch('/api/slip-inbox');
+        if (res.ok) {
+          const json = await res.json();
+          fetched = json.data || [];
+          if (json.table_ready !== undefined) {
+            setTableReady(json.table_ready);
+          }
+        }
+      } catch (apiErr) {
+        console.warn('API /api/slip-inbox failed, attempting direct Supabase query:', apiErr);
+      }
+
+      // 2. Direct Supabase browser client fallback if API returned 0 items
+      if (fetched.length === 0) {
+        try {
+          const supabase = createClient();
+          const { data: directData, error: directErr } = await supabase
+            .from('slip_inbox')
+            .select('*')
+            .ilike('status', 'pending')
+            .order('created_at', { ascending: false });
+
+          if (!directErr && directData && directData.length > 0) {
+            fetched = directData as InboxSlipItem[];
+          }
+        } catch (dbErr) {
+          console.warn('Direct Supabase fetch error:', dbErr);
         }
       }
+
+      setItems(fetched);
+      setSelectedIds(new Set(fetched.map((i: InboxSlipItem) => i.id)));
     } catch (err) {
       console.error('Failed to fetch slip inbox:', err);
     } finally {
@@ -98,10 +132,47 @@ export default function SlipInboxModal({
   }, []);
 
   useEffect(() => {
-    if (isOpen) {
+    if (!isOpen) return;
+
+    fetchInbox();
+
+    const handleFocus = () => {
       fetchInbox();
-    }
+    };
+
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
   }, [isOpen, fetchInbox]);
+
+  // Selection helpers
+  const handleToggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const handleSelectAll = () => {
+    if (selectedIds.size === items.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(items.map((i) => i.id)));
+    }
+  };
+
+  // Selected totals
+  const selectedItems = useMemo(() => {
+    return items.filter((i) => selectedIds.has(i.id));
+  }, [items, selectedIds]);
+
+  const totalSelectedAmount = useMemo(() => {
+    return selectedItems.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+  }, [selectedItems]);
 
   if (!isOpen) return null;
 
@@ -158,11 +229,65 @@ export default function SlipInboxModal({
 
       // Remove from list
       setItems((prev) => prev.filter((i) => i.id !== item.id));
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(item.id);
+        return next;
+      });
       onTransactionsUpdated();
     } catch (err: any) {
       alert(`ไม่สามารถบันทึกรายการได้: ${err.message}`);
     } finally {
       setIsApprovingId(null);
+    }
+  };
+
+  // Bulk Approve selected items
+  const handleBulkApprove = async () => {
+    if (selectedItems.length === 0) {
+      alert('กรุณาเลือกสลิปที่ต้องการบันทึกอย่างน้อย 1 รายการ');
+      return;
+    }
+
+    for (const item of selectedItems) {
+      if (!item.amount || item.amount <= 0) {
+        alert(`สลิปรายการ ${item.memo || item.category || ''} ยอดเงินต้องมากกว่า 0`);
+        return;
+      }
+      if (item.type === 'TRANSFER') {
+        if (!item.matched_account_id || !item.matched_to_account_id) {
+          alert(`รายการโอนเงินยอด ฿${item.amount} กรุณาเลือกทั้งบัญชีต้นทางและปลายทาง`);
+          return;
+        }
+        if (item.matched_account_id === item.matched_to_account_id) {
+          alert(`รายการโอนเงินยอด ฿${item.amount} บัญชีต้นทางและปลายทางต้องไม่ใช่บัญชีเดียวกัน`);
+          return;
+        }
+      }
+    }
+
+    try {
+      setIsBulkApproving(true);
+      const res = await fetch('/api/slip-inbox', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'approve_bulk',
+          items: selectedItems,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || data.details || 'Failed to bulk approve');
+
+      const approvedIds = new Set(selectedItems.map((i) => i.id));
+      setItems((prev) => prev.filter((i) => !approvedIds.has(i.id)));
+      setSelectedIds(new Set());
+      onTransactionsUpdated();
+    } catch (err: any) {
+      alert(`ไม่สามารถบันทึกรายการแบบกลุ่มได้: ${err.message}`);
+    } finally {
+      setIsBulkApproving(false);
     }
   };
 
@@ -173,6 +298,32 @@ export default function SlipInboxModal({
         await fetch(`/api/slip-inbox?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
       }
       setItems((prev) => prev.filter((i) => i.id !== id));
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    } catch (err: any) {
+      alert(`ลบรายการไม่สำเร็จ: ${err.message}`);
+    }
+  };
+
+  // Bulk Dismiss
+  const handleBulkDismiss = async () => {
+    if (selectedItems.length === 0) return;
+    if (!confirm(`คุณต้องการลบสลิปที่เลือกจำนวน ${selectedItems.length} รายการออกใช่หรือไม่?`)) {
+      return;
+    }
+
+    try {
+      const realIds = selectedItems.map((i) => i.id).filter((id) => !id.startsWith('ephemeral_'));
+      if (realIds.length > 0) {
+        await fetch(`/api/slip-inbox?ids=${encodeURIComponent(realIds.join(','))}`, { method: 'DELETE' });
+      }
+
+      const dismissedSet = new Set(selectedItems.map((i) => i.id));
+      setItems((prev) => prev.filter((i) => !dismissedSet.has(i.id)));
+      setSelectedIds(new Set());
     } catch (err: any) {
       alert(`ลบรายการไม่สำเร็จ: ${err.message}`);
     }
@@ -236,7 +387,7 @@ xxx-x-x1234-x
                 </span>
               </div>
               <p className="text-xs text-slate-500">
-                สลิปที่ส่งมาจาก iPhone Shortcut หรือ Mobile App จะพักอยู่ที่นี่ก่อน เพื่อให้คุณตรวจทานก่อนลงบัญชีจริง
+                รองรับการสแกนสลิปพร้อมกันหลายใบจาก iPhone Shortcut ตรวจทานและกดยืนยันทั้งหมดในครั้งเดียว
               </p>
             </div>
           </div>
@@ -274,6 +425,71 @@ xxx-x-x1234-x
           </div>
         )}
 
+        {/* Batch Operations Bar (When multiple items exist) */}
+        {items.length > 0 && (
+          <div className="px-5 py-3 bg-violet-50/70 border-b border-violet-100 flex flex-wrap items-center justify-between gap-3 text-xs">
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={handleSelectAll}
+                className="inline-flex items-center gap-1.5 font-semibold text-slate-700 hover:text-slate-900 cursor-pointer"
+              >
+                {selectedIds.size === items.length ? (
+                  <CheckSquare className="w-4 h-4 text-violet-600" />
+                ) : (
+                  <Square className="w-4 h-4 text-slate-400" />
+                )}
+                <span>
+                  {selectedIds.size === items.length ? 'ยกเลิกการเลือกทั้งหมด' : 'เลือกทั้งหมด'}
+                </span>
+              </button>
+
+              <span className="text-slate-400">|</span>
+
+              <span className="text-slate-600">
+                เลือก <strong className="text-violet-700">{selectedIds.size}</strong> จาก{' '}
+                {items.length} รายการ
+              </span>
+
+              {selectedIds.size > 0 && (
+                <span className="font-semibold text-slate-800">
+                  (ยอดรวม: ฿
+                  {totalSelectedAmount.toLocaleString('th-TH', { minimumFractionDigits: 2 })})
+                </span>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2">
+              {selectedIds.size > 0 && (
+                <button
+                  type="button"
+                  onClick={handleBulkDismiss}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 font-medium text-rose-600 hover:bg-rose-100/60 rounded-lg transition cursor-pointer"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>ลบที่เลือก ({selectedIds.size})</span>
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={handleBulkApprove}
+                disabled={isBulkApproving || selectedIds.size === 0}
+                className="inline-flex items-center gap-1.5 px-4 py-1.5 font-bold text-white bg-violet-600 hover:bg-violet-700 disabled:opacity-50 rounded-xl transition shadow-xs cursor-pointer"
+              >
+                {isBulkApproving ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Check className="w-3.5 h-3.5" />
+                )}
+                <span>
+                  ยืนยันที่เลือกทั้งหมด {selectedIds.size > 0 ? `(${selectedIds.size})` : ''}
+                </span>
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Content Body */}
         <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4">
           {items.length === 0 ? (
@@ -284,7 +500,7 @@ xxx-x-x1234-x
               <div className="space-y-1">
                 <h3 className="text-sm font-semibold text-slate-700">ไม่มีสลิปที่รอการตรวจสอบ</h3>
                 <p className="text-xs text-slate-400 max-w-sm mx-auto">
-                  เมื่อคุณใช้คำสั่งลัด (Shortcut) บน iPhone สแกนสลิปโอนเงิน ข้อมูลจะปรากฏที่นี่เพื่อให้คุณกดยืนยันก่อนบันทึก
+                  เมื่อคุณใช้คำสั่งลัด (Shortcut) บน iPhone สแกนสลิปโอนเงิน (ทั้งใบเดียวหรือทีละหลายใบ) ข้อมูลทั้งหมดจะปรากฏที่นี่
                 </p>
               </div>
 
@@ -315,21 +531,41 @@ xxx-x-x1234-x
               </div>
             </div>
           ) : (
-            items.map((item) => {
+            items.map((item, index) => {
               const isTransfer = item.type === 'TRANSFER';
               const categories = getCategoryList(item.type);
               const isApproving = isApprovingId === item.id;
               const isRawExpanded = expandedRawId === item.id;
+              const isSelected = selectedIds.has(item.id);
 
               return (
                 <div
                   key={item.id}
-                  className="p-4 bg-white border border-slate-200 rounded-xl shadow-xs hover:border-slate-300 transition space-y-3"
+                  className={`p-4 bg-white border rounded-xl shadow-xs transition space-y-3 ${
+                    isSelected
+                      ? 'border-violet-300 ring-1 ring-violet-200'
+                      : 'border-slate-200 hover:border-slate-300'
+                  }`}
                 >
-                  {/* Top Bar: Amount, Type Badge, Bank & Date */}
+                  {/* Top Bar: Checkbox, Index, Amount, Type Badge, Bank & Date */}
                   <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-slate-400">แหล่งที่มา:</span>
+                    <div className="flex items-center gap-2.5">
+                      <button
+                        type="button"
+                        onClick={() => handleToggleSelect(item.id)}
+                        className="text-violet-600 hover:text-violet-800 transition cursor-pointer"
+                      >
+                        {isSelected ? (
+                          <CheckSquare className="w-4 h-4 text-violet-600" />
+                        ) : (
+                          <Square className="w-4 h-4 text-slate-300" />
+                        )}
+                      </button>
+
+                      <span className="text-[11px] font-bold text-slate-400 font-mono">
+                        #{index + 1}
+                      </span>
+
                       <span className="px-2 py-0.5 text-[10px] font-semibold rounded-md bg-slate-100 text-slate-600 uppercase">
                         {item.source}
                       </span>
@@ -530,7 +766,7 @@ xxx-x-x1234-x
                       <button
                         type="button"
                         onClick={() => handleApprove(item)}
-                        disabled={isApproving}
+                        disabled={isApproving || isBulkApproving}
                         className="inline-flex items-center gap-1.5 px-4 py-1.5 text-xs font-bold text-white bg-violet-600 hover:bg-violet-700 disabled:opacity-50 rounded-xl transition shadow-xs cursor-pointer"
                       >
                         {isApproving ? (

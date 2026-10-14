@@ -575,19 +575,57 @@ export function extractReceiverName(
 ): string | null {
   const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
 
+  const fromIdx = lines.findIndex((l) => /^(จาก|from)\b/i.test(l));
+  const toIdx = lines.findIndex((l) => /^(ไปยัง|เข้าบัญชี|to)\b/i.test(l));
+
+  // ดักเคสพิเศษ (เช่น SCB): "จาก" และ "ไปยัง" วางติดกันเป็นคู่หัวข้อ
+  const isPairedHeader = fromIdx !== -1 && toIdx !== -1 && Math.abs(fromIdx - toIdx) <= 2;
+
+  if (isPairedHeader) {
+    const startIndex = Math.max(fromIdx, toIdx) + 1;
+    const candidates: string[] = [];
+
+    for (let i = startIndex; i < lines.length; i++) {
+      const line = lines[i];
+      // ถึงโซนยอดเงินหรือรายละเอียดอื่นให้หยุดหา
+      if (/^(จำนวนเงิน|ค่าธรรมเนียม|รหัสอ้างอิง|amount)/i.test(line)) break;
+
+      const isAccountOrService = /^[0-9xX\-\s]+$/.test(line) || /promptpay|พร้อมเพย์/i.test(line);
+      if (!isAccountOrService && line.length >= 2) {
+        candidates.push(line);
+      }
+    }
+
+    // ในเคส SCB: คนที่ 1 คือผู้โอน (จาก), คนที่ 2 คือผู้รับ (ไปยัง)
+    if (candidates.length >= 2) {
+      const receiver = candidates[1];
+      matchedRules['receiver_name'] = `Matched receiver (paired layout): "${receiver}"`;
+      return receiver;
+    }
+  }
+
+  // โหมดปกติ: สลิปธนาคารทั่วไปที่ "ไปยัง" อยู่ติดกับชื่อผู้รับ
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    // Check if line contains "ไปยัง" or "ผู้รับ" or "To:"
     const match = line.match(/(?:ไปยัง|เข้าบัญชี|ผู้รับ(?:เงิน)?|to\b)\s*[:=]?\s*(.*)/i);
+    
     if (match) {
       let candidate = match[1].trim();
-      // If candidate on same line is empty or too short, look at next line
+
+      // ถ้าในบรรทัดเดียวกันไม่มีชื่อ ให้ไล่ดูบรรทัดถัดไป 1-3 บรรทัด (ข้ามเลขบัญชี)
       if (!candidate || candidate.length < 2) {
-        if (i + 1 < lines.length) {
-          candidate = lines[i + 1].trim();
+        for (let j = i + 1; j < Math.min(i + 4, lines.length); j++) {
+          const nextLine = lines[j].trim();
+          if (/^(จำนวนเงิน|amount|ค่าธรรมเนียม)/i.test(nextLine)) break;
+          
+          const isNotName = /^[0-9xX\-\s]+$/.test(nextLine) || /promptpay|พร้อมเพย์/i.test(nextLine);
+          if (!isNotName && nextLine.length >= 2) {
+            candidate = nextLine;
+            break;
+          }
         }
       }
-      // Filter out account numbers or bank names
+
       if (candidate && !/^[0-9xX\-\s]+$/.test(candidate) && !/promptpay|พร้อมเพย์/i.test(candidate)) {
         matchedRules['receiver_name'] = `Matched receiver: "${candidate}"`;
         return candidate;
