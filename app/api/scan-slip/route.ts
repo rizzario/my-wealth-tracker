@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { GoogleGenAI } from '@google/genai';
+import { KNOWN_BANKS } from '@/lib/slip-regex-parser';
 
 export const maxDuration = 60; // Allow up to 60s for vision model inference
 export const dynamic = 'force-dynamic';
@@ -498,7 +499,10 @@ ${userAccountsContext}
 
     if (accounts && accounts.length > 0) {
       const senderBank = (parsedSlip.sender_bank || '').toUpperCase();
+      const senderBankPattern = KNOWN_BANKS.find((b) => b.code.toUpperCase() === senderBank);
       const senderAcc = (parsedSlip.sender_account_masked || '').replace(/[^0-9]/g, '');
+
+      let bestMatchScore = 0;
 
       // Try matching source account by account number digits or bank name
       for (const acc of accounts) {
@@ -509,15 +513,25 @@ ${userAccountsContext}
         const numberMatches =
           senderAcc.length >= 3 &&
           accDigits.length >= 3 &&
-          (senderAcc.endsWith(accDigits.slice(-4)) || accDigits.endsWith(senderAcc.slice(-4)));
+          (senderAcc.endsWith(accDigits.slice(-4)) ||
+           accDigits.endsWith(senderAcc.slice(-4)) ||
+           senderAcc === accDigits);
 
         const bankMatches =
           (senderBank && (accBank.includes(senderBank) || senderBank.includes(accBank))) ||
-          (senderBank && accName.includes(senderBank));
+          (senderBank && accName.includes(senderBank)) ||
+          (senderBankPattern &&
+            (senderBankPattern.regex.test(acc.bank_name || '') ||
+             senderBankPattern.regex.test(acc.account_name || '')));
 
-        if (numberMatches || (bankMatches && !matchedAccountId)) {
+        let score = 0;
+        if (numberMatches && bankMatches) score = 100;
+        else if (numberMatches) score = 80;
+        else if (bankMatches && !acc.is_liability) score = 50;
+
+        if (score > bestMatchScore) {
+          bestMatchScore = score;
           matchedAccountId = acc.id;
-          if (numberMatches) break; // Strong match by number takes precedence
         }
       }
 
@@ -525,6 +539,7 @@ ${userAccountsContext}
       if (parsedSlip.type === 'TRANSFER' || parsedSlip.category === 'ชำระค่าบัตรเครดิต') {
         const receiverName = (parsedSlip.receiver_name || '').toUpperCase();
         const receiverBank = (parsedSlip.receiver_bank || '').toUpperCase();
+        const receiverBankPattern = KNOWN_BANKS.find((b) => b.code.toUpperCase() === receiverBank);
         const receiverAcc = (parsedSlip.receiver_account_masked || '').replace(/[^0-9]/g, '');
 
         for (const acc of accounts) {
@@ -537,11 +552,15 @@ ${userAccountsContext}
           const numberMatches =
             receiverAcc.length >= 3 &&
             accDigits.length >= 3 &&
-            (receiverAcc.endsWith(accDigits.slice(-4)) || accDigits.endsWith(receiverAcc.slice(-4)));
+            (receiverAcc.endsWith(accDigits.slice(-4)) ||
+             accDigits.endsWith(receiverAcc.slice(-4)) ||
+             receiverAcc === accDigits);
 
           const nameMatches =
-            acc.is_liability &&
-            (receiverName.includes(accBank) || receiverName.includes(accName));
+            (receiverName && (receiverName.includes(accBank) || receiverName.includes(accName))) ||
+            (receiverBankPattern &&
+              (receiverBankPattern.regex.test(acc.bank_name || '') ||
+               receiverBankPattern.regex.test(acc.account_name || '')));
 
           if (numberMatches || nameMatches) {
             matchedToAccountId = acc.id;

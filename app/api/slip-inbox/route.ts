@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createAdminClient } from '@supabase/supabase-js';
-import { parseThaiBankSlipOcr, ParsedSlipRegexResult } from '@/lib/slip-regex-parser';
+import { parseThaiBankSlipOcr, ParsedSlipRegexResult, KNOWN_BANKS } from '@/lib/slip-regex-parser';
 
 export const dynamic = 'force-dynamic';
 
@@ -108,25 +108,40 @@ async function matchAccounts(supabase: any, userId: string | null, slip: ParsedS
   let matchedToAccountId: string | null = null;
 
   const senderBank = (slip.sender_bank || '').toUpperCase();
+  const senderBankPattern = KNOWN_BANKS.find((b) => b.code.toUpperCase() === senderBank);
   const senderAccDigits = (slip.sender_account_masked || '').replace(/[^0-9]/g, '');
+
+  let bestMatchScore = 0;
 
   for (const acc of accounts) {
     const accDigits = (acc.account_number || '').replace(/[^0-9]/g, '');
     const accBank = (acc.bank_name || '').toUpperCase();
     const accName = (acc.account_name || '').toUpperCase();
 
+    // Digits match: exact match or last 4 digits
     const numberMatches =
       senderAccDigits.length >= 3 &&
       accDigits.length >= 3 &&
-      (senderAccDigits.endsWith(accDigits.slice(-4)) || accDigits.endsWith(senderAccDigits.slice(-4)));
+      (senderAccDigits.endsWith(accDigits.slice(-4)) ||
+       accDigits.endsWith(senderAccDigits.slice(-4)) ||
+       senderAccDigits === accDigits);
 
+    // Bank match: via bank code, bank name, or bank pattern regex
     const bankMatches =
       (senderBank && (accBank.includes(senderBank) || senderBank.includes(accBank))) ||
-      (senderBank && accName.includes(senderBank));
+      (senderBank && accName.includes(senderBank)) ||
+      (senderBankPattern &&
+        (senderBankPattern.regex.test(acc.bank_name || '') ||
+         senderBankPattern.regex.test(acc.account_name || '')));
 
-    if (numberMatches || (bankMatches && !matchedAccountId)) {
+    let score = 0;
+    if (numberMatches && bankMatches) score = 100;
+    else if (numberMatches) score = 80;
+    else if (bankMatches && !acc.is_liability) score = 50;
+
+    if (score > bestMatchScore) {
+      bestMatchScore = score;
       matchedAccountId = acc.id;
-      if (numberMatches) break;
     }
   }
 
@@ -134,6 +149,7 @@ async function matchAccounts(supabase: any, userId: string | null, slip: ParsedS
   if (slip.type === 'TRANSFER' || slip.category === 'ชำระค่าบัตรเครดิต') {
     const receiverName = (slip.receiver_name || '').toUpperCase();
     const receiverBank = (slip.receiver_bank || '').toUpperCase();
+    const receiverBankPattern = KNOWN_BANKS.find((b) => b.code.toUpperCase() === receiverBank);
     const receiverAccDigits = (slip.receiver_account_masked || '').replace(/[^0-9]/g, '');
 
     for (const acc of accounts) {
@@ -146,11 +162,15 @@ async function matchAccounts(supabase: any, userId: string | null, slip: ParsedS
       const numberMatches =
         receiverAccDigits.length >= 3 &&
         accDigits.length >= 3 &&
-        (receiverAccDigits.endsWith(accDigits.slice(-4)) || accDigits.endsWith(receiverAccDigits.slice(-4)));
+        (receiverAccDigits.endsWith(accDigits.slice(-4)) ||
+         accDigits.endsWith(receiverAccDigits.slice(-4)) ||
+         receiverAccDigits === accDigits);
 
       const nameMatches =
-        acc.is_liability &&
-        (receiverName.includes(accBank) || receiverName.includes(accName));
+        (receiverName && (receiverName.includes(accBank) || receiverName.includes(accName))) ||
+        (receiverBankPattern &&
+          (receiverBankPattern.regex.test(acc.bank_name || '') ||
+           receiverBankPattern.regex.test(acc.account_name || '')));
 
       if (numberMatches || nameMatches) {
         matchedToAccountId = acc.id;

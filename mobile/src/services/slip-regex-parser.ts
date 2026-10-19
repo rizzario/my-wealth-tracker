@@ -73,13 +73,13 @@ const THAI_MONTH_MAP: Record<string, string> = {
 };
 
 // Known Bank signatures
-interface BankPattern {
+export interface BankPattern {
   code: string;
   name: string;
   regex: RegExp;
 }
 
-const KNOWN_BANKS: BankPattern[] = [
+export const KNOWN_BANKS: BankPattern[] = [
   { code: 'KBANK', name: 'กสิกรไทย', regex: /(?:กสิกรไทย|kbank|k\s*plus|kasikorn)/i },
   { code: 'SCB', name: 'ไทยพาณิชย์', regex: /(?:ไทยพาณิชย์|scb|scb\s*easy|siam\s*commercial)/i },
   { code: 'BBL', name: 'กรุงเทพ', regex: /(?:ธนาคารกรุงเทพ|bangkok\s*bank|\bbbl\b|(?!.*(?:มวลชน|มหาวิทยาลัย|ระบบขนส่ง))กรุงเทพ)/i },
