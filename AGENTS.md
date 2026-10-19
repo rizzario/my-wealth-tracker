@@ -362,6 +362,27 @@ Staging buffer table for incoming slips from external sources (iOS Shortcuts, mo
 
 ---
 
+### 3.13 `bank_slip_templates`
+
+Break-by-bank configuration table for deterministic, zero-AI-cost slip extraction (Level 2 Architecture).
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | UUID, PK, default `gen_random_uuid()` | |
+| `user_id` | UUID, nullable, FK → `auth.users(id)` CASCADE | Nullable for system defaults; set for user custom overrides |
+| `bank_code` | VARCHAR(30), NOT NULL | `'KBANK'`, `'BBL'`, `'SCB'`, `'PAOTANG'`, `'GENERIC'` |
+| `bank_name` | VARCHAR(100), NOT NULL | e.g. `'ธนาคารกสิกรไทย (K PLUS)'` |
+| `description` | TEXT, nullable | |
+| `is_active` | BOOLEAN, default `true` | |
+| `template_config` | JSONB, NOT NULL | Structured parsing rules (strategy, offsets, labels, mask patterns) |
+| `created_at` / `updated_at` | TIMESTAMPTZ, default `now()` | |
+
+**Constraint & Policies:**
+- Unique constraint `(user_id, bank_code)` ensures a user has at most one custom override per bank.
+- RLS enabled: `SELECT` allowed where `auth.uid() = user_id OR user_id IS NULL`. `INSERT`/`UPDATE`/`DELETE` restricted to `auth.uid() = user_id`.
+
+---
+
 ## 4. Architecture & Data Flow
 
 ### 4.1 SSR session guard — `middleware.ts`
@@ -427,12 +448,38 @@ Scheduled by `vercel.json` Cron:
 | `app/api/scan-slip/route.ts` | Route Handler | Multi-provider endpoint supporting SCB 10X OpenTyphoon (`TYPHOON_API_KEY`), Cloudflare Workers AI (`SLIP_SCANNER_WORKER_API_URL`), and Google Gemini (`@google/genai`) with structured Thai bank slip extraction, Buddhist -> Christian Era conversion, smart account matching against `financial_accounts`, and healthcheck GET endpoint. |
 | `app/api/slip-inbox/route.ts` | Route Handler | Ingestion and staging endpoint for external clients (iPhone Shortcuts, Expo Go). Accepts raw OCR text or images via `Authorization: Bearer <token>`, runs `parseThaiBankSlipOcr()`, and handles user approvals into `expense_income_transactions`. |
 | `lib/slip-regex-parser.ts` | Shared Utility | Zero-dependency, portable regex parser for Thai bank transfer slips (KBank, SCB, BBL, Krungsri, KTB, TTB, GSB, TrueMoney, PromptPay): BE->CE year conversion, Thai month parsing, bank detection, and auto category mapping. 100% reusable in Expo Go. |
+| `lib/slip-engine/` | Modular Engine | Level 2 Break-by-Bank parsing engine: Bank detection, specialized templates (`kbank.ts`, `bbl.ts`, `scb.ts`, `paotang.ts`, `generic.ts`), layout strategies (`ACCOUNT_RELATIVE`, `PAIRED_HEADER`, `GWALLET_TUNGNGERN`, `LABEL_BASED`), and Supabase template persistence service. |
 | `lib/performance.ts` | Shared Utility | Pure calculation engine for trade ledger: Realized P&L (FIFO/Average Cost), broker win rates, profit factor, fee totals, and Top Gainer/Loser ranking. |
 | `lib/recurringCommitments.ts` | Shared Utility | Pure functions for recurring commitments eligibility, due-date calculations, confirmed transaction matching, and pending liability calculations. |
 | `lib/networth.ts` | Shared Utility | Canonical net worth calculation helper (§3.8). |
 
 > The dashboard is a **Client Component**. Auth is enforced upstream in `middleware.ts`, so no
 > server wrapper is needed. (An earlier draft called it a Server Component — obsolete.)
+
+### 4.6 Bank Slip Parsing Architecture (Level 2: Break-by-Bank Engine)
+
+To achieve 100% deterministic, 0-cost, and 0ms-latency slip extraction on-device:
+
+1. **Normalization & Homoglyph Resolution (`normalizer.ts`)**:
+   - Cleans zero-width spaces (`\u200B-\u200D\uFEFF`).
+   - Normalizes OCR homoglyphs for 'x' / 'X': Cyrillic `х` (`\u0445`) / `Х` (`\u0425`), multiplication sign `×` (`\u00D7`), Greek `χ`/`Χ`, and fullwidth `ｘ`/`Ｘ` to ASCII `x`/`X` to prevent masked accounts from being parsed as human names.
+   - Normalizes fullwidth digits `０-９` and unicode dashes `−`, `–`, `—`.
+
+2. **Bank Identification & Template Selection**:
+   - Text is matched against `detectPatterns` in `detectBankCode()`.
+   - Custom templates from `bank_slip_templates` take priority over `BUILTIN_TEMPLATES`.
+
+3. **Specialized Bank Strategies (`lib/slip-engine/templates/`)**:
+   - **K PLUS (`KBANK`)**: Account-relative layout without section headers. Sender is above 1st account, transfer receiver is above 2nd account, and merchant name is below 1st account. Supports PromptPay DQR codes (e.g. `016289131547DQR05334`) and intra-bank transfers (`KBANK -> KBANK`).
+   - **Bangkok Bank (`BBL`)**: Paired headers (`"จาก"` followed by `"ไปที่"`). 25-digit numeric transaction reference codes with trailing bank name stripping.
+   - **Siam Commercial Bank (`SCB`)**: Paired headers (`"จาก"` followed by `"ไปยัง"`). Biller ID and merchant code support.
+   - **Paotang (`PAOTANG`)**: G-Wallet ID line detection, Tungngern merchant identification, and Co-pay subsidy net paid calculation (`118 - 70.80 = 47.20`).
+   - **Generic (`GENERIC`)**: Universal fallback for BAY, KTB, TTB, GSB, TrueMoney, etc.
+
+4. **Account Matching Scoring (Heuristic Matcher in `app/api/slip-inbox/route.ts`)**:
+   - Weight 100: Masked account number match + bank alias match.
+   - Weight 80: Masked account number match alone.
+   - Weight 50: Bank name/alias match alone.
 
 ---
 

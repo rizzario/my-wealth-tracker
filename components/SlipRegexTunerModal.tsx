@@ -25,7 +25,7 @@ import {
   Hash,
   ExternalLink,
 } from 'lucide-react';
-import { parseThaiBankSlipOcr, ParsedSlipRegexResult } from '@/lib/slip-regex-parser';
+import { parseThaiBankSlip, ParsedSlipResult } from '@/lib/slip-engine';
 
 interface SlipRegexTunerModalProps {
   isOpen: boolean;
@@ -217,9 +217,9 @@ export default function SlipRegexTunerModal({
   const [showDebugRules, setShowDebugRules] = useState(true);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
-  // Reactive parsing using our regular expression parser
-  const parsedResult: ParsedSlipRegexResult = useMemo(() => {
-    return parseThaiBankSlipOcr(inputText);
+  // Reactive parsing using modular Bank Slip Engine (Break by Bank)
+  const parsedResult: ParsedSlipResult = useMemo(() => {
+    return parseThaiBankSlip(inputText);
   }, [inputText]);
 
   if (!isOpen) return null;
@@ -354,6 +354,9 @@ export default function SlipRegexTunerModal({
                   </span>
                 </div>
                 <div className="flex items-center gap-1.5">
+                  <span className="px-2 py-0.5 text-[11px] font-semibold rounded-full bg-blue-100 text-blue-700">
+                    Template: {parsedResult.template_used}
+                  </span>
                   <span
                     className={`px-2 py-0.5 text-[11px] font-semibold rounded-full ${
                       parsedResult.confidence_score >= 0.8
