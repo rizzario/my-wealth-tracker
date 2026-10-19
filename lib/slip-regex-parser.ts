@@ -212,6 +212,13 @@ export function normalizeOcrText(raw: string): string {
     .replace(/\r/g, '\n')
     .replace(/[\u200B-\u200D\uFEFF]/g, '') // remove zero-width spaces
     .replace(/[ \t]+/g, ' ') // collapse horizontal spaces
+    // Normalize x / X homoglyphs commonly output by OCR for masked accounts (Cyrillic, Greek, Math symbol, Fullwidth)
+    .replace(/[\u0445\u00D7\uFF58\u03C7]/g, 'x')
+    .replace(/[\u0425\uFF38\u03A7]/g, 'X')
+    // Normalize fullwidth digits to standard digits
+    .replace(/[\uFF10-\uFF19]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0))
+    // Normalize unicode dashes / hyphens
+    .replace(/[\u2012\u2013\u2014\u2015\u2212]/g, '-')
     .trim();
 }
 
@@ -538,7 +545,7 @@ export function extractBanks(
 
   // Account-relative bank detection (e.g. K PLUS where no "จาก/ไปยัง" headers exist)
   if (!receiverBank) {
-    const accRegex = /([0-9xX]{2,5}[-\s][0-9xX]{1,5}[-\s]?[0-9xX\-]*(?:[0-9]{3,4}|[0-9xX]+))/;
+    const accRegex = /([0-9xX*#]{2,5}[-\s][0-9xX*#]{1,5}[-\s]?[0-9xX*#\-]*(?:[0-9]{3,4}|[0-9xX*#]+))/;
     const accIndices: number[] = [];
     lines.forEach((l, idx) => {
       if (/\d{4}-\d{2}-\d{2}|ref|รหัส|\d{1,2}\s*(?:ม\.ค|ก\.พ|มี\.ค|เม\.ย|พ\.ค|มิ\.ย|ก\.ค|ส\.ค|ก\.ย|ต\.ค|พ\.ย|ธ\.ค)|25[56789]\d|\d{2}:\d{2}/i.test(l)) return;
@@ -591,8 +598,8 @@ export function extractAccounts(
 ): { senderAccount: string | null; receiverAccount: string | null } {
   const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
 
-  // Pattern for masked account numbers (with 'x' or 'X' or digits)
-  const accRegex = /([0-9xX]{2,5}[-\s][0-9xX]{1,5}[-\s]?[0-9xX\-]*(?:[0-9]{3,4}|[0-9xX]+))/;
+  // Pattern for masked account numbers (with 'x' or 'X' or digits or '*' or '#')
+  const accRegex = /([0-9xX*#]{2,5}[-\s][0-9xX*#]{1,5}[-\s]?[0-9xX*#\-]*(?:[0-9]{3,4}|[0-9xX*#]+))/;
   const accountsFound: string[] = [];
 
   // Special Check: G-Wallet ID (Paotang)
@@ -734,7 +741,7 @@ export function extractReceiverName(
       // ถึงโซนยอดเงินหรือรายละเอียดอื่นให้หยุดหา
       if (/^(จำนวนเงิน|ค่าธรรมเนียม|รหัสอ้างอิง|หมายเลขอ้างอิง|เลขที่อ้างอิง|amount)/i.test(line)) break;
 
-      const isAccountOrService = /^[0-9xX\-\s]+$/.test(line) || /promptpay|พร้อมเพย์|biller\s*id|รหัสร้านค้า|รหัสธุรกรรม|เลขที่อ้างอิง/i.test(line);
+      const isAccountOrService = /^[0-9xX*#\-\s]+$/.test(line) || /promptpay|พร้อมเพย์|biller\s*id|รหัสร้านค้า|รหัสธุรกรรม|เลขที่อ้างอิง/i.test(line);
       const isBank = KNOWN_BANKS.some((b) => b.regex.test(line));
       if (!isAccountOrService && !isBank && line.length >= 2) {
         candidates.push(line);
@@ -763,7 +770,7 @@ export function extractReceiverName(
           const nextLine = lines[j].trim();
           if (/^(จำนวนเงิน|amount|ค่าธรรมเนียม)/i.test(nextLine)) break;
           
-          const isNotName = /^[0-9xX\-\s]+$/.test(nextLine) || /promptpay|พร้อมเพย์/i.test(nextLine);
+          const isNotName = /^[0-9xX*#\-\s]+$/.test(nextLine) || /promptpay|พร้อมเพย์/i.test(nextLine);
           if (!isNotName && nextLine.length >= 2) {
             candidate = nextLine;
             break;
@@ -771,7 +778,7 @@ export function extractReceiverName(
         }
       }
 
-      if (candidate && !/^[0-9xX\-\s]+$/.test(candidate) && !/promptpay|พร้อมเพย์/i.test(candidate)) {
+      if (candidate && !/^[0-9xX*#\-\s]+$/.test(candidate) && !/promptpay|พร้อมเพย์/i.test(candidate)) {
         matchedRules['receiver_name'] = `Matched receiver: "${candidate}"`;
         return candidate;
       }
@@ -795,7 +802,7 @@ export function extractReceiverName(
   }
 
   // โหมดตรวจหาจากตำแหน่งเลขบัญชี (เช่น K PLUS ที่ไม่มีหัวข้อ "ไปยัง/ไปที่")
-  const accRegex = /([0-9xX]{2,5}[-\s][0-9xX]{1,5}[-\s]?[0-9xX\-]*(?:[0-9]{3,4}|[0-9xX]+))/;
+  const accRegex = /([0-9xX*#]{2,5}[-\s][0-9xX*#]{1,5}[-\s]?[0-9xX*#\-]*(?:[0-9]{3,4}|[0-9xX*#]+))/;
   const accIndices: number[] = [];
   lines.forEach((l, idx) => {
     if (/\d{4}-\d{2}-\d{2}|ref|รหัส|\d{1,2}\s*(?:ม\.ค|ก\.พ|มี\.ค|เม\.ย|พ\.ค|มิ\.ย|ก\.ค|ส\.ค|ก\.ย|ต\.ค|พ\.ย|ธ\.ค)|25[56789]\d|\d{2}:\d{2}/i.test(l)) return;
@@ -865,7 +872,7 @@ export function extractSenderName(
     for (let i = startIndex; i < lines.length; i++) {
       const line = lines[i];
       if (/^(จำนวนเงิน|ค่าธรรมเนียม|รหัสอ้างอิง|หมายเลขอ้างอิง|เลขที่อ้างอิง|amount)/i.test(line)) break;
-      const isAccountOrService = /^[0-9xX\-\s]+$/.test(line) || /promptpay|พร้อมเพย์|biller\s*id|รหัสร้านค้า|รหัสธุรกรรม|เลขที่อ้างอิง/i.test(line);
+      const isAccountOrService = /^[0-9xX*#\-\s]+$/.test(line) || /promptpay|พร้อมเพย์|biller\s*id|รหัสร้านค้า|รหัสธุรกรรม|เลขที่อ้างอิง/i.test(line);
       if (!isAccountOrService && line.length >= 2 && !KNOWN_BANKS.some((b) => b.regex.test(line))) {
         matchedRules['sender_name'] = `Matched sender (paired layout): "${line}"`;
         return line;
@@ -892,7 +899,7 @@ export function extractSenderName(
   }
 
   // 4. Fallback: ตรวจหาจากตำแหน่งเหนือเลขบัญชีแรก (เช่น K PLUS ที่ไม่มีหัวข้อ "จาก")
-  const accRegex = /([0-9xX]{2,5}[-\s][0-9xX]{1,5}[-\s]?[0-9xX\-]*(?:[0-9]{3,4}|[0-9xX]+))/;
+  const accRegex = /([0-9xX*#]{2,5}[-\s][0-9xX*#]{1,5}[-\s]?[0-9xX*#\-]*(?:[0-9]{3,4}|[0-9xX*#]+))/;
   const accIndices: number[] = [];
   lines.forEach((l, idx) => {
     if (/\d{4}-\d{2}-\d{2}|ref|รหัส|\d{1,2}\s*(?:ม\.ค|ก\.พ|มี\.ค|เม\.ย|พ\.ค|มิ\.ย|ก\.ค|ส\.ค|ก\.ย|ต\.ค|พ\.ย|ธ\.ค)|25[56789]\d|\d{2}:\d{2}/i.test(l)) return;
