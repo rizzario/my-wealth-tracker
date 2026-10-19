@@ -80,7 +80,7 @@ export const LocalLedgerView: React.FC<LocalLedgerViewProps> = ({ onRefreshTrigg
       {/* Slip List */}
       <FlatList
         data={slips}
-        keyExtractor={(item) => item.id}
+        keyExtractor={(item: LocalSlipRecord) => item.id}
         contentContainerStyle={styles.listContent}
         ListEmptyComponent={
           <View style={styles.emptyBox}>
@@ -91,7 +91,7 @@ export const LocalLedgerView: React.FC<LocalLedgerViewProps> = ({ onRefreshTrigg
             </Text>
           </View>
         }
-        renderItem={({ item }) => (
+        renderItem={({ item }: { item: LocalSlipRecord }) => (
           <View style={styles.slipCard}>
             <View style={styles.slipCardTop}>
               <View style={styles.bankPill}>

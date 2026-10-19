@@ -79,7 +79,7 @@ export const SlipInboxView: React.FC<SlipInboxViewProps> = ({ onRefreshTrigger }
       {/* List of pending slips */}
       <FlatList
         data={slips}
-        keyExtractor={(item) => item.id}
+        keyExtractor={(item: SlipInboxItem) => item.id}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#38bdf8" />}
         contentContainerStyle={styles.listContent}
         ListEmptyComponent={
@@ -91,7 +91,7 @@ export const SlipInboxView: React.FC<SlipInboxViewProps> = ({ onRefreshTrigger }
             </Text>
           </View>
         }
-        renderItem={({ item }) => (
+        renderItem={({ item }: { item: SlipInboxItem }) => (
           <View style={styles.slipCard}>
             <View style={styles.slipCardHeader}>
               <View style={styles.bankPill}>
