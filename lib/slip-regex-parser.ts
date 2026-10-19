@@ -489,9 +489,9 @@ export function extractBanks(
   for (const line of lines) {
     if (/(?:จาก|from|ผู้โอน)(?:[\s:=]|$|\b)/i.test(line)) {
       currentSection = 'from';
-    } else if (/(?:ไปยัง|เข้าบัญชี|ผู้รับ|to|receiver)(?:[\s:=]|$|\b)/i.test(line)) {
+    } else if (/(?:ไปยัง|ไปที่|เข้าบัญชี|ผู้รับ|to|receiver)(?:[\s:=]|$|\b)/i.test(line)) {
       currentSection = 'to';
-    } else if (/(?:จำนวนเงิน|amount|ค่าธรรมเนียม|fee|รหัสอ้างอิง|ref\b)/i.test(line)) {
+    } else if (/(?:จำนวนเงิน|amount|ค่าธรรมเนียม|fee|รหัสอ้างอิง|หมายเลขอ้างอิง|เลขที่อ้างอิง|ref\b)/i.test(line)) {
       currentSection = null;
     }
 
@@ -504,6 +504,60 @@ export function extractBanks(
           receiverBank = bank.code;
           matchedRules['receiver_bank'] = `Matched "${bank.name}" (${bank.code}) in To section: "${line}"`;
         }
+      }
+    }
+  }
+
+  // Paired header support: check if banks are explicitly listed in the paired section
+  const fromIdx = lines.findIndex((l) => /^(จาก|from|ผู้โอน)(?:[\s:=]|$|\b)/i.test(l));
+  const toIdx = lines.findIndex((l) => /^(ไปยัง|ไปที่|เข้าบัญชี|to)(?:[\s:=]|$|\b)/i.test(l));
+  const isPairedHeader = fromIdx !== -1 && toIdx !== -1 && Math.abs(fromIdx - toIdx) <= 2;
+
+  if (isPairedHeader) {
+    const startIndex = Math.max(fromIdx, toIdx) + 1;
+    const bankHits: string[] = [];
+    for (let i = startIndex; i < lines.length; i++) {
+      const line = lines[i];
+      if (/^(จำนวนเงิน|ค่าธรรมเนียม|รหัสอ้างอิง|หมายเลขอ้างอิง|เลขที่อ้างอิง|amount)/i.test(line)) break;
+      for (const b of KNOWN_BANKS) {
+        if (b.regex.test(line)) {
+          bankHits.push(b.code);
+          break;
+        }
+      }
+    }
+    if (bankHits.length >= 1 && !senderBank) {
+      senderBank = bankHits[0];
+      matchedRules['sender_bank'] = `Matched 1st bank in paired layout: ${bankHits[0]}`;
+    }
+    if (bankHits.length >= 2 && !receiverBank) {
+      receiverBank = bankHits[1];
+      matchedRules['receiver_bank'] = `Matched 2nd bank in paired layout: ${bankHits[1]}`;
+    }
+  }
+
+  // Account-relative bank detection (e.g. K PLUS where no "จาก/ไปยัง" headers exist)
+  if (!receiverBank) {
+    const accRegex = /([0-9xX]{2,5}[-\s][0-9xX]{1,5}[-\s]?[0-9xX\-]*(?:[0-9]{3,4}|[0-9xX]+))/;
+    const accIndices: number[] = [];
+    lines.forEach((l, idx) => {
+      if (/\d{4}-\d{2}-\d{2}|ref|รหัส|\d{1,2}\s*(?:ม\.ค|ก\.พ|มี\.ค|เม\.ย|พ\.ค|มิ\.ย|ก\.ค|ส\.ค|ก\.ย|ต\.ค|พ\.ย|ธ\.ค)|25[56789]\d|\d{2}:\d{2}/i.test(l)) return;
+      const m = l.match(accRegex);
+      if (m && m[1].length >= 6) accIndices.push(idx);
+    });
+
+    if (accIndices.length >= 2) {
+      const secondAccIdx = accIndices[1];
+      for (let k = Math.max(0, secondAccIdx - 2); k <= Math.min(lines.length - 1, secondAccIdx + 2); k++) {
+        if (k === secondAccIdx) continue;
+        for (const b of KNOWN_BANKS) {
+          if (b.regex.test(lines[k])) {
+            receiverBank = b.code;
+            matchedRules['receiver_bank'] = `Matched receiver bank near 2nd account: ${b.code}`;
+            break;
+          }
+        }
+        if (receiverBank) break;
       }
     }
   }
@@ -588,7 +642,47 @@ export function extractReferenceNumber(
   text: string,
   matchedRules: Record<string, string>
 ): string | null {
-  const refRegex = /(?:รหัสอ้างอิง|เลขที่รายการ|transaction\s*id|ref(?:\s*no\.?)?)\s*[:=]?\s*([A-Za-z0-9\-_]{8,40})/i;
+  const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
+  let bestRef: string | null = null;
+
+  // 1. Line-by-line inspection (supports multi-line e.g. "เลขที่อ้างอิง" followed by "2026083011145124001067308")
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (/(?:รหัสอ้างอิง|เลขที่อ้างอิง|หมายเลขอ้างอิง|เลขที่รายการ|รหัสธุรกรรม|transaction\s*id|ref(?:\s*no\.?)?)/i.test(line)) {
+      // Check same line
+      const sameLine = line.replace(/^(?:รหัสอ้างอิง|เลขที่อ้างอิง|หมายเลขอ้างอิง|เลขที่รายการ|รหัสธุรกรรม|transaction\s*id|ref(?:\s*no\.?)?)\s*[:=]?\s*/i, '').trim();
+      const mSame = sameLine.match(/^([A-Za-z0-9\-_]{6,40})/);
+      if (mSame) {
+        if (!bestRef || mSame[1].length > bestRef.length) bestRef = mSame[1];
+        if (bestRef.length >= 15) break;
+      }
+      // Check subsequent 1-3 lines (skipping currency amounts or labels like "0.00 บาท")
+      for (let j = i + 1; j < Math.min(i + 4, lines.length); j++) {
+        const nextLine = lines[j].trim();
+        if (/^(?:[0-9,.]+\s*(?:บาท|thb)|ค่าธรรมเนียม|จำนวน|fee)/i.test(nextLine)) continue;
+
+        // Clean line if it has trailing bank names (e.g. "2026083011145124001067308Bangkok Bank" -> "2026083011145124001067308")
+        let candidate = nextLine;
+        for (const b of KNOWN_BANKS) {
+          candidate = candidate.replace(b.regex, '').trim();
+        }
+
+        const mRef = candidate.match(/^([A-Za-z0-9\-_]{6,40})/);
+        if (mRef && !/^(จำนวนเงิน|ค่าธรรมเนียม|จาก|ไปยัง|ไปที่|amount)/i.test(mRef[1])) {
+          if (!bestRef || mRef[1].length > bestRef.length) bestRef = mRef[1];
+          if (bestRef.length >= 15) break;
+        }
+      }
+    }
+  }
+
+  if (bestRef) {
+    matchedRules['reference_number'] = `Matched ref: ${bestRef}`;
+    return bestRef;
+  }
+
+  // 2. Global regex fallback
+  const refRegex = /(?:รหัสอ้างอิง|เลขที่อ้างอิง|หมายเลขอ้างอิง|เลขที่รายการ|รหัสธุรกรรม|transaction\s*id|ref(?:\s*no\.?)?)\s*[:=]?\s*([A-Za-z0-9\-_]{6,40})/i;
   const match = text.match(refRegex);
   if (match) {
     matchedRules['reference_number'] = `Matched ref: ${match[1]}`;
@@ -626,9 +720,9 @@ export function extractReceiverName(
   const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
 
   const fromIdx = lines.findIndex((l) => /^(จาก|from)(?:[\s:=]|$|\b)/i.test(l));
-  const toIdx = lines.findIndex((l) => /^(ไปยัง|เข้าบัญชี|to)(?:[\s:=]|$|\b)/i.test(l));
+  const toIdx = lines.findIndex((l) => /^(ไปยัง|ไปที่|เข้าบัญชี|to)(?:[\s:=]|$|\b)/i.test(l));
 
-  // ดักเคสพิเศษ (เช่น SCB): "จาก" และ "ไปยัง" วางติดกันเป็นคู่หัวข้อ
+  // ดักเคสพิเศษ (เช่น SCB / BBL): "จาก" และ "ไปยัง"/"ไปที่" วางติดกันเป็นคู่หัวข้อ
   const isPairedHeader = fromIdx !== -1 && toIdx !== -1 && Math.abs(fromIdx - toIdx) <= 2;
 
   if (isPairedHeader) {
@@ -638,15 +732,16 @@ export function extractReceiverName(
     for (let i = startIndex; i < lines.length; i++) {
       const line = lines[i];
       // ถึงโซนยอดเงินหรือรายละเอียดอื่นให้หยุดหา
-      if (/^(จำนวนเงิน|ค่าธรรมเนียม|รหัสอ้างอิง|amount)/i.test(line)) break;
+      if (/^(จำนวนเงิน|ค่าธรรมเนียม|รหัสอ้างอิง|หมายเลขอ้างอิง|เลขที่อ้างอิง|amount)/i.test(line)) break;
 
       const isAccountOrService = /^[0-9xX\-\s]+$/.test(line) || /promptpay|พร้อมเพย์|biller\s*id|รหัสร้านค้า|รหัสธุรกรรม|เลขที่อ้างอิง/i.test(line);
-      if (!isAccountOrService && line.length >= 2) {
+      const isBank = KNOWN_BANKS.some((b) => b.regex.test(line));
+      if (!isAccountOrService && !isBank && line.length >= 2) {
         candidates.push(line);
       }
     }
 
-    // ในเคส SCB: คนที่ 1 คือผู้โอน (จาก), คนที่ 2 คือผู้รับ (ไปยัง)
+    // ในเคส SCB / BBL: คนที่ 1 คือผู้โอน (จาก), คนที่ 2 คือผู้รับ (ไปยัง/ไปที่)
     if (candidates.length >= 2) {
       const receiver = candidates[1];
       matchedRules['receiver_name'] = `Matched receiver (paired layout): "${receiver}"`;
@@ -654,10 +749,10 @@ export function extractReceiverName(
     }
   }
 
-  // โหมดปกติ: สลิปธนาคารทั่วไปที่ "ไปยัง" อยู่ติดกับชื่อผู้รับ
+  // โหมดปกติ: สลิปธนาคารทั่วไปที่ "ไปยัง" / "ไปที่" อยู่ติดกับชื่อผู้รับ
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    const match = line.match(/(?:ไปยัง|เข้าบัญชี|ผู้รับ(?:เงิน)?|to)(?:[\s:=]|$|\b)\s*[:=]?\s*(.*)/i);
+    const match = line.match(/(?:ไปยัง|ไปที่|เข้าบัญชี|ผู้รับ(?:เงิน)?|(?:\bto\b))(?:[\s:=]|$|\b)\s*[:=]?\s*(.*)/i);
     
     if (match) {
       let candidate = match[1].trim();
@@ -699,6 +794,43 @@ export function extractReceiverName(
     }
   }
 
+  // โหมดตรวจหาจากตำแหน่งเลขบัญชี (เช่น K PLUS ที่ไม่มีหัวข้อ "ไปยัง/ไปที่")
+  const accRegex = /([0-9xX]{2,5}[-\s][0-9xX]{1,5}[-\s]?[0-9xX\-]*(?:[0-9]{3,4}|[0-9xX]+))/;
+  const accIndices: number[] = [];
+  lines.forEach((l, idx) => {
+    if (/\d{4}-\d{2}-\d{2}|ref|รหัส|\d{1,2}\s*(?:ม\.ค|ก\.พ|มี\.ค|เม\.ย|พ\.ค|มิ\.ย|ก\.ค|ส\.ค|ก\.ย|ต\.ค|พ\.ย|ธ\.ค)|25[56789]\d|\d{2}:\d{2}/i.test(l)) return;
+    const m = l.match(accRegex);
+    if (m && m[1].length >= 6) accIndices.push(idx);
+  });
+
+  if (accIndices.length >= 2) {
+    // โอนเงินระหว่างบุคคล: ชื่อผู้รับจะอยู่เหนือเลขบัญชีที่ 2
+    const firstAccIdx = accIndices[0];
+    const secondAccIdx = accIndices[1];
+    for (let k = secondAccIdx - 1; k >= Math.max(firstAccIdx + 1, secondAccIdx - 3); k--) {
+      const l = lines[k];
+      if (/^(k\+|verified)/i.test(l)) continue;
+      if (KNOWN_BANKS.some((b) => b.regex.test(l))) continue;
+      if (l.length >= 2 && !/^[0-9xX*\-:\s]+$/.test(l)) {
+        matchedRules['receiver_name'] = `Matched receiver above 2nd account: "${l}"`;
+        return l;
+      }
+    }
+  } else if (accIndices.length === 1) {
+    // จ่ายเงินร้านค้า/QR: ชื่อร้านค้าจะอยู่ถัดจากเลขบัญชีผู้โอนลงมา
+    const firstAccIdx = accIndices[0];
+    for (let k = firstAccIdx + 1; k < Math.min(firstAccIdx + 4, lines.length); k++) {
+      const l = lines[k];
+      if (/^(จำนวน|ค่าธรรมเนียม|ยอดเงิน|amount|fee|เลขที่รายการ|ref)/i.test(l)) break;
+      if (/^[0-9xX*\-:\s]+$/.test(l)) continue;
+      if (KNOWN_BANKS.some((b) => b.regex.test(l))) continue;
+      if (l.length >= 2) {
+        matchedRules['receiver_name'] = `Matched merchant below 1st account: "${l}"`;
+        return l;
+      }
+    }
+  }
+
   return null;
 }
 
@@ -724,15 +856,15 @@ export function extractSenderName(
     }
   }
 
-  // 2. Paired header (SCB style: "จาก" then "ไปยัง" stacked above sender/receiver)
+  // 2. Paired header (SCB / BBL style: "จาก" then "ไปยัง"/"ไปที่" stacked above sender/receiver)
   const fromIdx = lines.findIndex((l) => /^(จาก|from|ผู้โอน)(?:[\s:=]|$|\b)/i.test(l));
-  const toIdx = lines.findIndex((l) => /^(ไปยัง|เข้าบัญชี|to)(?:[\s:=]|$|\b)/i.test(l));
+  const toIdx = lines.findIndex((l) => /^(ไปยัง|ไปที่|เข้าบัญชี|to)(?:[\s:=]|$|\b)/i.test(l));
   const isPairedHeader = fromIdx !== -1 && toIdx !== -1 && Math.abs(fromIdx - toIdx) <= 2;
   if (isPairedHeader) {
     const startIndex = Math.max(fromIdx, toIdx) + 1;
     for (let i = startIndex; i < lines.length; i++) {
       const line = lines[i];
-      if (/^(จำนวนเงิน|ค่าธรรมเนียม|รหัสอ้างอิง|amount)/i.test(line)) break;
+      if (/^(จำนวนเงิน|ค่าธรรมเนียม|รหัสอ้างอิง|หมายเลขอ้างอิง|เลขที่อ้างอิง|amount)/i.test(line)) break;
       const isAccountOrService = /^[0-9xX\-\s]+$/.test(line) || /promptpay|พร้อมเพย์|biller\s*id|รหัสร้านค้า|รหัสธุรกรรม|เลขที่อ้างอิง/i.test(line);
       if (!isAccountOrService && line.length >= 2 && !KNOWN_BANKS.some((b) => b.regex.test(line))) {
         matchedRules['sender_name'] = `Matched sender (paired layout): "${line}"`;
@@ -750,11 +882,33 @@ export function extractSenderName(
     }
     for (let k = fromIdx + 1; k < Math.min(fromIdx + 4, lines.length); k++) {
       const line = lines[k];
-      if (/^(ไปยัง|เข้าบัญชี|to|จำนวนเงิน|amount)(?:[\s:=]|$|\b)/i.test(line)) break;
+      if (/^(ไปยัง|ไปที่|เข้าบัญชี|to|จำนวนเงิน|amount)(?:[\s:=]|$|\b)/i.test(line)) break;
       if (KNOWN_BANKS.some((b) => b.regex.test(line))) continue;
       if (line.length >= 2 && !/^[0-9xX*\-:\s]+$/.test(line)) {
         matchedRules['sender_name'] = `Matched sender below From: "${line}"`;
         return line;
+      }
+    }
+  }
+
+  // 4. Fallback: ตรวจหาจากตำแหน่งเหนือเลขบัญชีแรก (เช่น K PLUS ที่ไม่มีหัวข้อ "จาก")
+  const accRegex = /([0-9xX]{2,5}[-\s][0-9xX]{1,5}[-\s]?[0-9xX\-]*(?:[0-9]{3,4}|[0-9xX]+))/;
+  const accIndices: number[] = [];
+  lines.forEach((l, idx) => {
+    if (/\d{4}-\d{2}-\d{2}|ref|รหัส|\d{1,2}\s*(?:ม\.ค|ก\.พ|มี\.ค|เม\.ย|พ\.ค|มิ\.ย|ก\.ค|ส\.ค|ก\.ย|ต\.ค|พ\.ย|ธ\.ค)|25[56789]\d|\d{2}:\d{2}/i.test(l)) return;
+    const m = l.match(accRegex);
+    if (m && m[1].length >= 6) accIndices.push(idx);
+  });
+
+  if (accIndices.length > 0) {
+    const firstAccIdx = accIndices[0];
+    for (let k = firstAccIdx - 1; k >= Math.max(0, firstAccIdx - 3); k--) {
+      const l = lines[k];
+      if (/^(โอนเงินสำเร็จ|ชำระเงินสำเร็จ|k\+|สำเร็จ|รายการสำเร็จ|\d{1,2}\s*(?:ม\.ค|ก\.พ|มี\.ค|เม\.ย|พ\.ค|มิ\.ย|ก\.ค|ส\.ค|ก\.ย|ต\.ค|พ\.ย|ธ\.ค))/i.test(l)) continue;
+      if (KNOWN_BANKS.some((b) => b.regex.test(l))) continue;
+      if (l.length >= 2 && !/^[0-9xX*\-:\s]+$/.test(l)) {
+        matchedRules['sender_name'] = `Matched sender above 1st account: "${l}"`;
+        return l;
       }
     }
   }
