@@ -10,7 +10,7 @@ const TIMEOUT_MS = 15 * 60 * 1000; // 15 นาที
 export function useIdleTimer() {
   const router = useRouter();
   const supabase = createClient();
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const resetTimer = () => {
     if (timerRef.current) clearTimeout(timerRef.current);

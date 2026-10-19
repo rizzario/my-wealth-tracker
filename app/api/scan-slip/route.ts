@@ -143,7 +143,7 @@ export async function POST(req: NextRequest) {
     const contentType = req.headers.get('content-type') || '';
 
     if (contentType.includes('multipart/form-data')) {
-      const formData = await req.formData();
+      const formData: any = await req.formData();
       const file = formData.get('file') as File | null;
       if (!file) {
         return NextResponse.json({ error: 'No image file uploaded' }, { status: 400 });

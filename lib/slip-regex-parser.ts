@@ -82,8 +82,10 @@ interface BankPattern {
 const KNOWN_BANKS: BankPattern[] = [
   { code: 'KBANK', name: 'กสิกรไทย', regex: /(?:กสิกรไทย|kbank|k\s*plus|kasikorn)/i },
   { code: 'SCB', name: 'ไทยพาณิชย์', regex: /(?:ไทยพาณิชย์|scb|scb\s*easy|siam\s*commercial)/i },
-  { code: 'BBL', name: 'กรุงเทพ', regex: /(?:ธนาคารกรุงเทพ|กรุงเทพ|bangkok\s*bank|bbl)/i },
-  { code: 'KTB', name: 'กรุงไทย', regex: /(?:กรุงไทย|krungthai|ktb|เป๋าตัง)/i },
+  { code: 'BBL', name: 'กรุงเทพ', regex: /(?:ธนาคารกรุงเทพ|bangkok\s*bank|\bbbl\b|(?!.*(?:มวลชน|มหาวิทยาลัย|ระบบขนส่ง))กรุงเทพ)/i },
+  { code: 'PAOTANG', name: 'เป๋าตัง (G-Wallet)', regex: /(?:เป๋าตัง|g-wallet|paotang)/i },
+  { code: 'TUNGNGERN', name: 'ถุงเงิน', regex: /(?:ถุงเงิน|tung\s*ngern)/i },
+  { code: 'KTB', name: 'กรุงไทย', regex: /(?:กรุงไทย|krungthai|ktb)/i },
   { code: 'BAY', name: 'กรุงศรีอยุธยา', regex: /(?:กรุงศรีอยุธยา|กรุงศรี|krungsri|bay|kma)/i },
   { code: 'TTB', name: 'ทหารไทยธนชาต', regex: /(?:ทหารไทยธนชาต|ทีทีบี|ttb|ttb\s*touch|tmb|thanachart)/i },
   { code: 'GSB', name: 'ออมสิน', regex: /(?:ออมสิน|gsb|mymo)/i },
@@ -124,8 +126,9 @@ const CATEGORY_RULES: CategoryKeywordRule[] = [
     keywords: [
       'อาหาร', 'กาแฟ', 'cafe', 'coffee', 'อเมซอน', 'amazon', 'starbucks', 'เต่าบิน',
       'ชาตรามือ', 'สุกี้', 'ตี๋น้อย', 'mk', 'kfc', 'mcdonald', 'bar b q', 'หมูกระทะ',
-      'ก๋วยเตี๋ยว', 'ข้าวมันไก่', 'ข้าวราดแกง', 'เบเกอรี่', 'bakery', 'restaurant',
-      '7-eleven', 'เซเว่น', 'grabfood', 'lineman', 'foodpanda', 'shopeefood', 'น้ำดื่ม'
+      'ก๋วยเตี๋ยว', 'ข้าวมันไก่', 'ข้าวราดแกง', 'เบเกอรี่', 'bakery', 'restaurant', 'food',
+      '7-eleven', 'เซเว่น', 'grabfood', 'lineman', 'foodpanda', 'shopeefood', 'น้ำดื่ม',
+      'เครื่องดื่ม', 'ของหวาน', 'เวนดิ้ง', 'vending', 'บุญเติม'
     ],
   },
   {
@@ -134,7 +137,8 @@ const CATEGORY_RULES: CategoryKeywordRule[] = [
     keywords: [
       'ปั๊ม', 'น้ำมัน', 'ptt', 'ปตท', 'บางจาก', 'shell', 'caltex', 'esso', 'susco',
       'ทางด่วน', 'easy pass', 'm-pass', 'm-flow', 'bts', 'mrt', 'แอร์พอร์ตลิงก์',
-      'รถไฟฟ้า', 'แท็กซี่', 'taxi', 'grab', 'bolt', 'line man taxi', 'ที่จอดรถ', 'ค่าจอด'
+      'รถไฟฟ้า', 'แท็กซี่', 'taxi', 'grab', 'bolt', 'line man taxi', 'ที่จอดรถ', 'ค่าจอด',
+      'ระบบขนส่งมวลชนกรุงเทพ', 'กลุ่มขนส่งสาธารณะ', 'ขนส่งสาธารณะ', 'ขนส่ง', 'รถเมล์'
     ],
   },
   {
@@ -219,12 +223,37 @@ export function normalizeOcrText(raw: string): string {
 export function extractAmount(text: string, matchedRules: Record<string, string>): number | null {
   const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
 
+  // Pattern 0: Government / Discount Subsidy (e.g. เป๋าตัง คนละครึ่ง ไทยช่วยไทย)
+  // Structure: "ค่าสินค้า..." -> "สิทธิ..." -> "จำนวนเงินที่ชำระ" ... "118 บาท" -> "-70.80 บาท" -> "47.20 บาท"
+  if (/(?:จำนวนเงินที่ชำระ|ยอดชำระจริง|ยอดสุทธิ|net\s*paid)/i.test(text)) {
+    const currencyLines = lines.filter(
+      (l) => /(?:บาท|thb|฿)/i.test(l) && !/ค่าธรรมเนียม|fee|คงเหลือ/i.test(l)
+    );
+    const hasDiscountLine = currencyLines.some((l) => /^[-–—]|[-–—]\s*[0-9]/.test(l));
+    if (hasDiscountLine && currencyLines.length >= 2) {
+      // Find the last positive currency line after the discount
+      for (let i = currencyLines.length - 1; i >= 0; i--) {
+        const cl = currencyLines[i];
+        if (!/^[-–—]|[-–—]\s*[0-9]/.test(cl)) {
+          const m = cl.match(/([0-9,]+(?:\.[0-9]{2})?)\s*(?:บาท|thb)/i) || cl.match(/฿\s*([0-9,]+(?:\.[0-9]{2})?)/);
+          if (m) {
+            const val = parseFloat(m[1].replace(/,/g, ''));
+            if (!isNaN(val) && val > 0) {
+              matchedRules['amount'] = `Subsidy / Net Paid amount detected: "${cl}" -> ${val}`;
+              return val;
+            }
+          }
+        }
+      }
+    }
+  }
+
   // Pattern 1: Same line labeled amount (e.g. "จำนวนเงิน 150.00 บาท", "Amount: 1,250.00 THB")
-  const sameLineRegex = /(?:จำนวนเงิน|ยอดโอน|ยอดเงิน|amount|total)\s*[:=]?\s*([0-9,]+\.[0-9]{2})/i;
+  const sameLineRegex = /(?:จำนวนเงินที่ชำระ|จำนวนเงิน|ยอดโอน|ยอดเงิน|amount|total)\s*[:=]?\s*([0-9,]+(?:\.[0-9]{2})?)/i;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    // Skip fee lines
-    if (/ค่าธรรมเนียม|fee/i.test(line)) continue;
+    // Skip fee lines or discount lines with minus
+    if (/ค่าธรรมเนียม|fee|^[-–—]|[-–—]\s*[0-9]/i.test(line)) continue;
 
     const match = line.match(sameLineRegex);
     if (match) {
@@ -243,10 +272,11 @@ export function extractAmount(text: string, matchedRules: Record<string, string>
     const curr = lines[i];
     if (/ค่าธรรมเนียม|fee|คงเหลือ|balance/i.test(curr)) continue;
 
-    if (/(?:จำนวนเงิน|ยอดเงิน|ยอดโอน|amount|total)/i.test(curr)) {
+    if (/(?:จำนวนเงินที่ชำระ|จำนวนเงิน|ยอดเงิน|ยอดโอน|amount|total)/i.test(curr)) {
       const nextLine = lines[i + 1];
-      const match = nextLine.match(/^([0-9,]+\.[0-9]{2})(?:\s*(?:บาท|thb))?$/i) ||
-                    nextLine.match(/([0-9,]+\.[0-9]{2})/);
+      if (/^[-–—]|[-–—]\s*[0-9]/.test(nextLine)) continue; // skip discount
+      const match = nextLine.match(/^([0-9,]+(?:\.[0-9]{2})?)(?:\s*(?:บาท|thb))?$/i) ||
+                    nextLine.match(/([0-9,]+(?:\.[0-9]{2})?)/);
       if (match) {
         const val = parseFloat(match[1].replace(/,/g, ''));
         if (!isNaN(val) && val > 0) {
@@ -258,9 +288,10 @@ export function extractAmount(text: string, matchedRules: Record<string, string>
   }
 
   // Pattern 3: Explicit currency suffix or prefix (e.g. "150.00 บาท", "฿150.00", "1,200.00 THB")
-  const suffixRegex = /(?:฿\s*([0-9,]+\.[0-9]{2}))|([0-9,]+\.[0-9]{2})\s*(?:บาท|thb)/i;
+  const suffixRegex = /(?:฿\s*([0-9,]+(?:\.[0-9]{2})?))|([0-9,]+(?:\.[0-9]{2})?)\s*(?:บาท|thb)/i;
   for (const line of lines) {
     if (/ค่าธรรมเนียม|fee|คงเหลือ|balance/i.test(line)) continue;
+    if (/^[-–—]|[-–—]\s*[0-9]|ส่วนลด|สิทธิ|discount/i.test(line)) continue; // ignore negative discounts
     const match = line.match(suffixRegex);
     if (match) {
       const rawNum = match[1] || match[2];
@@ -456,10 +487,12 @@ export function extractBanks(
   let currentSection: 'from' | 'to' | null = null;
 
   for (const line of lines) {
-    if (/(?:จาก|from|ผู้โอน)/i.test(line)) {
+    if (/(?:จาก|from|ผู้โอน)(?:[\s:=]|$|\b)/i.test(line)) {
       currentSection = 'from';
-    } else if (/(?:ไปยัง|เข้าบัญชี|ผู้รับ|to\b|receiver)/i.test(line)) {
+    } else if (/(?:ไปยัง|เข้าบัญชี|ผู้รับ|to|receiver)(?:[\s:=]|$|\b)/i.test(line)) {
       currentSection = 'to';
+    } else if (/(?:จำนวนเงิน|amount|ค่าธรรมเนียม|fee|รหัสอ้างอิง|ref\b)/i.test(line)) {
+      currentSection = null;
     }
 
     for (const bank of KNOWN_BANKS) {
@@ -508,9 +541,26 @@ export function extractAccounts(
   const accRegex = /([0-9xX]{2,5}[-\s][0-9xX]{1,5}[-\s]?[0-9xX\-]*(?:[0-9]{3,4}|[0-9xX]+))/;
   const accountsFound: string[] = [];
 
+  // Special Check: G-Wallet ID (Paotang)
+  const gwalletIdx = lines.findIndex((l) => /g-wallet\s*id|wallet\s*id/i.test(l));
+  if (gwalletIdx !== -1) {
+    let walletId = lines[gwalletIdx].replace(/g-wallet\s*id\s*[:=]?/i, '').trim();
+    for (let k = gwalletIdx + 1; k < Math.min(gwalletIdx + 4, lines.length); k++) {
+      const candidate = lines[k].trim();
+      if (/^[*xX0-9\s]+$/.test(candidate) && candidate.length > 0) {
+        walletId = (walletId ? walletId + ' ' : '') + candidate;
+      } else {
+        break;
+      }
+    }
+    if (walletId && walletId.length >= 4) {
+      accountsFound.push(walletId);
+    }
+  }
+
   for (const line of lines) {
-    // Avoid date patterns or reference numbers
-    if (/\d{4}-\d{2}-\d{2}|ref|รหัส/i.test(line)) continue;
+    // Avoid date patterns or reference numbers or Thai dates
+    if (/\d{4}-\d{2}-\d{2}|ref|รหัส|\d{1,2}\s*(?:ม\.ค|ก\.พ|มี\.ค|เม\.ย|พ\.ค|มิ\.ย|ก\.ค|ส\.ค|ก\.ย|ต\.ค|พ\.ย|ธ\.ค)|25[56789]\d|\d{2}:\d{2}/i.test(line)) continue;
 
     const match = line.match(accRegex);
     if (match) {
@@ -575,8 +625,8 @@ export function extractReceiverName(
 ): string | null {
   const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
 
-  const fromIdx = lines.findIndex((l) => /^(จาก|from)\b/i.test(l));
-  const toIdx = lines.findIndex((l) => /^(ไปยัง|เข้าบัญชี|to)\b/i.test(l));
+  const fromIdx = lines.findIndex((l) => /^(จาก|from)(?:[\s:=]|$|\b)/i.test(l));
+  const toIdx = lines.findIndex((l) => /^(ไปยัง|เข้าบัญชี|to)(?:[\s:=]|$|\b)/i.test(l));
 
   // ดักเคสพิเศษ (เช่น SCB): "จาก" และ "ไปยัง" วางติดกันเป็นคู่หัวข้อ
   const isPairedHeader = fromIdx !== -1 && toIdx !== -1 && Math.abs(fromIdx - toIdx) <= 2;
@@ -590,7 +640,7 @@ export function extractReceiverName(
       // ถึงโซนยอดเงินหรือรายละเอียดอื่นให้หยุดหา
       if (/^(จำนวนเงิน|ค่าธรรมเนียม|รหัสอ้างอิง|amount)/i.test(line)) break;
 
-      const isAccountOrService = /^[0-9xX\-\s]+$/.test(line) || /promptpay|พร้อมเพย์/i.test(line);
+      const isAccountOrService = /^[0-9xX\-\s]+$/.test(line) || /promptpay|พร้อมเพย์|biller\s*id|รหัสร้านค้า|รหัสธุรกรรม|เลขที่อ้างอิง/i.test(line);
       if (!isAccountOrService && line.length >= 2) {
         candidates.push(line);
       }
@@ -607,7 +657,7 @@ export function extractReceiverName(
   // โหมดปกติ: สลิปธนาคารทั่วไปที่ "ไปยัง" อยู่ติดกับชื่อผู้รับ
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    const match = line.match(/(?:ไปยัง|เข้าบัญชี|ผู้รับ(?:เงิน)?|to\b)\s*[:=]?\s*(.*)/i);
+    const match = line.match(/(?:ไปยัง|เข้าบัญชี|ผู้รับ(?:เงิน)?|to)(?:[\s:=]|$|\b)\s*[:=]?\s*(.*)/i);
     
     if (match) {
       let candidate = match[1].trim();
@@ -629,6 +679,82 @@ export function extractReceiverName(
       if (candidate && !/^[0-9xX\-\s]+$/.test(candidate) && !/promptpay|พร้อมเพย์/i.test(candidate)) {
         matchedRules['receiver_name'] = `Matched receiver: "${candidate}"`;
         return candidate;
+      }
+    }
+  }
+
+  // โหมดสลิปถุงเงิน (ร้านค้า Tungngern ในสลิปเป๋าตัง):
+  // ถุงเงิน
+  // ระบบขนส่งมวลชนกรุงเทพ
+  const tungngernIdx = lines.findIndex((l) => /^(ถุงเงิน|tung\s*ngern)/i.test(l));
+  if (tungngernIdx !== -1) {
+    for (let k = tungngernIdx + 1; k < Math.min(tungngernIdx + 4, lines.length); k++) {
+      const candidate = lines[k].trim();
+      if (/^(จำนวนเงิน|ค่าสินค้า|ค่าธรรมเนียม|รหัสอ้างอิง|สิทธิ)/i.test(candidate)) break;
+      const isNotName = /^[0-9xX*#\-\s]+$/.test(candidate) || /promptpay|พร้อมเพย์|g-wallet/i.test(candidate);
+      if (!isNotName && candidate.length >= 2) {
+        matchedRules['receiver_name'] = `Matched Tungngern merchant: "${candidate}"`;
+        return candidate;
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Extract Sender Name
+ */
+export function extractSenderName(
+  text: string,
+  matchedRules: Record<string, string>
+): string | null {
+  const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
+
+  // 1. Paotang / G-Wallet: name is immediately above G-Wallet ID
+  const gwalletIdx = lines.findIndex((l) => /g-wallet\s*id|wallet\s*id/i.test(l));
+  if (gwalletIdx > 0) {
+    for (let k = gwalletIdx - 1; k >= Math.max(0, gwalletIdx - 3); k--) {
+      const line = lines[k];
+      if (/^(g|wallet|โอนเงิน|ทำรายการสำเร็จ|รหัสอ้างอิง|\d{1,2}\s*(?:ม\.ค|ก\.พ|มี\.ค|ต\.ค))/i.test(line)) continue;
+      if (line.length >= 2 && !/^[0-9xX*\-:\s]+$/.test(line)) {
+        matchedRules['sender_name'] = `Matched sender above G-Wallet ID: "${line}"`;
+        return line;
+      }
+    }
+  }
+
+  // 2. Paired header (SCB style: "จาก" then "ไปยัง" stacked above sender/receiver)
+  const fromIdx = lines.findIndex((l) => /^(จาก|from|ผู้โอน)(?:[\s:=]|$|\b)/i.test(l));
+  const toIdx = lines.findIndex((l) => /^(ไปยัง|เข้าบัญชี|to)(?:[\s:=]|$|\b)/i.test(l));
+  const isPairedHeader = fromIdx !== -1 && toIdx !== -1 && Math.abs(fromIdx - toIdx) <= 2;
+  if (isPairedHeader) {
+    const startIndex = Math.max(fromIdx, toIdx) + 1;
+    for (let i = startIndex; i < lines.length; i++) {
+      const line = lines[i];
+      if (/^(จำนวนเงิน|ค่าธรรมเนียม|รหัสอ้างอิง|amount)/i.test(line)) break;
+      const isAccountOrService = /^[0-9xX\-\s]+$/.test(line) || /promptpay|พร้อมเพย์|biller\s*id|รหัสร้านค้า|รหัสธุรกรรม|เลขที่อ้างอิง/i.test(line);
+      if (!isAccountOrService && line.length >= 2 && !KNOWN_BANKS.some((b) => b.regex.test(line))) {
+        matchedRules['sender_name'] = `Matched sender (paired layout): "${line}"`;
+        return line;
+      }
+    }
+  }
+
+  // 3. Standard "จาก" / "From" / "ผู้โอน"
+  if (fromIdx !== -1) {
+    const fromLine = lines[fromIdx].replace(/^(จาก|from|ผู้โอน)\s*[:=]?/i, '').trim();
+    if (fromLine.length >= 2 && !/^[0-9xX*\-:\s]+$/.test(fromLine) && !KNOWN_BANKS.some((b) => b.regex.test(fromLine))) {
+      matchedRules['sender_name'] = `Matched sender same line: "${fromLine}"`;
+      return fromLine;
+    }
+    for (let k = fromIdx + 1; k < Math.min(fromIdx + 4, lines.length); k++) {
+      const line = lines[k];
+      if (/^(ไปยัง|เข้าบัญชี|to|จำนวนเงิน|amount)(?:[\s:=]|$|\b)/i.test(line)) break;
+      if (KNOWN_BANKS.some((b) => b.regex.test(line))) continue;
+      if (line.length >= 2 && !/^[0-9xX*\-:\s]+$/.test(line)) {
+        matchedRules['sender_name'] = `Matched sender below From: "${line}"`;
+        return line;
       }
     }
   }
@@ -678,6 +804,7 @@ export function parseThaiBankSlipOcr(rawText: string): ParsedSlipRegexResult {
   const { iso, displayDate, displayTime } = extractDateTime(normalized, matchedRules);
   const { senderBank, receiverBank } = extractBanks(normalized, matchedRules);
   const { senderAccount, receiverAccount } = extractAccounts(normalized, matchedRules);
+  const senderName = extractSenderName(normalized, matchedRules);
   const referenceNumber = extractReferenceNumber(normalized, matchedRules);
   const memo = extractMemo(normalized, matchedRules);
   const receiverName = extractReceiverName(normalized, matchedRules);
@@ -690,7 +817,7 @@ export function parseThaiBankSlipOcr(rawText: string): ParsedSlipRegexResult {
   if (senderBank || receiverBank) score += 0.15;
   if (senderAccount || receiverAccount) score += 0.10;
   if (referenceNumber) score += 0.10;
-  if (receiverName || memo) score += 0.05;
+  if (receiverName || memo || senderName) score += 0.05;
 
   const confidenceScore = Math.min(1.0, Math.round(score * 100) / 100);
 
@@ -703,7 +830,7 @@ export function parseThaiBankSlipOcr(rawText: string): ParsedSlipRegexResult {
     category,
     sender_bank: senderBank,
     sender_account_masked: senderAccount,
-    sender_name: null,
+    sender_name: senderName,
     receiver_bank: receiverBank,
     receiver_account_masked: receiverAccount,
     receiver_name: receiverName,

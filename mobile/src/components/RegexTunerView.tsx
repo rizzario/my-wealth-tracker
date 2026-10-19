@@ -7,13 +7,57 @@ import {
   TextInput,
   ScrollView,
   Alert,
+  Share,
 } from 'react-native';
 import { parseThaiBankSlipOcr, ParsedSlipRegexResult } from '../services/slip-regex-parser';
 import { saveSlipLocally } from '../services/localLedger';
+import { STANDARD_CATEGORIES } from '../config';
+
+const POPULAR_BANKS = [
+  'PAOTANG',
+  'TUNGNGERN',
+  'KBANK',
+  'SCB',
+  'BBL',
+  'KTB',
+  'BAY',
+  'TTB',
+  'GSB',
+  'PROMPTPAY',
+  'TRUEMONEY',
+  'DIME',
+  'UOB',
+];
 
 const PRESETS = [
   {
+    name: 'เป๋าตัง BTS (ไทยช่วยไทย)',
+    bank: 'PAOTANG',
+    text: `โดะช่วยไทย
+พลัส
+60/40
+เป๋าตัง
+ทำรายการสำเร็จ
+รหัสอ้างอิง 5a909529f63b48afb988ab986e573330
+18 ต.ค. 2569 15:56 น.
+G
+กิตติพงศ์ ก***
+G-Wallet ID: ****
+*******
+3419
+ถุงเงิน
+ระบบขนส่งมวลชนกรุงเทพ
+กลุ่มขนส่งสาธารณะ
+ค่าสินค้า/บริการ
+สิทธิไทยช่วยไทยพลัส
+จำนวนเงินที่ชำระ
+118 บาท
+-70.80 บาท
+47.20 บาท`,
+  },
+  {
     name: 'KBANK กาแฟ',
+    bank: 'KBANK',
     text: `โอนเงินสำเร็จ
 14 ต.ค. 69 09:15 น.
 นาย กิตติพงษ์
@@ -31,7 +75,28 @@ xxx-x-x1234-x
 บันทึกช่วยจำ: กาแฟสดและขนมปัง`,
   },
   {
+    name: 'SCB สแกนจ่าย Biller / ร้านค้า',
+    bank: 'SCB',
+    text: `SCB÷
+จ่ายเงินสำเร็จ
+16 ต.ค. 2569 - 06:22
+รหัสอ้างอิง: 202610166rSiDWod5z89sb5yp
+จาก
+ไปยัง
+นาย กิตติพงศ์ ก.
+xXX-xxX623-9
+ร้านเวนดิ้งบายบุญเติม
+Biller ID : 010753600031501
+รหัสร้านค้า : EXT01001408519
+รหัสธุรกรรม : APIC179210655631030G
+จำนวนเงิน
+35.00
+ผู้รับเงินสามารถสแกนคิวอาร์โค้ดนี้เพื่อ
+ตรวจสอบสถานะการจ่ายเงิน`,
+  },
+  {
     name: 'SCB ปั๊มน้ำมัน',
+    bank: 'SCB',
     text: `โอนเงินสำเร็จ
 12 ต.ค. 2569 - 18:30
 จาก: SCB x-7890 นาย สมศักดิ์
@@ -42,6 +107,7 @@ xxx-x-x1234-x
   },
   {
     name: 'BBL โอนระหว่างบัญชี',
+    bank: 'BBL',
     text: `โอนเงินสำเร็จ
 05 ต.ค. 2569 เวลา 14:20 น.
 จากบัญชี ธนาคารกรุงเทพ xxx-x-xx123-x
@@ -52,6 +118,7 @@ xxx-x-x1234-x
   },
   {
     name: 'BAY ชำระบัตรเครดิต',
+    bank: 'BAY',
     text: `โอนเงินสำเร็จ
 28 ก.ย. 2569 20:10 น.
 จาก: BAY ออมทรัพย์ xxx-x-x4567-x
@@ -63,6 +130,7 @@ xxx-x-x1234-x
   },
   {
     name: 'TrueMoney เซเว่น',
+    bank: 'TRUEMONEY',
     text: `การโอนเงินสำเร็จ
 10/10/2026 11:05
 TrueMoney Wallet 089-xxx-4321
@@ -82,8 +150,31 @@ export const RegexTunerView: React.FC<RegexTunerViewProps> = ({ onSavedLocally }
   const [parsedResult, setParsedResult] = useState<ParsedSlipRegexResult | null>(() =>
     parseThaiBankSlipOcr(PRESETS[0].text)
   );
+
+  // Editable fields for user manual correction
+  const [isEditing, setIsEditing] = useState(false);
+  const [editAmount, setEditAmount] = useState(
+    parsedResult?.amount ? parsedResult.amount.toString() : ''
+  );
+  const [editBank, setEditBank] = useState(parsedResult?.sender_bank || 'KBANK');
+  const [editReceiver, setEditReceiver] = useState(parsedResult?.receiver_name || '');
+  const [editCategory, setEditCategory] = useState(parsedResult?.category || 'อื่นๆ');
+  const [editType, setEditType] = useState<'EXPENSE' | 'INCOME' | 'TRANSFER'>(
+    parsedResult?.type || 'EXPENSE'
+  );
+  const [editMemo, setEditMemo] = useState(parsedResult?.memo || '');
+
   const [showRulesDebug, setShowRulesDebug] = useState(false);
   const [savedSuccess, setSavedSuccess] = useState(false);
+
+  const applyParsedToEditable = (res: ParsedSlipRegexResult) => {
+    setEditAmount(res.amount !== null ? res.amount.toString() : '');
+    setEditBank(res.sender_bank || 'KBANK');
+    setEditReceiver(res.receiver_name || res.receiver_bank || '');
+    setEditCategory(res.category || 'อื่นๆ');
+    setEditType(res.type || 'EXPENSE');
+    setEditMemo(res.memo || '');
+  };
 
   const handleTestParse = () => {
     if (!inputText.trim()) {
@@ -92,6 +183,7 @@ export const RegexTunerView: React.FC<RegexTunerViewProps> = ({ onSavedLocally }
     }
     const result = parseThaiBankSlipOcr(inputText);
     setParsedResult(result);
+    applyParsedToEditable(result);
     setSavedSuccess(false);
   };
 
@@ -99,13 +191,30 @@ export const RegexTunerView: React.FC<RegexTunerViewProps> = ({ onSavedLocally }
     setInputText(presetText);
     const result = parseThaiBankSlipOcr(presetText);
     setParsedResult(result);
+    applyParsedToEditable(result);
     setSavedSuccess(false);
   };
 
   const handleSaveToDevice = async () => {
     if (!parsedResult) return;
+    const finalAmount = parseFloat(editAmount);
+    if (isNaN(finalAmount) || finalAmount <= 0) {
+      Alert.alert('จำนวนเงินไม่ถูกต้อง', 'กรุณาระบุจำนวนเงินมากกว่า 0');
+      return;
+    }
+
     try {
-      await saveSlipLocally(parsedResult);
+      const finalSlip: ParsedSlipRegexResult = {
+        ...parsedResult,
+        amount: finalAmount,
+        sender_bank: editBank,
+        receiver_name: editReceiver,
+        category: editCategory,
+        type: editType,
+        memo: editMemo,
+      };
+
+      await saveSlipLocally(finalSlip);
       setSavedSuccess(true);
       Alert.alert('💾 บันทึกสำเร็จ', 'บันทึกข้อมูลสลิปลงความจำเครื่องเรียบร้อยแล้ว (ออฟไลน์ 100%)');
       if (onSavedLocally) {
@@ -116,13 +225,38 @@ export const RegexTunerView: React.FC<RegexTunerViewProps> = ({ onSavedLocally }
     }
   };
 
+  // Share text report so user can send it to AI to fine-tune regex rules
+  const handleShareReport = async () => {
+    if (!parsedResult) return;
+    const report = `[SLIP TEST REPORT]
+Bank: ${editBank}
+Parsed Amount: ${parsedResult.amount} -> Expected: ${editAmount}
+Parsed Receiver: ${parsedResult.receiver_name} -> Expected: ${editReceiver}
+Parsed Category: ${parsedResult.category} -> Expected: ${editCategory}
+Parsed Date: ${parsedResult.parsed_date_display} ${parsedResult.parsed_time_display}
+Matched Rules:
+${JSON.stringify(parsedResult.matched_rules, null, 2)}
+
+RAW TEXT:
+${inputText}`;
+
+    try {
+      await Share.share({
+        message: report,
+        title: `Slip Report - ${editBank}`,
+      });
+    } catch (err: any) {
+      Alert.alert('Share Failed', err.message);
+    }
+  };
+
   return (
     <ScrollView contentContainerStyle={styles.container}>
       {/* Banner */}
       <View style={styles.banner}>
         <Text style={styles.bannerTitle}>🔬 Regex Tuner & Local Parser</Text>
         <Text style={styles.bannerDesc}>
-          ทดสอบและปรับจูน Regular Expression สำหรับอ่านสลิปธนาคารไทย ทำงานในเครื่อง 100% ไม่ใช้เน็ต
+          ทดสอบสลิปแต่ละธนาคาร ตรวจสอบผลลัพธ์ ปรับแก้ให้ถูกต้อง และเซฟเก็บไว้ในเครื่อง
         </Text>
       </View>
 
@@ -143,7 +277,7 @@ export const RegexTunerView: React.FC<RegexTunerViewProps> = ({ onSavedLocally }
       {/* OCR Input Field */}
       <View style={styles.inputContainer}>
         <View style={styles.inputHeader}>
-          <Text style={styles.inputLabel}>ข้อความดิบจาก OCR (Raw Text):</Text>
+          <Text style={styles.inputLabel}>ข้อความดิบจาก OCR (วางสลิปจาก iPhone ที่นี่):</Text>
           <TouchableOpacity onPress={() => setInputText('')}>
             <Text style={styles.clearText}>ล้างข้อความ</Text>
           </TouchableOpacity>
@@ -154,7 +288,7 @@ export const RegexTunerView: React.FC<RegexTunerViewProps> = ({ onSavedLocally }
           numberOfLines={8}
           value={inputText}
           onChangeText={setInputText}
-          placeholder="วางข้อความสลิปที่คัดลอกจาก iPhone ที่นี่..."
+          placeholder="วางข้อความสลิปที่คัดลอกมาจาก iPhone Shortcut หรือ Live Text ที่นี่..."
           placeholderTextColor="#64748b"
         />
         <TouchableOpacity style={styles.parseButton} onPress={handleTestParse} activeOpacity={0.8}>
@@ -166,67 +300,144 @@ export const RegexTunerView: React.FC<RegexTunerViewProps> = ({ onSavedLocally }
       {parsedResult && (
         <View style={styles.resultContainer}>
           <View style={styles.resultHeader}>
-            <Text style={styles.resultTitle}>ผลการสกัดข้อมูล (Parsed Result)</Text>
-            <View style={styles.confidencePill}>
-              <Text style={styles.confidenceText}>
-                {Math.round(parsedResult.confidence_score * 100)}% Match
+            <View>
+              <Text style={styles.resultTitle}>ผลการสกัดข้อมูล (Parsed Result)</Text>
+              <Text style={styles.resultSubtitle}>
+                {parsedResult.confidence_score === 1
+                  ? 'อ่านข้อมูลครบถ้วน 🟢'
+                  : 'ต้องการตรวจสอบ/ปรับแก้ 🟡'}
               </Text>
             </View>
+            <TouchableOpacity
+              style={[styles.editModeToggle, isEditing && styles.editModeToggleActive]}
+              onPress={() => setIsEditing(!isEditing)}
+            >
+              <Text style={[styles.editModeText, isEditing && styles.editModeTextActive]}>
+                {isEditing ? '✕ ปิดโหมดแก้ไข' : '✏️ ปรับแก้ข้อมูล'}
+              </Text>
+            </TouchableOpacity>
           </View>
 
-          {/* Key Metrics */}
+          {/* Quick Metrics */}
           <View style={styles.metricsGrid}>
             <View style={styles.metricCard}>
               <Text style={styles.metricLabel}>จำนวนเงิน (Amount)</Text>
-              <Text style={styles.metricAmount}>
-                {parsedResult.amount !== null
-                  ? `฿${parsedResult.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}`
-                  : '❌ หาไม่พบ'}
-              </Text>
+              {isEditing ? (
+                <View style={styles.editRow}>
+                  <Text style={styles.currencyPrefix}>฿</Text>
+                  <TextInput
+                    style={styles.editAmountInput}
+                    value={editAmount}
+                    onChangeText={setEditAmount}
+                    keyboardType="decimal-pad"
+                  />
+                </View>
+              ) : (
+                <Text style={styles.metricAmount}>
+                  ฿{parseFloat(editAmount || '0').toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                </Text>
+              )}
             </View>
 
             <View style={styles.metricCard}>
               <Text style={styles.metricLabel}>ประเภทรายการ (Type)</Text>
               <Text style={styles.metricType}>
-                {parsedResult.type === 'EXPENSE'
-                  ? 'รายจ่าย'
-                  : parsedResult.type === 'INCOME'
-                  ? 'รายรับ'
-                  : 'โอนเงิน'}
+                {editType === 'EXPENSE' ? 'รายจ่าย' : editType === 'INCOME' ? 'รายรับ' : 'โอนเงิน'}
               </Text>
             </View>
           </View>
 
+          {/* Bank Selection (When Editing) */}
+          {isEditing && (
+            <View style={styles.editSection}>
+              <Text style={styles.editSectionLabel}>เลือกธนาคารต้นทางที่ถูกต้อง:</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipsScroll}>
+                {POPULAR_BANKS.map((b) => (
+                  <TouchableOpacity
+                    key={b}
+                    style={[styles.bankChip, editBank === b && styles.bankChipActive]}
+                    onPress={() => setEditBank(b)}
+                  >
+                    <Text style={[styles.bankChipText, editBank === b && styles.bankChipTextActive]}>
+                      {b}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+          )}
+
+          {/* Category Selection (When Editing) */}
+          {isEditing && (
+            <View style={styles.editSection}>
+              <Text style={styles.editSectionLabel}>เลือกหมวดหมู่ที่ถูกต้อง:</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipsScroll}>
+                {STANDARD_CATEGORIES.map((c) => (
+                  <TouchableOpacity
+                    key={c}
+                    style={[styles.catChip, editCategory === c && styles.catChipActive]}
+                    onPress={() => setEditCategory(c)}
+                  >
+                    <Text style={[styles.catChipText, editCategory === c && styles.catChipTextActive]}>
+                      {c}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+          )}
+
           {/* Details Table */}
           <View style={styles.detailsBox}>
             <View style={styles.detailRow}>
-              <Text style={styles.detailKey}>หมวดหมู่:</Text>
-              <Text style={styles.detailValueHighlight}>{parsedResult.category}</Text>
+              <Text style={styles.detailKey}>ธนาคารผู้โอน:</Text>
+              <Text style={styles.detailValueHighlight}>{editBank}</Text>
             </View>
+
+            <View style={styles.detailRow}>
+              <Text style={styles.detailKey}>ผู้รับเงิน / ร้านค้า:</Text>
+              {isEditing ? (
+                <TextInput
+                  style={styles.inlineInput}
+                  value={editReceiver}
+                  onChangeText={setEditReceiver}
+                  placeholder="ระบุชื่อผู้รับ..."
+                  placeholderTextColor="#64748b"
+                />
+              ) : (
+                <Text style={styles.detailValue}>{editReceiver || 'ไม่พบ'}</Text>
+              )}
+            </View>
+
+            <View style={styles.detailRow}>
+              <Text style={styles.detailKey}>หมวดหมู่:</Text>
+              <Text style={styles.detailValueHighlight}>{editCategory}</Text>
+            </View>
+
             <View style={styles.detailRow}>
               <Text style={styles.detailKey}>วันที่ / เวลา:</Text>
               <Text style={styles.detailValue}>
                 {parsedResult.parsed_date_display || '-'} {parsedResult.parsed_time_display || ''}
               </Text>
             </View>
-            <View style={styles.detailRow}>
-              <Text style={styles.detailKey}>ธนาคารผู้โอน:</Text>
-              <Text style={styles.detailValue}>
-                {parsedResult.sender_bank || 'ไม่พบ'} ({parsedResult.sender_account_masked || 'ไม่ระบุเลข'})
-              </Text>
-            </View>
-            <View style={styles.detailRow}>
-              <Text style={styles.detailKey}>ผู้รับเงิน / ร้านค้า:</Text>
-              <Text style={styles.detailValue}>
-                {parsedResult.receiver_name || parsedResult.receiver_bank || 'ไม่พบ'}
-              </Text>
-            </View>
+
             <View style={styles.detailRow}>
               <Text style={styles.detailKey}>บันทึกช่วยจำ (Memo):</Text>
-              <Text style={styles.detailValue}>{parsedResult.memo || '-'}</Text>
+              {isEditing ? (
+                <TextInput
+                  style={styles.inlineInput}
+                  value={editMemo}
+                  onChangeText={setEditMemo}
+                  placeholder="เช่น ค่ากาแฟ, น้ำมัน"
+                  placeholderTextColor="#64748b"
+                />
+              ) : (
+                <Text style={styles.detailValue}>{editMemo || '-'}</Text>
+              )}
             </View>
+
             <View style={styles.detailRow}>
-              <Text style={styles.detailKey}>รหัสอ้างอิง (Ref No):</Text>
+              <Text style={styles.detailKey}>รหัสอ้างอิง:</Text>
               <Text style={styles.detailValue}>{parsedResult.reference_number || '-'}</Text>
             </View>
           </View>
@@ -253,15 +464,26 @@ export const RegexTunerView: React.FC<RegexTunerViewProps> = ({ onSavedLocally }
             </View>
           )}
 
-          {/* Save locally action */}
-          <TouchableOpacity
-            style={[styles.saveLocalBtn, savedSuccess && styles.saveLocalBtnSuccess]}
-            onPress={handleSaveToDevice}
-          >
-            <Text style={styles.saveLocalBtnText}>
-              {savedSuccess ? '✓ บันทึกลงเครื่องแล้ว' : '💾 บันทึกผลลัพธ์ลงเครื่อง (Local Standalone)'}
-            </Text>
-          </TouchableOpacity>
+          {/* Action Buttons */}
+          <View style={styles.actionRow}>
+            <TouchableOpacity
+              style={styles.shareReportBtn}
+              onPress={handleShareReport}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.shareReportBtnText}>📤 แชร์รายงานสลิปให้ AI จูน</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.saveLocalBtn, savedSuccess && styles.saveLocalBtnSuccess]}
+              onPress={handleSaveToDevice}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.saveLocalBtnText}>
+                {savedSuccess ? '✓ บันทึกสำเร็จ' : '💾 บันทึกลงเครื่อง'}
+              </Text>
+            </TouchableOpacity>
+          </View>
         </View>
       )}
     </ScrollView>
@@ -379,18 +601,30 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
   },
-  confidencePill: {
-    backgroundColor: '#064e3b',
-    paddingVertical: 3,
-    paddingHorizontal: 8,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#059669',
-  },
-  confidenceText: {
-    color: '#34d399',
+  resultSubtitle: {
+    color: '#94a3b8',
     fontSize: 11,
+    marginTop: 2,
+  },
+  editModeToggle: {
+    backgroundColor: '#0f172a',
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#475569',
+  },
+  editModeToggleActive: {
+    backgroundColor: '#0369a1',
+    borderColor: '#38bdf8',
+  },
+  editModeText: {
+    color: '#cbd5e1',
+    fontSize: 12,
     fontWeight: '600',
+  },
+  editModeTextActive: {
+    color: '#ffffff',
   },
   metricsGrid: {
     flexDirection: 'row',
@@ -419,6 +653,76 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
   },
+  editRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  currencyPrefix: {
+    color: '#38bdf8',
+    fontSize: 16,
+    fontWeight: '700',
+    marginRight: 4,
+  },
+  editAmountInput: {
+    flex: 1,
+    color: '#ffffff',
+    fontSize: 18,
+    fontWeight: '700',
+    padding: 0,
+  },
+  editSection: {
+    gap: 6,
+  },
+  editSectionLabel: {
+    color: '#94a3b8',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  chipsScroll: {
+    flexDirection: 'row',
+  },
+  bankChip: {
+    backgroundColor: '#0f172a',
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    marginRight: 6,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  bankChipActive: {
+    backgroundColor: '#0284c7',
+    borderColor: '#38bdf8',
+  },
+  bankChipText: {
+    color: '#94a3b8',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  bankChipTextActive: {
+    color: '#ffffff',
+  },
+  catChip: {
+    backgroundColor: '#0f172a',
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    marginRight: 6,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  catChipActive: {
+    backgroundColor: '#047857',
+    borderColor: '#34d399',
+  },
+  catChipText: {
+    color: '#94a3b8',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  catChipTextActive: {
+    color: '#ffffff',
+  },
   detailsBox: {
     backgroundColor: '#0f172a',
     borderRadius: 10,
@@ -430,7 +734,7 @@ const styles = StyleSheet.create({
   detailRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
+    alignItems: 'center',
   },
   detailKey: {
     color: '#94a3b8',
@@ -450,6 +754,18 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     flex: 2,
     textAlign: 'right',
+  },
+  inlineInput: {
+    flex: 2,
+    backgroundColor: '#1e293b',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    color: '#ffffff',
+    fontSize: 12,
+    textAlign: 'right',
+    borderWidth: 1,
+    borderColor: '#475569',
   },
   debugToggle: {
     paddingVertical: 6,
@@ -489,19 +805,38 @@ const styles = StyleSheet.create({
     fontSize: 11,
     flex: 1,
   },
+  actionRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 6,
+  },
+  shareReportBtn: {
+    flex: 1,
+    backgroundColor: '#334155',
+    borderRadius: 10,
+    paddingVertical: 12,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#475569',
+  },
+  shareReportBtnText: {
+    color: '#cbd5e1',
+    fontSize: 13,
+    fontWeight: '600',
+  },
   saveLocalBtn: {
+    flex: 1,
     backgroundColor: '#059669',
     borderRadius: 10,
     paddingVertical: 12,
     alignItems: 'center',
-    marginTop: 4,
   },
   saveLocalBtnSuccess: {
     backgroundColor: '#047857',
   },
   saveLocalBtnText: {
     color: '#ffffff',
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '700',
   },
 });
