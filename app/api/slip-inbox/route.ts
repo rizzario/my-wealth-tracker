@@ -13,88 +13,120 @@ import {
 
 export const dynamic = 'force-dynamic';
 
+interface AuthResult {
+  authenticated: boolean;
+  user: { id: string; email?: string } | null;
+  supabase: any;
+  authType: 'session' | 'jwt' | 'api_key' | 'unauthorized';
+  errorMessage?: string;
+}
+
 /**
- * Helper to authenticate request either via:
- * 1. Web session (cookies via createClient)
- * 2. Bearer token / API Key (from iPhone Shortcut or Expo Go)
- * 3. Supabase User JWT Access Token
+ * Helper to authenticate request across 3 distinct channels:
+ * 1. Next.js Web: Cookie-based Supabase Session (auth.getUser())
+ * 2. Expo Mobile: Supabase Access Token (JWT Bearer 'ey...') (auth.getUser(token))
+ * 3. Apple Shortcuts: Pre-shared SLIP_INBOX_SECRET -> Bound to server's SLIP_INBOX_USER_ID
  */
-async function authenticateRequest(req: NextRequest) {
+async function authenticateRequest(req: NextRequest): Promise<AuthResult> {
   const authHeader = req.headers.get('authorization') || '';
   const apiKeyHeader = req.headers.get('x-api-key') || '';
   const token = authHeader.replace(/^Bearer\s+/i, '').trim() || apiKeyHeader.trim();
 
-  // Create admin client if service role key is available
-  const adminClient = process.env.SUPABASE_SERVICE_ROLE_KEY
-    ? createAdminClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.SUPABASE_SERVICE_ROLE_KEY!
-      )
-    : null;
+  // 1. Apple Shortcuts: Pre-shared SLIP_INBOX_SECRET -> Bound strictly to server's SLIP_INBOX_USER_ID
+  const expectedSecret = process.env.SLIP_INBOX_SECRET?.trim();
+  const isShortcutToken = Boolean(
+    expectedSecret &&
+    token &&
+    token === expectedSecret
+  );
 
-  // 1. Check User Session (Browser cookie)
-  const serverClient = await createClient();
-  const {
-    data: { user: sessionUser },
-  } = await serverClient.auth.getUser();
+  if (isShortcutToken) {
+    const userId = process.env.SLIP_INBOX_USER_ID?.trim();
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
 
-  if (sessionUser) {
+    if (!userId) {
+      console.error('[slip-inbox] SLIP_INBOX_SECRET matched, but SLIP_INBOX_USER_ID is missing on the server.');
+      return {
+        authenticated: false,
+        user: null,
+        supabase: null,
+        authType: 'unauthorized',
+        errorMessage: 'Server configuration error: SLIP_INBOX_USER_ID is not configured in environment.',
+      };
+    }
+
+    if (!serviceRoleKey) {
+      console.error('[slip-inbox] SLIP_INBOX_SECRET matched, but SUPABASE_SERVICE_ROLE_KEY is missing on the server. Service role key is required for Apple Shortcuts to bypass RLS.');
+      return {
+        authenticated: false,
+        user: null,
+        supabase: null,
+        authType: 'unauthorized',
+        errorMessage: 'Server configuration error: SUPABASE_SERVICE_ROLE_KEY is required for Apple Shortcuts flow.',
+      };
+    }
+
+    const adminClient = createAdminClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      serviceRoleKey
+    );
+
     return {
       authenticated: true,
-      user: sessionUser,
-      supabase: adminClient || serverClient,
-      authType: 'session' as const,
+      user: { id: userId },
+      supabase: adminClient,
+      authType: 'api_key',
     };
   }
 
-  // 2. Check if Bearer token is a Supabase JWT Token
+  // 2. Expo Mobile: Check if Bearer token is a Supabase JWT Token (starts with 'ey')
+  const serverClient = await createClient();
   if (token && token.startsWith('ey')) {
     const { data: { user: jwtUser } } = await serverClient.auth.getUser(token);
-    if (jwtUser) {
+    if (jwtUser?.id) {
+      // Create a Supabase client scoped to this user's JWT so RLS policies are natively respected
+      const jwtClient = createAdminClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+        {
+          global: {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          },
+        }
+      );
+
       return {
         authenticated: true,
         user: jwtUser,
-        supabase: adminClient || serverClient,
-        authType: 'jwt' as const,
+        supabase: jwtClient,
+        authType: 'jwt',
       };
     }
   }
 
-  // 3. Check API Secret Token (for iPhone Shortcut / Webhooks)
-  const expectedSecret =
-    process.env.SLIP_INBOX_SECRET ||
-    process.env.CRON_SECRET ||
-    'wealth_tracker_slip_secret_2026';
+  // 3. Next.js Web: Check User Session (Browser cookie)
+  const {
+    data: { user: sessionUser },
+  } = await serverClient.auth.getUser();
 
-  const isTokenValid = Boolean(token && (token === expectedSecret || token === process.env.CRON_SECRET));
-
-  if (isTokenValid) {
-    const activeClient = adminClient || serverClient;
-    const { data: profiles } = await activeClient.from('profiles').select('id').limit(1);
-    const resolvedUserId = profiles?.[0]?.id || null;
-
+  if (sessionUser?.id) {
     return {
       authenticated: true,
-      user: resolvedUserId ? { id: resolvedUserId } : null,
-      supabase: activeClient,
-      authType: 'api_key' as const,
+      user: sessionUser,
+      supabase: serverClient,
+      authType: 'session',
     };
   }
 
-  // 4. Development bypass helper
-  if (process.env.NODE_ENV === 'development') {
-    const activeClient = adminClient || serverClient;
-    const { data: profiles } = await activeClient.from('profiles').select('id').limit(1);
-    const resolvedUserId = profiles?.[0]?.id || null;
-    return {
-      authenticated: true,
-      user: resolvedUserId ? { id: resolvedUserId } : null,
-      supabase: activeClient,
-      authType: 'development' as const,
-    };
-  }
-
-  return { authenticated: false, user: null, supabase: serverClient, authType: 'unauthorized' as const };
+  return {
+    authenticated: false,
+    user: null,
+    supabase: serverClient,
+    authType: 'unauthorized',
+    errorMessage: 'Unauthorized: Valid Session cookie, Supabase JWT, or SLIP_INBOX_SECRET required.',
+  };
 }
 
 /**
@@ -232,14 +264,18 @@ async function matchAccounts(
 export async function GET(req: NextRequest) {
   try {
     const auth = await authenticateRequest(req);
-    if (!auth.authenticated) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!auth.authenticated || !auth.user?.id) {
+      return NextResponse.json(
+        { error: 'Unauthorized', message: auth.errorMessage || 'Unauthorized access' },
+        { status: 401 }
+      );
     }
 
-    // Query pending slips (case-insensitive for 'pending' / 'Pending')
+    // Query pending slips strictly filtered by user_id (defense-in-depth for both RLS & Service Role)
     let query = auth.supabase
       .from('slip_inbox')
       .select('*')
+      .eq('user_id', auth.user.id)
       .ilike('status', 'pending')
       .order('created_at', { ascending: false });
 
@@ -338,11 +374,11 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const auth = await authenticateRequest(req);
-    if (!auth.authenticated) {
+    if (!auth.authenticated || !auth.user?.id) {
       return NextResponse.json(
         {
           error: 'Unauthorized',
-          message: 'Provide a valid User Session cookie or Authorization: Bearer <SLIP_INBOX_SECRET>',
+          message: auth.errorMessage || 'Provide a valid User Session cookie, JWT, or Authorization: Bearer <SLIP_INBOX_SECRET>',
         },
         { status: 401 }
       );
@@ -358,7 +394,7 @@ export async function POST(req: NextRequest) {
 
       const saveRes = await saveUserFavoriteContact(auth.supabase, {
         ...body.contact,
-        user_id: auth.user?.id || null,
+        user_id: auth.user.id, // Strictly server-resolved user identity
       });
 
       if (!saveRes.success) {
@@ -414,7 +450,7 @@ export async function POST(req: NextRequest) {
       }
 
       const payloads = itemsToApprove.map((item: any) => ({
-        user_id: auth.user?.id || null,
+        user_id: auth.user!.id, // Strictly server-resolved user identity
         transaction_date: item.transaction_date || new Date().toISOString(),
         type: item.type || 'EXPENSE',
         transaction_type: (item.type || 'EXPENSE').toLowerCase(),
@@ -438,7 +474,7 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      // Mark slip_inbox items as approved
+      // Mark slip_inbox items as approved (scoped to user_id)
       const idsToMark = itemsToApprove
         .map((i: any) => i.id)
         .filter((id: string) => id && !id.startsWith('ephemeral_'));
@@ -447,7 +483,8 @@ export async function POST(req: NextRequest) {
         await auth.supabase
           .from('slip_inbox')
           .update({ status: 'approved', updated_at: new Date().toISOString() })
-          .in('id', idsToMark);
+          .in('id', idsToMark)
+          .eq('user_id', auth.user!.id);
       }
 
       return NextResponse.json({
@@ -481,7 +518,7 @@ export async function POST(req: NextRequest) {
       }
 
       const txnPayload = {
-        user_id: auth.user?.id || null,
+        user_id: auth.user!.id, // Strictly server-resolved user identity
         transaction_date: transaction_date || new Date().toISOString(),
         type,
         transaction_type: type.toLowerCase(),
@@ -507,7 +544,8 @@ export async function POST(req: NextRequest) {
         await auth.supabase
           .from('slip_inbox')
           .update({ status: 'approved', updated_at: new Date().toISOString() })
-          .eq('id', id);
+          .eq('id', id)
+          .eq('user_id', auth.user!.id);
       }
 
       return NextResponse.json({
@@ -539,7 +577,7 @@ export async function POST(req: NextRequest) {
     const inboxRecordsToInsert: any[] = [];
 
     // Fetch user contacts for auto-enrichment and classification
-    const contacts = await fetchUserFavoriteContacts(auth.supabase, auth.user?.id || null);
+    const contacts = await fetchUserFavoriteContacts(auth.supabase, auth.user!.id);
 
     for (const rawItem of rawSlipsList) {
       const rawText =
@@ -588,7 +626,7 @@ export async function POST(req: NextRequest) {
 
       const { matchedAccountId, matchedToAccountId, accounts } = await matchAccounts(
         auth.supabase,
-        auth.user?.id || null,
+        auth.user!.id,
         parsed
       );
 
@@ -602,7 +640,7 @@ export async function POST(req: NextRequest) {
       const generatedNote = noteParts.join(' ');
 
       inboxRecordsToInsert.push({
-        user_id: auth.user?.id || null,
+        user_id: auth.user!.id, // Strictly server-resolved user identity
         source,
         raw_text: parsed.raw_text,
         amount: parsed.amount,
@@ -676,8 +714,11 @@ export async function POST(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   try {
     const auth = await authenticateRequest(req);
-    if (!auth.authenticated) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!auth.authenticated || !auth.user?.id) {
+      return NextResponse.json(
+        { error: 'Unauthorized', message: auth.errorMessage || 'Unauthorized access' },
+        { status: 401 }
+      );
     }
 
     const { searchParams } = new URL(req.url);
@@ -724,18 +765,20 @@ export async function DELETE(req: NextRequest) {
     let error: any = null;
 
     if (isSoft) {
-      // Soft-delete: update status to 'dismissed'
+      // Soft-delete: update status to 'dismissed' (strictly scoped to user_id)
       const { error: updateError } = await auth.supabase
         .from('slip_inbox')
         .update({ status: 'dismissed', updated_at: new Date().toISOString() })
-        .in('id', validIds);
+        .in('id', validIds)
+        .eq('user_id', auth.user!.id);
       error = updateError;
     } else {
-      // Hard-delete: permanently remove from staging table
+      // Hard-delete: permanently remove from staging table (strictly scoped to user_id)
       const { error: deleteError } = await auth.supabase
         .from('slip_inbox')
         .delete()
-        .in('id', validIds);
+        .in('id', validIds)
+        .eq('user_id', auth.user!.id);
       error = deleteError;
     }
 
