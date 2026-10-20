@@ -175,8 +175,8 @@ export const DEFAULT_SYSTEM_FAVORITE_CONTACTS: UserFavoriteContact[] = [
     icon: '💖',
     default_category: 'ให้ครอบครัว',
     default_type: 'EXPENSE',
-    matched_names: ['นางปราณี กิตติรุ่งเจริญ', 'ปราณี กิตติรุ่งเจริญ', 'ปราณี', 'PRANEE'],
-    matched_accounts: ['211-0-xxx988', '211-0-123988', '2110xxx988', 'xxx988', '988'],
+    matched_names: ['นางสมหญิง ใจดี', 'สมหญิง ใจดี', 'สมหญิง', 'SOMYING'],
+    matched_accounts: ['211-0-xxx988', '2110xxx988', 'xxx988', '988'],
     bank_code: 'BBL',
     note: 'คนโปรดครอบครัวเริ่มต้นของระบบ',
   },
@@ -184,23 +184,24 @@ export const DEFAULT_SYSTEM_FAVORITE_CONTACTS: UserFavoriteContact[] = [
 
 /**
  * Fetch all favorite contacts for a given user from Supabase.
+ * Strictly scoped to user_id. Returns in-code defaults if user has no contacts.
  */
 export async function fetchUserFavoriteContacts(
   supabase: SupabaseClient,
   userId?: string | null
 ): Promise<UserFavoriteContact[]> {
+  if (!userId) {
+    return DEFAULT_SYSTEM_FAVORITE_CONTACTS;
+  }
+
   try {
-    let query = supabase
+    const { data, error } = await supabase
       .from('user_favorite_contacts')
       .select('*')
+      .eq('user_id', userId)
       .order('group_name', { ascending: true })
       .order('nickname', { ascending: true });
 
-    if (userId) {
-      query = query.or(`user_id.eq.${userId},user_id.is.null`);
-    }
-
-    const { data, error } = await query;
     if (error) {
       // If table doesn't exist yet, return default system contacts gracefully
       if (error.message?.includes('does not exist')) return DEFAULT_SYSTEM_FAVORITE_CONTACTS;
@@ -213,13 +214,7 @@ export async function fetchUserFavoriteContacts(
       return DEFAULT_SYSTEM_FAVORITE_CONTACTS;
     }
 
-    // Merge default contacts if not already defined by user
-    const hasMother = userContacts.some((c) =>
-      c.matched_names?.some((n) => n.includes('ปราณี')) ||
-      c.matched_accounts?.some((a) => a.includes('988'))
-    );
-
-    return hasMother ? userContacts : [...DEFAULT_SYSTEM_FAVORITE_CONTACTS, ...userContacts];
+    return userContacts;
   } catch (err: any) {
     console.warn('Error fetching favorite contacts:', err?.message);
     return DEFAULT_SYSTEM_FAVORITE_CONTACTS;

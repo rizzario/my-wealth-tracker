@@ -340,6 +340,17 @@ export async function GET(req: NextRequest) {
       );
     }
 
+    // Restriction: Shared secret (Apple Shortcuts) is write-only for slip ingestion
+    if (auth.authType === 'api_key') {
+      return NextResponse.json(
+        {
+          error: 'Forbidden',
+          message: 'Shared secret (Apple Shortcuts) is only authorized for slip ingestion. User session or JWT is required to view inbox.',
+        },
+        { status: 403 }
+      );
+    }
+
     // Query pending slips strictly filtered by user_id (defense-in-depth for both RLS & Service Role)
     let query = auth.supabase
       .from('slip_inbox')
@@ -449,6 +460,18 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json().catch(() => ({}));
+
+    // Restriction: Shared secret (Apple Shortcuts) is write-only for slip ingestion
+    // Approvals, Contact Management, and Bulk Operations require User Session or JWT
+    if (auth.authType === 'api_key' && body.action) {
+      return NextResponse.json(
+        {
+          error: 'Forbidden',
+          message: 'Shared secret (Apple Shortcuts) is only authorized for slip ingestion. User session or JWT is required to approve or manage data.',
+        },
+        { status: 403 }
+      );
+    }
 
     // Action: Save or Update a Favorite Contact
     if (body.action === 'save_contact') {
@@ -823,6 +846,17 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json(
         { error: 'Unauthorized', message: auth.errorMessage || 'Unauthorized access' },
         { status: 401 }
+      );
+    }
+
+    // Restriction: Shared secret (Apple Shortcuts) is write-only for slip ingestion
+    if (auth.authType === 'api_key') {
+      return NextResponse.json(
+        {
+          error: 'Forbidden',
+          message: 'Shared secret (Apple Shortcuts) is only authorized for slip ingestion. User session or JWT is required to delete slips.',
+        },
+        { status: 403 }
       );
     }
 
