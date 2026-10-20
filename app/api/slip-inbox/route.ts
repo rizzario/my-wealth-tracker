@@ -171,8 +171,78 @@ function matchBank(
 }
 
 /**
+ * Helper to validate account ownership before recording transactions.
+ * Queries financial_accounts by filtering strictly user_id = auth.user.id.
+ * Rejects with false if any non-null account ID does not belong to the user.
+ */
+async function validateAccountOwnership(
+  supabase: any,
+  userId: string,
+  accountIds: (string | null | undefined)[]
+): Promise<{ valid: boolean; invalidId?: string; error?: string }> {
+  const uniqueIds = Array.from(new Set(accountIds.filter((id): id is string => Boolean(id))));
+  if (uniqueIds.length === 0) {
+    return { valid: true };
+  }
+
+  const { data: ownedAccounts, error } = await supabase
+    .from('financial_accounts')
+    .select('id')
+    .eq('user_id', userId)
+    .in('id', uniqueIds);
+
+  if (error) {
+    return { valid: false, error: 'Failed to verify account ownership: ' + error.message };
+  }
+
+  const ownedSet = new Set((ownedAccounts || []).map((a: { id: string }) => a.id));
+  for (const id of uniqueIds) {
+    if (!ownedSet.has(id)) {
+      return {
+        valid: false,
+        invalidId: id,
+        error: `Account ownership violation: Account '${id}' does not belong to user '${userId}'`,
+      };
+    }
+  }
+
+  return { valid: true };
+}
+
+/**
+ * Helper to check contact ownership before mutating or deleting.
+ * Prevents cross-tenant contact modification, especially when using Service Role (Apple Shortcuts).
+ */
+async function checkContactOwnership(
+  supabase: any,
+  contactId: string,
+  userId: string
+): Promise<{ owned: boolean; status?: number; error?: string }> {
+  const { data: contact, error } = await supabase
+    .from('user_favorite_contacts')
+    .select('id, user_id')
+    .eq('id', contactId)
+    .maybeSingle();
+
+  if (error) {
+    return { owned: false, status: 500, error: 'Database error: ' + error.message };
+  }
+
+  if (!contact) {
+    return { owned: false, status: 404, error: `Favorite contact '${contactId}' not found` };
+  }
+
+  if (contact.user_id !== userId) {
+    return { owned: false, status: 403, error: `Forbidden: Favorite contact '${contactId}' does not belong to user '${userId}'` };
+  }
+
+  return { owned: true };
+}
+
+/**
  * Smart matching against user's financial accounts.
  * Uses robust prefix+suffix decomposition for masked accounts (e.g. BBL 3-digit suffix '208-4-xxx978').
+ * Strictly scoped to the authenticated user.
  */
 async function matchAccounts(
   supabase: any,
@@ -187,15 +257,14 @@ async function matchAccounts(
     category?: string;
   }
 ) {
-  let query = supabase
-    .from('financial_accounts')
-    .select('id, account_name, bank_name, account_number, account_type, is_liability');
-
-  if (userId) {
-    query.eq('user_id', userId);
+  if (!userId) {
+    return { matchedAccountId: null, matchedToAccountId: null, accounts: [] };
   }
 
-  const { data: accounts } = await query;
+  const { data: accounts } = await supabase
+    .from('financial_accounts')
+    .select('id, account_name, bank_name, account_number, account_type, is_liability')
+    .eq('user_id', userId);
 
   if (!accounts || accounts.length === 0) {
     return { matchedAccountId: null, matchedToAccountId: null, accounts: [] };
@@ -295,18 +364,13 @@ export async function GET(req: NextRequest) {
     }
 
     // Fetch user's favorite contacts to enrich slips
-    const contacts = await fetchUserFavoriteContacts(auth.supabase, auth.user?.id || null);
+    const contacts = await fetchUserFavoriteContacts(auth.supabase, auth.user.id);
 
-    // Fetch user accounts once to re-match any null matched_account_id
-    let accQuery = auth.supabase
+    // Fetch user accounts once to re-match any null matched_account_id (strictly scoped to user)
+    const { data: accounts } = await auth.supabase
       .from('financial_accounts')
-      .select('id, account_name, bank_name, account_number, account_type, is_liability');
-
-    if (auth.user?.id) {
-      accQuery = accQuery.or(`user_id.eq.${auth.user.id},user_id.is.null`);
-    }
-
-    const { data: accounts } = await accQuery;
+      .select('id, account_name, bank_name, account_number, account_type, is_liability')
+      .eq('user_id', auth.user.id);
 
     // Enrich inbox items with matched contact info AND re-match account if null
     const enrichedItems = (inboxItems || []).map((item: any) => {
@@ -392,9 +456,17 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: 'Contact nickname is required' }, { status: 400 });
       }
 
+      // If updating an existing contact, verify ownership first (vital for Service Role)
+      if (body.contact.id) {
+        const ownership = await checkContactOwnership(auth.supabase, body.contact.id, auth.user!.id);
+        if (!ownership.owned) {
+          return NextResponse.json({ error: ownership.error }, { status: ownership.status || 403 });
+        }
+      }
+
       const saveRes = await saveUserFavoriteContact(auth.supabase, {
         ...body.contact,
-        user_id: auth.user.id, // Strictly server-resolved user identity
+        user_id: auth.user!.id, // Strictly server-resolved user identity
       });
 
       if (!saveRes.success) {
@@ -415,7 +487,13 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: 'Contact id is required' }, { status: 400 });
       }
 
-      const delRes = await deleteUserFavoriteContact(auth.supabase, contactId);
+      // Check ownership before deleting (crucial for Service Role requests)
+      const ownership = await checkContactOwnership(auth.supabase, contactId, auth.user!.id);
+      if (!ownership.owned) {
+        return NextResponse.json({ error: ownership.error }, { status: ownership.status || 403 });
+      }
+
+      const delRes = await deleteUserFavoriteContact(auth.supabase, contactId, auth.user!.id);
       if (!delRes.success) {
         return NextResponse.json({ error: delRes.error }, { status: 400 });
       }
@@ -441,12 +519,26 @@ export async function POST(req: NextRequest) {
             { status: 400 }
           );
         }
-        if (item.type === 'TRANSFER' && (!item.matched_account_id || !item.matched_to_account_id)) {
+        if (item.type === 'TRANSFER' && (!item.matched_account_id && !item.account_id || !item.matched_to_account_id && !item.to_account_id)) {
           return NextResponse.json(
             { error: `Transfer of ฿${item.amount} requires both source and destination accounts` },
             { status: 400 }
           );
         }
+      }
+
+      // Ownership Verification: Check that all source & destination accounts belong to auth.user.id
+      const accountIdsToVerify = itemsToApprove.flatMap((item: any) => [
+        item.matched_account_id || item.account_id,
+        item.type === 'TRANSFER' ? item.matched_to_account_id || item.to_account_id : null,
+      ]);
+
+      const ownershipCheck = await validateAccountOwnership(auth.supabase, auth.user!.id, accountIdsToVerify);
+      if (!ownershipCheck.valid) {
+        return NextResponse.json(
+          { error: 'Forbidden: Account ownership check failed', details: ownershipCheck.error },
+          { status: 403 }
+        );
       }
 
       const payloads = itemsToApprove.map((item: any) => ({
@@ -515,6 +607,20 @@ export async function POST(req: NextRequest) {
 
       if (type === 'TRANSFER' && (!account_id || !to_account_id)) {
         return NextResponse.json({ error: 'Transfers require both source and destination accounts' }, { status: 400 });
+      }
+
+      // Ownership Verification: Check that source & destination accounts belong to auth.user.id
+      const accountIdsToVerify = [
+        account_id,
+        type === 'TRANSFER' ? to_account_id : null,
+      ];
+
+      const ownershipCheck = await validateAccountOwnership(auth.supabase, auth.user!.id, accountIdsToVerify);
+      if (!ownershipCheck.valid) {
+        return NextResponse.json(
+          { error: 'Forbidden: Account ownership check failed', details: ownershipCheck.error },
+          { status: 403 }
+        );
       }
 
       const txnPayload = {

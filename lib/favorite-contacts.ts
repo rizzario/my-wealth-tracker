@@ -241,12 +241,16 @@ export async function saveUserFavoriteContact(
 
     let result;
     if (contact.id) {
-      result = await supabase
+      let query = supabase
         .from('user_favorite_contacts')
         .update(payload)
-        .eq('id', contact.id)
-        .select()
-        .single();
+        .eq('id', contact.id);
+
+      if (contact.user_id) {
+        query = query.eq('user_id', contact.user_id);
+      }
+
+      result = await query.select().single();
     } else {
       result = await supabase
         .from('user_favorite_contacts')
@@ -263,18 +267,24 @@ export async function saveUserFavoriteContact(
 }
 
 /**
- * Delete a favorite contact by ID.
+ * Delete a favorite contact by ID with optional owner verification.
  */
 export async function deleteUserFavoriteContact(
   supabase: SupabaseClient,
-  contactId: string
+  contactId: string,
+  userId?: string | null
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const { error } = await supabase
+    let query = supabase
       .from('user_favorite_contacts')
       .delete()
       .eq('id', contactId);
 
+    if (userId) {
+      query = query.eq('user_id', userId);
+    }
+
+    const { error } = await query;
     if (error) throw error;
     return { success: true };
   } catch (err: any) {
