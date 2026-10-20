@@ -192,7 +192,7 @@ async function matchAccounts(
     .select('id, account_name, bank_name, account_number, account_type, is_liability');
 
   if (userId) {
-    query = query.or(`user_id.eq.${userId},user_id.is.null`);
+    query.eq('user_id', userId);
   }
 
   const { data: accounts } = await query;
@@ -673,34 +673,33 @@ export async function POST(req: NextRequest) {
     }
 
     // Insert all into slip_inbox
-    let savedRecords = null;
-    let tableExists = true;
+    const { data: savedRecords, error: insertError } =
+    await auth.supabase
+      .from('slip_inbox')
+      .insert(inboxRecordsToInsert)
+      .select();
 
-    try {
-      const { data, error } = await auth.supabase
-        .from('slip_inbox')
-        .insert(inboxRecordsToInsert)
-        .select();
+    if (insertError) {
+      console.error('[slip-inbox] Insert failed:', {
+        code: insertError.code,
+        message: insertError.message,
+      });
 
-      if (error) {
-        if (error.message?.includes('schema cache') || error.message?.includes('does not exist')) {
-          tableExists = false;
-        } else {
-          console.warn('Could not insert into slip_inbox table:', error.message);
-        }
-      } else {
-        savedRecords = data;
-      }
-    } catch {
-      tableExists = false;
+      return NextResponse.json(
+        {
+          status: 'error',
+          error: 'Failed to persist slips',
+        },
+        { status: 500 }
+      );
     }
 
     return NextResponse.json({
       status: 'success',
-      message: `Processed and staged ${inboxRecordsToInsert.length} slip(s) in inbox`,
-      count: inboxRecordsToInsert.length,
-      table_persisted: tableExists && Boolean(savedRecords),
-      data: savedRecords || inboxRecordsToInsert.map((rec, idx) => ({ id: `ephemeral_${Date.now()}_${idx}`, ...rec })),
+      message: `Saved ${savedRecords.length} slip(s)`,
+      count: savedRecords.length,
+      table_persisted: true,
+      data: savedRecords,
     });
   } catch (err: any) {
     console.error('Error in /api/slip-inbox:', err);
