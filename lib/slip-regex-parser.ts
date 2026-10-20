@@ -112,7 +112,8 @@ const CATEGORY_RULES: CategoryKeywordRule[] = [
     type: 'TRANSFER',
     keywords: [
       'ชำระค่าบัตรเครดิต', 'ชำระบัตร', 'บัตรเครดิต', 'credit card', 'ktc', 'cardx',
-      'aeon', 'central the 1', 'first choice', 'เฟิร์สช้อยส์', 'citibank', 'uob credit'
+      'aeon', 'central the 1', 'first choice', 'เฟิร์สช้อยส์', 'citibank', 'uob credit',
+      'มาสเตอร์ คาร์ด', 'มาสเตอร์การ์ด', 'mastercard', 'visa card', 'วีซ่า คาร์ด', 'tmrw มาสเตอร์'
     ],
   },
   {
@@ -121,11 +122,20 @@ const CATEGORY_RULES: CategoryKeywordRule[] = [
     keywords: ['โอนเงินระหว่างบัญชี', 'โอนให้ตัวเอง', 'โอนเข้าบัญชีตนเอง', 'ออมเงินตนเอง'],
   },
   {
+    category: 'บิล & สาธารณูปโภค',
+    type: 'EXPENSE',
+    keywords: [
+      'จ่ายบิล', 'ค่าน้ำ', 'ค่าไฟ', 'การไฟฟ้านครหลวง', 'การไฟฟ้าส่วนภูมิภาค', 'กฟน', 'กฟภ', 'mea', 'pea',
+      'การประปานครหลวง', 'การประปาส่วนภูมิภาค', 'mwa', 'pwa', 'ค่าเน็ต', 'true internet', 'ais fibre',
+      '3bb', 'nt broadband', 'ทรู', 'ais', 'dtac'
+    ],
+  },
+  {
     category: 'ให้ครอบครัว',
     type: 'EXPENSE',
     keywords: [
       'ให้ครอบครัว', 'ครอบครัว', 'คุณแม่', 'คุณพ่อ', 'คุณยาย', 'คุณตา', 'คุณปู่', 'คุณย่า',
-      'ปราณี', 'กิตติรุ่งเจริญ', 'ให้แม่', 'ให้พ่อ', 'ส่งให้แม่', 'ส่งให้พ่อ', 'family'
+      'ให้แม่', 'ให้พ่อ', 'ส่งให้แม่', 'ส่งให้พ่อ', 'family'
     ],
   },
   {
@@ -362,8 +372,24 @@ export function extractDateTime(
 } {
   const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
 
-  // Time extractor helper (e.g. "09:15 น.", "09:15:30", "14.30 น.")
-  const timeRegex = /(?:เวลา\s*)?([012]?\d)[:.]([0-5]\d)(?:[:.]([0-5]\d))?\s*(?:น\.?|hrs?)?/i;
+  // Time extractor helper (e.g. "09:15 น.", "09:15:30", "14.30 น.", "03:34 PM")
+  const timeRegex = /(?:เวลา\s*)?([012]?\d)[:.]([0-5]\d)(?:[:.]([0-5]\d))?\s*(AM|PM|น\.?|hrs?)?/i;
+
+  function parseTime(match: RegExpMatchArray) {
+    let h = parseInt(match[1], 10);
+    const m = match[2].padStart(2, '0');
+    const s = match[3] ? match[3].padStart(2, '0') : '00';
+    const meridian = (match[4] || '').toUpperCase();
+
+    if (meridian === 'PM' && h < 12) h += 12;
+    else if (meridian === 'AM' && h === 12) h = 0;
+
+    return {
+      h: String(h).padStart(2, '0'),
+      m,
+      s,
+    };
+  }
 
   let foundYear: number | null = null;
   let foundMonth: string | null = null; // '01'-'12'
@@ -408,9 +434,10 @@ export function extractDateTime(
         // Look for time in the same or adjacent line
         const tMatch = line.match(timeRegex);
         if (tMatch) {
-          foundHour = tMatch[1].padStart(2, '0');
-          foundMin = tMatch[2].padStart(2, '0');
-          if (tMatch[3]) foundSec = tMatch[3].padStart(2, '0');
+          const parsed = parseTime(tMatch);
+          foundHour = parsed.h;
+          foundMin = parsed.m;
+          foundSec = parsed.s;
           matchedRules['time'] = `Time matched in same line: "${line}" -> ${foundHour}:${foundMin}:${foundSec}`;
         }
         break;
@@ -451,9 +478,10 @@ export function extractDateTime(
 
           const tMatch = line.match(timeRegex);
           if (tMatch) {
-            foundHour = tMatch[1].padStart(2, '0');
-            foundMin = tMatch[2].padStart(2, '0');
-            if (tMatch[3]) foundSec = tMatch[3].padStart(2, '0');
+            const parsed = parseTime(tMatch);
+            foundHour = parsed.h;
+            foundMin = parsed.m;
+            foundSec = parsed.s;
             matchedRules['time'] = `Time matched in same line: "${line}" -> ${foundHour}:${foundMin}:${foundSec}`;
           }
           break;
@@ -465,11 +493,16 @@ export function extractDateTime(
   // Strategy 3: Search for separate time if not found yet
   if (!matchedRules['time']) {
     for (const line of lines) {
+      // Avoid matching lines that represent currency amounts or reference codes
+      if (/thb|บาท|\$|fee|ค่าธรรมเนียม/i.test(line)) continue;
+      if (/ref|หมายเลขอ้างอิง|เลขที่อ้างอิง/i.test(line)) continue;
+
       const tMatch = line.match(timeRegex);
       if (tMatch) {
-        foundHour = tMatch[1].padStart(2, '0');
-        foundMin = tMatch[2].padStart(2, '0');
-        if (tMatch[3]) foundSec = tMatch[3].padStart(2, '0');
+        const parsed = parseTime(tMatch);
+        foundHour = parsed.h;
+        foundMin = parsed.m;
+        foundSec = parsed.s;
         matchedRules['time'] = `Time separate match in "${line}" -> ${foundHour}:${foundMin}:${foundSec}`;
         break;
       }
@@ -606,8 +639,8 @@ export function extractAccounts(
 ): { senderAccount: string | null; receiverAccount: string | null } {
   const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
 
-  // Pattern for masked account numbers (with 'x' or 'X' or digits or '*' or '#')
-  const accRegex = /([0-9xX*#]{2,5}[-\s][0-9xX*#]{1,5}[-\s]?[0-9xX*#\-]*(?:[0-9]{3,4}|[0-9xX*#]+))/;
+  // Pattern for masked account numbers (supports 2 to 5 segments separated by space/dash, e.g. "xXX XXX 193 3", "XXXX XXXX XXXX 1688", "208-4-xxx978")
+  const accRegex = /([0-9xX*#]{1,6}(?:[-\s][0-9xX*#]{1,6}){1,5})/;
   const accountsFound: string[] = [];
 
   // Special Check: G-Wallet ID (Paotang)
@@ -628,8 +661,8 @@ export function extractAccounts(
   }
 
   for (const line of lines) {
-    // Avoid date patterns or reference numbers or Thai dates
-    if (/\d{4}-\d{2}-\d{2}|ref|รหัส|\d{1,2}\s*(?:ม\.ค|ก\.พ|มี\.ค|เม\.ย|พ\.ค|มิ\.ย|ก\.ค|ส\.ค|ก\.ย|ต\.ค|พ\.ย|ธ\.ค)|25[56789]\d|\d{2}:\d{2}/i.test(line)) continue;
+    // Avoid date patterns, reference numbers, Thai dates, or currency amount lines
+    if (/\d{4}-\d{2}-\d{2}|ref|รหัส|\d{1,2}\s*(?:ม\.ค|ก\.พ|มี\.ค|เม\.ย|พ\.ค|มิ\.ย|ก\.ค|ส\.ค|ก\.ย|ต\.ค|พ\.ย|ธ\.ค)|25[56789]\d|\d{2}:\d{2}|thb|บาท/i.test(line)) continue;
 
     const match = line.match(accRegex);
     if (match) {
@@ -713,7 +746,29 @@ export function extractMemo(
   text: string,
   matchedRules: Record<string, string>
 ): string | null {
-  const memoRegex = /(?:บันทึกช่วยจำ|บันทึก|memo|note)\s*[:=]?\s*([^\n\r]+)/i;
+  const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
+
+  // Strategy 1: Multi-line check for memo labels (e.g. UOB "โน้ตช่วยจำ \n จ่ายบิล")
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const m = line.match(/^(?:บันทึกช่วยจำ|โน้ตช่วยจำ|บันทึก|โน้ต|memo|note)\s*[:=]?\s*(.*)/i);
+    if (m) {
+      let memoCandidate = m[1].trim();
+      if (!memoCandidate && i + 1 < lines.length) {
+        const nextLine = lines[i + 1].trim();
+        if (!/^(สแกน|qr|ตรวจสอบ|ref|หมายเลข|รหัส|fee|ค่าธรรมเนียม)/i.test(nextLine)) {
+          memoCandidate = nextLine;
+        }
+      }
+      if (memoCandidate && memoCandidate.length > 0 && !/^\s*[-_.]+\s*$/.test(memoCandidate)) {
+        matchedRules['memo'] = `Matched memo: "${memoCandidate}"`;
+        return memoCandidate;
+      }
+    }
+  }
+
+  // Strategy 2: Inline regex
+  const memoRegex = /(?:บันทึกช่วยจำ|โน้ตช่วยจำ|บันทึก|โน้ต|memo|note)\s*[:=]?\s*([^\n\r]+)/i;
   const match = text.match(memoRegex);
   if (match) {
     const cleaned = match[1].trim();
@@ -825,7 +880,10 @@ export function extractReceiverName(
     for (let k = secondAccIdx - 1; k >= Math.max(firstAccIdx + 1, secondAccIdx - 3); k--) {
       const l = lines[k];
       if (/^(k\+|verified)/i.test(l)) continue;
-      if (KNOWN_BANKS.some((b) => b.regex.test(l))) continue;
+      // Skip pure bank headers like "KBANK", "UOB", but NOT account/card types like "ยูโอบี/TMRW มาสเตอร์ คาร์ด"
+      const isPureBank = KNOWN_BANKS.some((b) => b.regex.test(l)) &&
+        !/(?:บัตร|คาร์ด|card|master|visa|เครดิต|credit|สินเชื่อ|account)/i.test(l);
+      if (isPureBank) continue;
       if (l.length >= 2 && !/^[0-9xX*\-:\s]+$/.test(l)) {
         matchedRules['receiver_name'] = `Matched receiver above 2nd account: "${l}"`;
         return l;
