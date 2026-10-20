@@ -410,7 +410,7 @@ export default function ProfilePage() {
                 </label>
                 <input
                   type="text"
-                  placeholder="เช่น กิตติกร"
+                  placeholder="เช่น สมชาย"
                   value={firstName}
                   onChange={(e) => setFirstName(e.target.value)}
                   className="w-full px-3.5 py-2.5 text-sm border border-slate-300 rounded-xl bg-slate-50/50 focus:bg-white outline-none focus:ring-2 focus:ring-emerald-500 transition font-medium"
@@ -424,7 +424,7 @@ export default function ProfilePage() {
                 </label>
                 <input
                   type="text"
-                  placeholder="เช่น วัฒนาสกุล"
+                  placeholder="เช่น ใจดี"
                   value={lastName}
                   onChange={(e) => setLastName(e.target.value)}
                   className="w-full px-3.5 py-2.5 text-sm border border-slate-300 rounded-xl bg-slate-50/50 focus:bg-white outline-none focus:ring-2 focus:ring-emerald-500 transition font-medium"

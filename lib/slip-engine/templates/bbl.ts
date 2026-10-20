@@ -40,7 +40,7 @@ export const BBL_TEMPLATE: BankSlipTemplate = {
   nameRules: {
     strategy: 'PAIRED_HEADER',
     senderLabels: ['จาก', 'from', 'ผู้โอน'],
-    receiverLabels: ['ไปที่', 'ไปยัง', 'เข้าบัญชี', 'to'],
+    receiverLabels: ['ไปที่', 'ไปยัง', 'เข้าบัญชี'],
     pairedHeaderMaxGap: 2,
   },
   intraBankSupported: true,

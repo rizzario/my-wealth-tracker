@@ -71,6 +71,7 @@ export interface AccountOption {
   id: string;
   account_name: string;
   bank_name?: string | null;
+  account_number?: string | null;
   account_type: string;
   currency?: string;
   current_balance: number;
@@ -83,8 +84,9 @@ interface ExpenseIncomeSectionProps {
 }
 
 // หมวดหมู่รายจ่ายยอดนิยมพร้อมไอคอน/สี
-const POPULAR_EXPENSE_CATEGORIES = [
+export const POPULAR_EXPENSE_CATEGORIES = [
   'อาหาร & เครื่องดื่ม',
+  'ให้ครอบครัว',
   'เดินทาง & ค่าน้ำมัน',
   'ช้อปปิ้ง & ของใช้',
   'ที่พัก & ค่าเช่า',
@@ -98,6 +100,18 @@ const POPULAR_EXPENSE_CATEGORIES = [
   'ของขวัญ / บริจาค / การกุศล',
   'อื่นๆ',
 ];
+
+// Map of legacy or AI-generated variations to canonical standard categories
+const CATEGORY_NORMALIZATION_MAP: Record<string, string> = {
+  'ช้อปปิ้ง': 'ช้อปปิ้ง & ของใช้',
+  'เดินทาง': 'เดินทาง & ค่าน้ำมัน',
+  'ค่าน้ำ-ค่าไฟ-เน็ต': 'ค่าน้ำ / ค่าไฟ / อินเทอร์เน็ต',
+  'ค่าที่พัก & คอนโด': 'ที่พัก & ค่าเช่า',
+  'บันเทิง & ท่องเที่ยว': 'ความบันเทิง & สตรีมมิ่ง',
+  'สุขภาพ & ประกัน': 'สุขภาพ & ยารักษาโรค',
+  'การศึกษา': 'การศึกษา & พัฒนาตนเอง',
+  'ลงทุน & ออมเงิน': 'โอนเงินเพื่อลงทุน',
+};
 
 // หมวดหมู่รายรับยอดนิยม
 const POPULAR_INCOME_CATEGORIES = [
@@ -139,10 +153,13 @@ function CategorySelect({
   required = false,
   type = 'EXPENSE',
 }: CategorySelectProps) {
-  // รวบรวมหมวดหมู่ทั้งหมด โดยหากมีค่าปัจจุบันที่ไม่อยู่ในลิสต์ ให้แสดงรวมไว้ด้วยเสมอเพื่อป้องกันข้อมูลสูญหาย
+  // รวบรวมหมวดหมู่ทั้งหมด โดยหากมีค่าปัจจุบันที่ไม่อยู่ในลิสต์ ให้ normalize และแสดงรวมไว้ด้วยเสมอเพื่อป้องกันข้อมูลสูญหาย
   const allCategories = useMemo(() => {
-    if (value && !categories.includes(value)) {
-      return [value, ...categories];
+    if (value) {
+      const normalizedValue = CATEGORY_NORMALIZATION_MAP[value] || value;
+      if (!categories.includes(normalizedValue)) {
+        return [normalizedValue, ...categories];
+      }
     }
     return categories;
   }, [categories, value]);
@@ -344,7 +361,7 @@ export default function ExpenseIncomeSection({
     try {
       const { data, error } = await supabase
         .from('financial_accounts')
-        .select('id, account_name, bank_name, account_type, currency, current_balance, is_liability')
+        .select('id, account_name, bank_name, account_number, account_type, currency, current_balance, is_liability')
         .order('is_liability', { ascending: true })
         .order('created_at', { ascending: true });
 
@@ -439,7 +456,7 @@ export default function ExpenseIncomeSection({
     return () => window.removeEventListener('focus', handleFocus);
   }, []);
 
-  // ดึงหมวดหมู่ยอดนิยมตามประเภทรายการ (พร้อมรวบรวมหมวดหมู่ที่ผู้ใช้เคยบันทึกไว้ในอดีต)
+  // ดึงหมวดหมู่ยอดนิยมตามประเภทรายการ (พร้อมรวบรวมหมวดหมู่ที่ผู้ใช้เคยบันทึกไว้ในอดีต และคัดกรองคำแปลกปลอมออก)
   const getCategoriesForType = (type: string) => {
     const baseList =
       type === 'TRANSFER'
@@ -452,7 +469,18 @@ export default function ExpenseIncomeSection({
       new Set(
         transactions
           .filter((t) => t.type === type && t.category?.trim())
-          .map((t) => t.category.trim())
+          .map((t) => {
+            const raw = t.category.trim();
+            return CATEGORY_NORMALIZATION_MAP[raw] || raw;
+          })
+          .filter((cat) => {
+            // กรองคำขยะ หรือข้อความ OCR ที่หลุดเข้าไปใน category
+            if (!cat || cat.length > 30) return false;
+            if (/^\d+$/.test(cat)) return false;
+            if (/^Ref[:\s]/i.test(cat)) return false;
+            if (cat.includes('http') || cat.includes('www.')) return false;
+            return true;
+          })
       )
     );
 

@@ -2,6 +2,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createAdminClient } from '@supabase/supabase-js';
 import { parseThaiBankSlipOcr, ParsedSlipRegexResult, KNOWN_BANKS } from '@/lib/slip-regex-parser';
+import {
+  matchMaskedNumber,
+  matchFavoriteContact,
+  fetchUserFavoriteContacts,
+  saveUserFavoriteContact,
+  deleteUserFavoriteContact,
+  UserFavoriteContact,
+} from '@/lib/favorite-contacts';
 
 export const dynamic = 'force-dynamic';
 
@@ -90,15 +98,72 @@ async function authenticateRequest(req: NextRequest) {
 }
 
 /**
- * Smart matching against user's financial accounts
+ * Robust Bank Matching Helper.
+ * Checks bank code, aliases, account names, and regex patterns from KNOWN_BANKS.
  */
-async function matchAccounts(supabase: any, userId: string | null, slip: ParsedSlipRegexResult) {
-  if (!userId) return { matchedAccountId: null, matchedToAccountId: null, accounts: [] };
+function matchBank(
+  slipBankCodeOrName: string | null | undefined,
+  accBankName: string | null | undefined,
+  accName: string | null | undefined
+): boolean {
+  if (!slipBankCodeOrName) return false;
+  const slipBank = slipBankCodeOrName.trim().toUpperCase();
+  const accBank = (accBankName || '').trim().toUpperCase();
+  const accAccountName = (accName || '').trim().toUpperCase();
 
-  const { data: accounts } = await supabase
+  // 1. Direct contains or equality
+  if (accBank && (slipBank.includes(accBank) || accBank.includes(slipBank))) return true;
+  if (accAccountName && (slipBank.includes(accAccountName) || accAccountName.includes(slipBank))) return true;
+
+  // 2. Look up slip bank in KNOWN_BANKS
+  const slipPattern = KNOWN_BANKS.find(
+    (b) => b.code.toUpperCase() === slipBank || b.name.toUpperCase() === slipBank
+  );
+  if (slipPattern) {
+    if (slipPattern.regex.test(accBankName || '') || slipPattern.regex.test(accName || '')) {
+      return true;
+    }
+  }
+
+  // 3. Look up account bank in KNOWN_BANKS
+  const accPattern = KNOWN_BANKS.find(
+    (b) => (accBankName && b.regex.test(accBankName)) || (accName && b.regex.test(accName))
+  );
+  if (accPattern) {
+    if (accPattern.code.toUpperCase() === slipBank || accPattern.regex.test(slipBankCodeOrName)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Smart matching against user's financial accounts.
+ * Uses robust prefix+suffix decomposition for masked accounts (e.g. BBL 3-digit suffix '208-4-xxx978').
+ */
+async function matchAccounts(
+  supabase: any,
+  userId: string | null,
+  slip: {
+    sender_bank?: string | null;
+    sender_account_masked?: string | null;
+    receiver_bank?: string | null;
+    receiver_account_masked?: string | null;
+    receiver_name?: string | null;
+    type?: string;
+    category?: string;
+  }
+) {
+  let query = supabase
     .from('financial_accounts')
-    .select('id, account_name, bank_name, account_number, account_type, is_liability')
-    .eq('user_id', userId);
+    .select('id, account_name, bank_name, account_number, account_type, is_liability');
+
+  if (userId) {
+    query = query.or(`user_id.eq.${userId},user_id.is.null`);
+  }
+
+  const { data: accounts } = await query;
 
   if (!accounts || accounts.length === 0) {
     return { matchedAccountId: null, matchedToAccountId: null, accounts: [] };
@@ -107,36 +172,22 @@ async function matchAccounts(supabase: any, userId: string | null, slip: ParsedS
   let matchedAccountId: string | null = null;
   let matchedToAccountId: string | null = null;
 
-  const senderBank = (slip.sender_bank || '').toUpperCase();
-  const senderBankPattern = KNOWN_BANKS.find((b) => b.code.toUpperCase() === senderBank);
-  const senderAccDigits = (slip.sender_account_masked || '').replace(/[^0-9]/g, '');
-
   let bestMatchScore = 0;
 
   for (const acc of accounts) {
-    const accDigits = (acc.account_number || '').replace(/[^0-9]/g, '');
-    const accBank = (acc.bank_name || '').toUpperCase();
-    const accName = (acc.account_name || '').toUpperCase();
+    const accNumber = acc.account_number || '';
 
-    // Digits match: exact match or last 4 digits
+    // Digits match: robust masked number matching (handles 3-digit or 4-digit suffixes, hyphens, spaces)
     const numberMatches =
-      senderAccDigits.length >= 3 &&
-      accDigits.length >= 3 &&
-      (senderAccDigits.endsWith(accDigits.slice(-4)) ||
-       accDigits.endsWith(senderAccDigits.slice(-4)) ||
-       senderAccDigits === accDigits);
+      matchMaskedNumber(slip.sender_account_masked, accNumber) ||
+      matchMaskedNumber(accNumber, slip.sender_account_masked);
 
     // Bank match: via bank code, bank name, or bank pattern regex
-    const bankMatches =
-      (senderBank && (accBank.includes(senderBank) || senderBank.includes(accBank))) ||
-      (senderBank && accName.includes(senderBank)) ||
-      (senderBankPattern &&
-        (senderBankPattern.regex.test(acc.bank_name || '') ||
-         senderBankPattern.regex.test(acc.account_name || '')));
+    const bankMatches = matchBank(slip.sender_bank, acc.bank_name, acc.account_name);
 
     let score = 0;
     if (numberMatches && bankMatches) score = 100;
-    else if (numberMatches) score = 80;
+    else if (numberMatches) score = 85;
     else if (bankMatches && !acc.is_liability) score = 50;
 
     if (score > bestMatchScore) {
@@ -145,36 +196,29 @@ async function matchAccounts(supabase: any, userId: string | null, slip: ParsedS
     }
   }
 
-  // If TRANSFER or Credit card payment, match destination
+  // If TRANSFER or Credit card payment, match destination account
   if (slip.type === 'TRANSFER' || slip.category === 'ชำระค่าบัตรเครดิต') {
     const receiverName = (slip.receiver_name || '').toUpperCase();
-    const receiverBank = (slip.receiver_bank || '').toUpperCase();
-    const receiverBankPattern = KNOWN_BANKS.find((b) => b.code.toUpperCase() === receiverBank);
-    const receiverAccDigits = (slip.receiver_account_masked || '').replace(/[^0-9]/g, '');
 
     for (const acc of accounts) {
       if (acc.id === matchedAccountId) continue;
 
-      const accDigits = (acc.account_number || '').replace(/[^0-9]/g, '');
-      const accBank = (acc.bank_name || '').toUpperCase();
-      const accName = (acc.account_name || '').toUpperCase();
-
+      const accNumber = acc.account_number || '';
       const numberMatches =
-        receiverAccDigits.length >= 3 &&
-        accDigits.length >= 3 &&
-        (receiverAccDigits.endsWith(accDigits.slice(-4)) ||
-         accDigits.endsWith(receiverAccDigits.slice(-4)) ||
-         receiverAccDigits === accDigits);
+        matchMaskedNumber(slip.receiver_account_masked, accNumber) ||
+        matchMaskedNumber(accNumber, slip.receiver_account_masked);
 
+      const bankMatches = matchBank(slip.receiver_bank, acc.bank_name, acc.account_name);
       const nameMatches =
-        (receiverName && (receiverName.includes(accBank) || receiverName.includes(accName))) ||
-        (receiverBankPattern &&
-          (receiverBankPattern.regex.test(acc.bank_name || '') ||
-           receiverBankPattern.regex.test(acc.account_name || '')));
+        receiverName &&
+        ((acc.bank_name && receiverName.includes(acc.bank_name.toUpperCase())) ||
+         (acc.account_name && receiverName.includes(acc.account_name.toUpperCase())));
 
-      if (numberMatches || nameMatches) {
+      if (numberMatches && (bankMatches || acc.is_liability)) {
         matchedToAccountId = acc.id;
         break;
+      } else if (numberMatches || (bankMatches && acc.is_liability) || nameMatches) {
+        matchedToAccountId = acc.id;
       }
     }
   }
@@ -214,9 +258,70 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
+    // Fetch user's favorite contacts to enrich slips
+    const contacts = await fetchUserFavoriteContacts(auth.supabase, auth.user?.id || null);
+
+    // Fetch user accounts once to re-match any null matched_account_id
+    let accQuery = auth.supabase
+      .from('financial_accounts')
+      .select('id, account_name, bank_name, account_number, account_type, is_liability');
+
+    if (auth.user?.id) {
+      accQuery = accQuery.or(`user_id.eq.${auth.user.id},user_id.is.null`);
+    }
+
+    const { data: accounts } = await accQuery;
+
+    // Enrich inbox items with matched contact info AND re-match account if null
+    const enrichedItems = (inboxItems || []).map((item: any) => {
+      const matched = matchFavoriteContact(contacts, item);
+
+      // Auto-assign category if matched and currently 'อื่นๆ' or empty
+      const resolvedCategory =
+        matched?.default_category && (!item.category || item.category === 'อื่นๆ')
+          ? matched.default_category
+          : item.category || 'อื่นๆ';
+
+      // Auto-match source account if currently null
+      let resolvedAccountId = item.matched_account_id;
+      if (!resolvedAccountId && accounts && accounts.length > 0) {
+        let bestScore = 0;
+        for (const acc of accounts) {
+          const numberMatches =
+            matchMaskedNumber(item.sender_account_masked, acc.account_number) ||
+            matchMaskedNumber(acc.account_number, item.sender_account_masked);
+          const bankMatches = matchBank(item.sender_bank, acc.bank_name, acc.account_name);
+          let score = 0;
+          if (numberMatches && bankMatches) score = 100;
+          else if (numberMatches) score = 85;
+          else if (bankMatches && !acc.is_liability) score = 50;
+          if (score > bestScore) {
+            bestScore = score;
+            resolvedAccountId = acc.id;
+          }
+        }
+      }
+
+      return {
+        ...item,
+        category: resolvedCategory,
+        matched_account_id: resolvedAccountId,
+        matched_contact: matched
+          ? {
+              id: matched.id,
+              nickname: matched.nickname,
+              group_name: matched.group_name,
+              icon: matched.icon,
+              default_category: matched.default_category,
+            }
+          : null,
+      };
+    });
+
     return NextResponse.json({
       status: 'ok',
-      data: inboxItems || [],
+      data: enrichedItems,
+      contacts: contacts || [],
       table_ready: true,
     });
   } catch (err: any) {
@@ -244,6 +349,46 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json().catch(() => ({}));
+
+    // Action: Save or Update a Favorite Contact
+    if (body.action === 'save_contact') {
+      if (!body.contact || !body.contact.nickname) {
+        return NextResponse.json({ error: 'Contact nickname is required' }, { status: 400 });
+      }
+
+      const saveRes = await saveUserFavoriteContact(auth.supabase, {
+        ...body.contact,
+        user_id: auth.user?.id || null,
+      });
+
+      if (!saveRes.success) {
+        return NextResponse.json({ error: saveRes.error }, { status: 400 });
+      }
+
+      return NextResponse.json({
+        status: 'success',
+        message: 'Favorite contact saved successfully',
+        data: saveRes.data,
+      });
+    }
+
+    // Action: Delete a Favorite Contact
+    if (body.action === 'delete_contact') {
+      const contactId = body.id || body.contact_id;
+      if (!contactId) {
+        return NextResponse.json({ error: 'Contact id is required' }, { status: 400 });
+      }
+
+      const delRes = await deleteUserFavoriteContact(auth.supabase, contactId);
+      if (!delRes.success) {
+        return NextResponse.json({ error: delRes.error }, { status: 400 });
+      }
+
+      return NextResponse.json({
+        status: 'success',
+        message: 'Favorite contact deleted successfully',
+      });
+    }
 
     // Action 1: Bulk Approve multiple inbox items into expense_income_transactions
     if (body.action === 'approve_bulk' || (body.action === 'approve' && Array.isArray(body.items))) {
@@ -393,6 +538,9 @@ export async function POST(req: NextRequest) {
     const defaultSource = body.source || 'iphone_shortcut';
     const inboxRecordsToInsert: any[] = [];
 
+    // Fetch user contacts for auto-enrichment and classification
+    const contacts = await fetchUserFavoriteContacts(auth.supabase, auth.user?.id || null);
+
     for (const rawItem of rawSlipsList) {
       const rawText =
         typeof rawItem === 'string'
@@ -427,6 +575,17 @@ export async function POST(req: NextRequest) {
             raw_text: rawText,
           };
 
+      // Check against user's favorite contacts (e.g. family, friends, payees)
+      const matchedContact = matchFavoriteContact(contacts, parsed);
+      if (matchedContact) {
+        if (matchedContact.default_category) {
+          parsed.category = matchedContact.default_category;
+        }
+        if (matchedContact.default_type) {
+          parsed.type = matchedContact.default_type;
+        }
+      }
+
       const { matchedAccountId, matchedToAccountId, accounts } = await matchAccounts(
         auth.supabase,
         auth.user?.id || null,
@@ -434,6 +593,9 @@ export async function POST(req: NextRequest) {
       );
 
       const noteParts: string[] = [];
+      if (matchedContact) {
+        noteParts.push(`[${matchedContact.icon || '💖'} ${matchedContact.nickname} (${matchedContact.group_name})]`);
+      }
       if (parsed.receiver_name) noteParts.push(`ถึง: ${parsed.receiver_name}`);
       if (parsed.memo) noteParts.push(`[${parsed.memo}]`);
       if (parsed.reference_number) noteParts.push(`Ref: ${parsed.reference_number}`);

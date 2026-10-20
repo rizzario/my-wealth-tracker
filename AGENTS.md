@@ -383,6 +383,31 @@ Break-by-bank configuration table for deterministic, zero-AI-cost slip extractio
 
 ---
 
+### 3.14 `user_favorite_contacts`
+
+User favorite contacts directory (Family members, Friends, Work, regular Payees) bound to `user_id`. Used to enrich slips with friendly display names (e.g. "💖 คุณแม่ [Family]"), auto-assign default expense categories (e.g. `'ให้ครอบครัว'`), and prevent manual repetitive categorization.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | UUID, PK, default `gen_random_uuid()` | |
+| `user_id` | UUID, nullable, FK → `auth.users(id)` CASCADE | Multi-user owner binding |
+| `nickname` | VARCHAR(100), NOT NULL | Friendly display name (e.g. `'คุณแม่'`, `'ภรรยา'`, `'Netflix'`) |
+| `group_name` | VARCHAR(50), NOT NULL, default `'Family'` | `'Family'` \| `'Friends'` \| `'Work'` \| `'Shop'` \| `'Other'` |
+| `icon` | VARCHAR(30), default `'heart'` | Display emoji / icon e.g. `'💖'`, `'👨‍👩‍👧'`, `'💼'`, `'🛒'` |
+| `default_category` | VARCHAR(50), default `'ให้ครอบครัว'` | Auto-assigned category when slip matches this contact |
+| `default_type` | VARCHAR(10), default `'EXPENSE'` | `'EXPENSE'` \| `'INCOME'` \| `'TRANSFER'` |
+| `matched_names` | TEXT[], NOT NULL, default `'{}'` | Array of sender/receiver name patterns e.g. `['นางปราณี กิตติรุ่งเจริญ', 'ปราณี']` |
+| `matched_accounts` | TEXT[], default `'{}'` | Array of full or masked accounts e.g. `['211-0-xxx988', 'xxx988', '988']` |
+| `bank_code` | VARCHAR(30), nullable | Optional bank filter e.g. `'BBL'`, `'KBANK'`, `'SCB'` |
+| `note` | TEXT, nullable | |
+| `created_at` / `updated_at` | TIMESTAMPTZ, default `now()` | |
+
+**RLS & Indexes:**
+- RLS enabled: `auth.uid() = user_id` for `ALL` operations (`USING (auth.uid() = user_id OR user_id IS NULL) WITH CHECK (auth.uid() = user_id OR user_id IS NULL)`).
+- Indexes: `idx_fav_contacts_user` on `user_id`, `idx_fav_contacts_group` on `(user_id, group_name)`.
+
+---
+
 ## 4. Architecture & Data Flow
 
 ### 4.1 SSR session guard — `middleware.ts`
@@ -476,10 +501,19 @@ To achieve 100% deterministic, 0-cost, and 0ms-latency slip extraction on-device
    - **Paotang (`PAOTANG`)**: G-Wallet ID line detection, Tungngern merchant identification, and Co-pay subsidy net paid calculation (`118 - 70.80 = 47.20`).
    - **Generic (`GENERIC`)**: Universal fallback for BAY, KTB, TTB, GSB, TrueMoney, etc.
 
-4. **Account Matching Scoring (Heuristic Matcher in `app/api/slip-inbox/route.ts`)**:
-   - Weight 100: Masked account number match + bank alias match.
-   - Weight 80: Masked account number match alone.
-   - Weight 50: Bank name/alias match alone.
+4. **Account Matching & Masked Decomposing Algorithm (`lib/favorite-contacts.ts` & `matchAccounts`)**:
+   - **Prefix + Suffix Decomposition**: Resolves the Thai bank slip masked account problem (especially Bangkok Bank / BBL where unmasked suffixes are 3 digits, e.g. `208-4-xxx978` -> prefix `2084`, suffix `978`).
+   - Normalizes and strips delimiters, then decomposes masked patterns by `/[xX*#]+/`.
+   - Checks if `targetDigits.startsWith(prefix) && targetDigits.endsWith(suffix)` or matches trailing 3-4 digits.
+   - Symmetrically matches full 10-digit accounts (`208-4-123978`), unhyphenated accounts (`2084123978`), masked accounts (`208-4-xxx978`), and trailing suffixes (`978`).
+   - Multi-tier scoring:
+     - Weight 100: Masked account number match + bank alias match.
+     - Weight 85: Masked account number match alone.
+     - Weight 50: Bank name/alias match alone.
+
+5. **Favorite Contacts Directory & Auto-Enrichment (`lib/favorite-contacts.ts`)**:
+   - `matchFavoriteContact(contacts, slip)`: Weighted heuristic matching across receiver name, receiver account, sender name, and bank code.
+   - Automatically enriches slips with friendly nicknames (`💖 คุณแม่ [Family]`), auto-assigns custom default category (e.g. `'ให้ครอบครัว'`), and displays direct management controls in `SlipInboxModal`.
 
 ---
 

@@ -37,6 +37,42 @@ import {
   ArrowRight,
 } from 'lucide-react';
 import { AccountOption } from './ExpenseIncomeSection';
+import { matchMaskedNumber } from '@/lib/favorite-contacts';
+import { KNOWN_BANKS } from '@/lib/slip-regex-parser';
+
+function matchBankHelper(
+  slipBank: string | null | undefined,
+  accBankName: string | null | undefined,
+  accName: string | null | undefined
+): boolean {
+  if (!slipBank) return false;
+  const sBank = slipBank.trim().toUpperCase();
+  const aBank = (accBankName || '').trim().toUpperCase();
+  const aName = (accName || '').trim().toUpperCase();
+
+  if (aBank && (sBank.includes(aBank) || aBank.includes(sBank))) return true;
+  if (aName && (sBank.includes(aName) || aName.includes(sBank))) return true;
+
+  const slipPattern = KNOWN_BANKS.find(
+    (b) => b.code.toUpperCase() === sBank || b.name.toUpperCase() === sBank
+  );
+  if (slipPattern) {
+    if (slipPattern.regex.test(accBankName || '') || slipPattern.regex.test(accName || '')) {
+      return true;
+    }
+  }
+
+  const accPattern = KNOWN_BANKS.find(
+    (b) => (accBankName && b.regex.test(accBankName)) || (accName && b.regex.test(accName))
+  );
+  if (accPattern) {
+    if (accPattern.code.toUpperCase() === sBank || accPattern.regex.test(slipBank)) {
+      return true;
+    }
+  }
+
+  return false;
+}
 
 interface SlipScannerModalProps {
   isOpen: boolean;
@@ -308,8 +344,50 @@ export default function SlipScannerModal({
         }
       }
 
+      // Resolve source account: prioritize matched_account_id, then client-side account match against accounts prop
+      let resolvedAccountId = slip.matched_account_id;
+      if (!resolvedAccountId && accounts && accounts.length > 0) {
+        let bestScore = 0;
+        for (const acc of accounts) {
+          const numberMatches =
+            matchMaskedNumber(slip.sender_account_masked, acc.account_number) ||
+            matchMaskedNumber(acc.account_number, slip.sender_account_masked);
+          const bankMatches = matchBankHelper(slip.sender_bank, acc.bank_name, acc.account_name);
+          let score = 0;
+          if (numberMatches && bankMatches) score = 100;
+          else if (numberMatches) score = 85;
+          else if (bankMatches && !acc.is_liability) score = 50;
+
+          if (score > bestScore) {
+            bestScore = score;
+            resolvedAccountId = String(acc.id);
+          }
+        }
+      }
+      if (!resolvedAccountId && accounts[0]?.id) {
+        resolvedAccountId = String(accounts[0].id);
+      }
+
+      // Auto-assign category: if slip has contact or receiver matching family, default to 'ให้ครอบครัว'
+      let resolvedCategory = slip.category;
+      if (!resolvedCategory || resolvedCategory === 'อื่นๆ' || resolvedCategory === 'อาหาร & เครื่องดื่ม' || resolvedCategory === 'โอนเงินระหว่างบัญชี') {
+        if (slip.matched_contact?.default_category) {
+          resolvedCategory = slip.matched_contact.default_category;
+        } else if (
+          slip.receiver_name &&
+          (slip.receiver_name.includes('ปราณี') || slip.receiver_name.includes('แม่') || slip.receiver_name.includes('ครอบครัว'))
+        ) {
+          resolvedCategory = 'ให้ครอบครัว';
+        }
+      }
+
       // Build initial note
       const noteParts: string[] = [];
+      if (slip.matched_contact) {
+        noteParts.push(`[${slip.matched_contact.icon || '💖'} ${slip.matched_contact.nickname} (${slip.matched_contact.group_name})]`);
+      } else if (slip.receiver_name && slip.receiver_name.includes('ปราณี')) {
+        noteParts.push(`[💖 คุณแม่ (Family)]`);
+      }
       if (slip.receiver_name) noteParts.push(`ถึง: ${slip.receiver_name}`);
       if (slip.memo) noteParts.push(`[${slip.memo}]`);
       if (slip.reference_number) noteParts.push(`Ref: ${slip.reference_number}`);
@@ -319,9 +397,9 @@ export default function SlipScannerModal({
         date: parsedDate,
         time: parsedTime,
         type: slip.type || 'EXPENSE',
-        category: slip.category || 'อาหาร & เครื่องดื่ม',
+        category: resolvedCategory || 'อาหาร & เครื่องดื่ม',
         amount: slip.amount != null ? String(slip.amount) : '',
-        accountId: slip.matched_account_id || (accounts[0]?.id ? String(accounts[0].id) : ''),
+        accountId: resolvedAccountId || '',
         toAccountId: slip.matched_to_account_id || '',
         note: noteParts.join(' '),
         isHistorical: Boolean(slip.is_historical_suggested),
@@ -404,7 +482,7 @@ export default function SlipScannerModal({
         accountId: accounts[0]?.id ? String(accounts[0].id) : '',
         toAccountId: '',
         note: '',
-        isHistorical: false,
+        isHistorical: true,
         selected: true,
       }));
 
@@ -1248,11 +1326,16 @@ export default function SlipScannerModal({
                                 onChange={(e) => handleUpdateItem(item.id, 'category', e.target.value)}
                                 className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 bg-white"
                               >
-                                {(item.type === 'EXPENSE'
-                                  ? expenseCategories
-                                  : item.type === 'INCOME'
-                                  ? incomeCategories
-                                  : transferCategories
+                                {Array.from(
+                                  new Set([
+                                    item.category,
+                                    'ให้ครอบครัว',
+                                    ...(item.type === 'EXPENSE'
+                                      ? expenseCategories
+                                      : item.type === 'INCOME'
+                                      ? incomeCategories
+                                      : transferCategories),
+                                  ].filter(Boolean))
                                 ).map((cat) => (
                                   <option key={cat} value={cat}>
                                     {cat}
@@ -1499,11 +1582,16 @@ export default function SlipScannerModal({
                                     onChange={(e) => handleUpdateItem(item.id, 'category', e.target.value)}
                                     className="w-full px-2 py-1 text-xs border border-slate-200 rounded-lg outline-none focus:border-emerald-500 bg-white"
                                   >
-                                    {(item.type === 'EXPENSE'
-                                      ? expenseCategories
-                                      : item.type === 'INCOME'
-                                      ? incomeCategories
-                                      : transferCategories
+                                    {Array.from(
+                                      new Set([
+                                        item.category,
+                                        'ให้ครอบครัว',
+                                        ...(item.type === 'EXPENSE'
+                                          ? expenseCategories
+                                          : item.type === 'INCOME'
+                                          ? incomeCategories
+                                          : transferCategories),
+                                      ].filter(Boolean))
                                     ).map((cat) => (
                                       <option key={cat} value={cat}>
                                         {cat}

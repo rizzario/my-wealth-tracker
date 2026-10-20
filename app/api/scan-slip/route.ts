@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { GoogleGenAI } from '@google/genai';
 import { KNOWN_BANKS } from '@/lib/slip-regex-parser';
+import {
+  matchMaskedNumber,
+  matchFavoriteContact,
+  fetchUserFavoriteContacts,
+} from '@/lib/favorite-contacts';
 
 export const maxDuration = 60; // Allow up to 60s for vision model inference
 export const dynamic = 'force-dynamic';
@@ -69,14 +74,16 @@ const slipAnalysisSchema = {
       type: 'string',
       enum: [
         'อาหาร & เครื่องดื่ม',
-        'ช้อปปิ้ง',
-        'เดินทาง',
-        'ค่าน้ำ-ค่าไฟ-เน็ต',
-        'ค่าที่พัก & คอนโด',
-        'บันเทิง & ท่องเที่ยว',
-        'สุขภาพ & ประกัน',
-        'การศึกษา',
-        'ลงทุน & ออมเงิน',
+        'ให้ครอบครัว',
+        'เดินทาง & ค่าน้ำมัน',
+        'ช้อปปิ้ง & ของใช้',
+        'ที่พัก & ค่าเช่า',
+        'ค่าน้ำ / ค่าไฟ / อินเทอร์เน็ต',
+        'ความบันเทิง & สตรีมมิ่ง',
+        'สุขภาพ & ยารักษาโรค',
+        'การศึกษา & พัฒนาตนเอง',
+        'ประกันภัย',
+        'ผ่อนชำระ & หนี้สิน',
         'โอนเงินระหว่างบัญชี',
         'ชำระค่าบัตรเครดิต',
         'อื่นๆ',
@@ -176,10 +183,15 @@ export async function POST(req: NextRequest) {
         requestedModel === 'llama-3.2-11b-vision');
 
     // 4. Fetch user's financial accounts for smart matching
-    const { data: accounts } = await supabase
+    let accQuery = supabase
       .from('financial_accounts')
-      .select('id, account_name, bank_name, account_number, account_type, is_liability')
-      .eq('user_id', user.id);
+      .select('id, account_name, bank_name, account_number, account_type, is_liability');
+
+    if (user?.id) {
+      accQuery = accQuery.or(`user_id.eq.${user.id},user_id.is.null`);
+    }
+
+    const { data: accounts } = await accQuery;
 
     const userAccountsContext = (accounts || [])
       .map(
@@ -493,40 +505,73 @@ ${userAccountsContext}
       parsedSlip.category = 'อื่นๆ';
     }
 
+    // --- Match against Favorite Contacts (Family, Friends, Payees) ---
+    const contacts = await fetchUserFavoriteContacts(supabase, user.id);
+    const matchedContact = matchFavoriteContact(contacts, parsedSlip);
+    if (matchedContact) {
+      if (matchedContact.default_category) {
+        parsedSlip.category = matchedContact.default_category;
+      }
+      if (matchedContact.default_type) {
+        parsedSlip.type = matchedContact.default_type;
+      }
+    }
+
     // --- Smart Matching against User's Accounts ---
     let matchedAccountId: string | null = null;
     let matchedToAccountId: string | null = null;
 
-    if (accounts && accounts.length > 0) {
-      const senderBank = (parsedSlip.sender_bank || '').toUpperCase();
-      const senderBankPattern = KNOWN_BANKS.find((b) => b.code.toUpperCase() === senderBank);
-      const senderAcc = (parsedSlip.sender_account_masked || '').replace(/[^0-9]/g, '');
+    // Helper for robust bank matching
+    const matchBankHelper = (
+      slipBankCodeOrName: string | null | undefined,
+      accBankName: string | null | undefined,
+      accName: string | null | undefined
+    ): boolean => {
+      if (!slipBankCodeOrName) return false;
+      const slipBank = slipBankCodeOrName.trim().toUpperCase();
+      const accBank = (accBankName || '').trim().toUpperCase();
+      const accAccountName = (accName || '').trim().toUpperCase();
 
+      if (accBank && (slipBank.includes(accBank) || accBank.includes(slipBank))) return true;
+      if (accAccountName && (slipBank.includes(accAccountName) || accAccountName.includes(slipBank))) return true;
+
+      const slipPattern = KNOWN_BANKS.find(
+        (b) => b.code.toUpperCase() === slipBank || b.name.toUpperCase() === slipBank
+      );
+      if (slipPattern) {
+        if (slipPattern.regex.test(accBankName || '') || slipPattern.regex.test(accName || '')) {
+          return true;
+        }
+      }
+
+      const accPattern = KNOWN_BANKS.find(
+        (b) => (accBankName && b.regex.test(accBankName)) || (accName && b.regex.test(accName))
+      );
+      if (accPattern) {
+        if (accPattern.code.toUpperCase() === slipBank || accPattern.regex.test(slipBankCodeOrName)) {
+          return true;
+        }
+      }
+
+      return false;
+    };
+
+    if (accounts && accounts.length > 0) {
       let bestMatchScore = 0;
 
-      // Try matching source account by account number digits or bank name
+      // Try matching source account with robust masked number handling (prefix+suffix decomposition)
       for (const acc of accounts) {
-        const accDigits = (acc.account_number || '').replace(/[^0-9]/g, '');
-        const accBank = (acc.bank_name || '').toUpperCase();
-        const accName = (acc.account_name || '').toUpperCase();
+        const accNumber = acc.account_number || '';
 
         const numberMatches =
-          senderAcc.length >= 3 &&
-          accDigits.length >= 3 &&
-          (senderAcc.endsWith(accDigits.slice(-4)) ||
-           accDigits.endsWith(senderAcc.slice(-4)) ||
-           senderAcc === accDigits);
+          matchMaskedNumber(parsedSlip.sender_account_masked, accNumber) ||
+          matchMaskedNumber(accNumber, parsedSlip.sender_account_masked);
 
-        const bankMatches =
-          (senderBank && (accBank.includes(senderBank) || senderBank.includes(accBank))) ||
-          (senderBank && accName.includes(senderBank)) ||
-          (senderBankPattern &&
-            (senderBankPattern.regex.test(acc.bank_name || '') ||
-             senderBankPattern.regex.test(acc.account_name || '')));
+        const bankMatches = matchBankHelper(parsedSlip.sender_bank, acc.bank_name, acc.account_name);
 
         let score = 0;
         if (numberMatches && bankMatches) score = 100;
-        else if (numberMatches) score = 80;
+        else if (numberMatches) score = 85;
         else if (bankMatches && !acc.is_liability) score = 50;
 
         if (score > bestMatchScore) {
@@ -538,33 +583,26 @@ ${userAccountsContext}
       // If it's a TRANSFER or Credit Card payment, try matching destination account
       if (parsedSlip.type === 'TRANSFER' || parsedSlip.category === 'ชำระค่าบัตรเครดิต') {
         const receiverName = (parsedSlip.receiver_name || '').toUpperCase();
-        const receiverBank = (parsedSlip.receiver_bank || '').toUpperCase();
-        const receiverBankPattern = KNOWN_BANKS.find((b) => b.code.toUpperCase() === receiverBank);
-        const receiverAcc = (parsedSlip.receiver_account_masked || '').replace(/[^0-9]/g, '');
 
         for (const acc of accounts) {
           if (acc.id === matchedAccountId) continue;
 
-          const accDigits = (acc.account_number || '').replace(/[^0-9]/g, '');
-          const accBank = (acc.bank_name || '').toUpperCase();
-          const accName = (acc.account_name || '').toUpperCase();
-
+          const accNumber = acc.account_number || '';
           const numberMatches =
-            receiverAcc.length >= 3 &&
-            accDigits.length >= 3 &&
-            (receiverAcc.endsWith(accDigits.slice(-4)) ||
-             accDigits.endsWith(receiverAcc.slice(-4)) ||
-             receiverAcc === accDigits);
+            matchMaskedNumber(parsedSlip.receiver_account_masked, accNumber) ||
+            matchMaskedNumber(accNumber, parsedSlip.receiver_account_masked);
 
+          const bankMatches = matchBankHelper(parsedSlip.receiver_bank, acc.bank_name, acc.account_name);
           const nameMatches =
-            (receiverName && (receiverName.includes(accBank) || receiverName.includes(accName))) ||
-            (receiverBankPattern &&
-              (receiverBankPattern.regex.test(acc.bank_name || '') ||
-               receiverBankPattern.regex.test(acc.account_name || '')));
+            receiverName &&
+            ((acc.bank_name && receiverName.includes(acc.bank_name.toUpperCase())) ||
+             (acc.account_name && receiverName.includes(acc.account_name.toUpperCase())));
 
-          if (numberMatches || nameMatches) {
+          if (numberMatches && (bankMatches || acc.is_liability)) {
             matchedToAccountId = acc.id;
             break;
+          } else if (numberMatches || (bankMatches && acc.is_liability) || nameMatches) {
+            matchedToAccountId = acc.id;
           }
         }
       }
@@ -594,6 +632,15 @@ ${userAccountsContext}
         matched_to_account_id: matchedToAccountId,
         is_historical_suggested: isHistoricalSuggested,
         model_used: modelNameUsed,
+        matched_contact: matchedContact
+          ? {
+              id: matchedContact.id,
+              nickname: matchedContact.nickname,
+              group_name: matchedContact.group_name,
+              icon: matchedContact.icon,
+              default_category: matchedContact.default_category,
+            }
+          : null,
       },
       usage: usageData,
     });

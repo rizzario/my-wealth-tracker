@@ -28,9 +28,57 @@ import {
   CheckSquare,
   Square,
   ListFilter,
+  Heart,
+  Users,
+  Star,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { AccountOption } from './ExpenseIncomeSection';
+import {
+  UserFavoriteContact,
+  matchFavoriteContact,
+  matchMaskedNumber,
+  DEFAULT_SYSTEM_FAVORITE_CONTACTS,
+} from '@/lib/favorite-contacts';
+import { KNOWN_BANKS } from '@/lib/slip-regex-parser';
+import FavoriteContactsModal from './FavoriteContactsModal';
+
+/**
+ * Client-side Bank Matching Helper for Slip Inbox
+ */
+function matchBankHelper(
+  slipBank: string | null | undefined,
+  accBankName: string | null | undefined,
+  accName: string | null | undefined
+): boolean {
+  if (!slipBank) return false;
+  const sBank = slipBank.trim().toUpperCase();
+  const aBank = (accBankName || '').trim().toUpperCase();
+  const aName = (accName || '').trim().toUpperCase();
+
+  if (aBank && (sBank.includes(aBank) || aBank.includes(sBank))) return true;
+  if (aName && (sBank.includes(aName) || aName.includes(sBank))) return true;
+
+  const slipPattern = KNOWN_BANKS.find(
+    (b) => b.code.toUpperCase() === sBank || b.name.toUpperCase() === sBank
+  );
+  if (slipPattern) {
+    if (slipPattern.regex.test(accBankName || '') || slipPattern.regex.test(accName || '')) {
+      return true;
+    }
+  }
+
+  const accPattern = KNOWN_BANKS.find(
+    (b) => (accBankName && b.regex.test(accBankName)) || (accName && b.regex.test(accName))
+  );
+  if (accPattern) {
+    if (accPattern.code.toUpperCase() === sBank || accPattern.regex.test(slipBank)) {
+      return true;
+    }
+  }
+
+  return false;
+}
 
 export interface InboxSlipItem {
   id: string;
@@ -53,6 +101,13 @@ export interface InboxSlipItem {
   status: 'pending' | 'approved' | 'dismissed';
   created_at?: string;
   is_historical?: boolean;
+  matched_contact?: {
+    id: string;
+    nickname: string;
+    group_name: string;
+    icon?: string;
+    default_category?: string;
+  } | null;
 }
 
 interface SlipInboxModalProps {
@@ -86,6 +141,11 @@ export default function SlipInboxModal({
   const [expandedRawId, setExpandedRawId] = useState<string | null>(null);
   const [tableReady, setTableReady] = useState(true);
 
+  // Favorite Contacts & Groups State
+  const [contacts, setContacts] = useState<UserFavoriteContact[]>([]);
+  const [isContactsModalOpen, setIsContactsModalOpen] = useState(false);
+  const [contactToQuickAdd, setContactToQuickAdd] = useState<Partial<UserFavoriteContact> | null>(null);
+
   // Fetch pending inbox slips with direct Supabase browser client fallback
   const fetchInbox = useCallback(async () => {
     try {
@@ -98,6 +158,9 @@ export default function SlipInboxModal({
         if (res.ok) {
           const json = await res.json();
           fetched = json.data || [];
+          if (json.contacts) {
+            setContacts(json.contacts);
+          }
           if (json.table_ready !== undefined) {
             setTableReady(json.table_ready);
           }
@@ -119,13 +182,75 @@ export default function SlipInboxModal({
           if (!directErr && directData && directData.length > 0) {
             fetched = directData as InboxSlipItem[];
           }
+
+          // Fetch contacts directly if needed
+          const { data: contactsData } = await supabase
+            .from('user_favorite_contacts')
+            .select('*')
+            .order('group_name', { ascending: true })
+            .order('nickname', { ascending: true });
+          if (contactsData) {
+            setContacts(contactsData as UserFavoriteContact[]);
+          }
         } catch (dbErr) {
           console.warn('Direct Supabase fetch error:', dbErr);
         }
       }
 
-      setItems(fetched);
-      setSelectedIds(new Set(fetched.map((i: InboxSlipItem) => i.id)));
+      // 3. Client-side Auto-Enrichment: Auto-match accounts and favorite contacts on all items
+      let contactsToUse = contacts;
+      if (contactsToUse.length === 0) {
+        contactsToUse = DEFAULT_SYSTEM_FAVORITE_CONTACTS;
+      }
+
+      const autoEnriched = fetched.map((item) => {
+        let accId = item.matched_account_id;
+        let cat = item.category;
+        const contact = item.matched_contact || matchFavoriteContact(contactsToUse, item);
+
+        // Auto-match source account against accounts prop if currently empty
+        if (!accId && accounts && accounts.length > 0) {
+          let bestScore = 0;
+          for (const acc of accounts) {
+            const numberMatches =
+              matchMaskedNumber(item.sender_account_masked, acc.account_number) ||
+              matchMaskedNumber(acc.account_number, item.sender_account_masked);
+            const bankMatches = matchBankHelper(item.sender_bank, acc.bank_name, acc.account_name);
+            let score = 0;
+            if (numberMatches && bankMatches) score = 100;
+            else if (numberMatches) score = 85;
+            else if (bankMatches && !acc.is_liability) score = 50;
+
+            if (score > bestScore) {
+              bestScore = score;
+              accId = acc.id;
+            }
+          }
+        }
+
+        // Auto-assign category from favorite contact if currently 'อื่นๆ' or empty
+        if (contact?.default_category && (!cat || cat === 'อื่นๆ')) {
+          cat = contact.default_category;
+        }
+
+        return {
+          ...item,
+          matched_account_id: accId,
+          category: cat,
+          matched_contact: contact
+            ? {
+                id: contact.id,
+                nickname: contact.nickname,
+                group_name: contact.group_name,
+                icon: contact.icon,
+                default_category: contact.default_category,
+              }
+            : null,
+        };
+      });
+
+      setItems(autoEnriched);
+      setSelectedIds(new Set(autoEnriched.map((i: InboxSlipItem) => i.id)));
     } catch (err) {
       console.error('Failed to fetch slip inbox:', err);
     } finally {
@@ -428,6 +553,23 @@ xxx-x-x1234-x
 
           <div className="flex items-center gap-2">
             <button
+              type="button"
+              onClick={() => {
+                setContactToQuickAdd(null);
+                setIsContactsModalOpen(true);
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-pink-700 bg-pink-50 hover:bg-pink-100 border border-pink-200 rounded-xl transition cursor-pointer"
+              title="จัดการรายชื่อคนโปรดและกลุ่มครอบครัว"
+            >
+              <Heart className="w-3.5 h-3.5 text-pink-600 fill-pink-600" />
+              <span className="hidden sm:inline">คนโปรด & ครอบครัว</span>
+              <span className="sm:hidden">คนโปรด</span>
+              <span className="px-1.5 py-0.2 rounded-full bg-pink-200 text-pink-800 text-[10px] font-bold">
+                {contacts.length}
+              </span>
+            </button>
+
+            <button
               onClick={fetchInbox}
               disabled={isLoading}
               className="p-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-200/60 rounded-xl transition cursor-pointer"
@@ -576,6 +718,7 @@ xxx-x-x1234-x
               const isApproving = isApprovingId === item.id;
               const isRawExpanded = expandedRawId === item.id;
               const isSelected = selectedIds.has(item.id);
+              const matchedContact = item.matched_contact || matchFavoriteContact(contacts, item);
 
               return (
                 <div
@@ -654,6 +797,58 @@ xxx-x-x1234-x
                     </div>
                   </div>
 
+                  {/* Receiver & Contact Banner */}
+                  {(item.receiver_name || matchedContact || item.receiver_account_masked) && (
+                    <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-100 text-xs">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-[11px] font-semibold text-slate-500">ผู้รับ:</span>
+                        <span className="font-bold text-slate-800">
+                          {item.receiver_name || (matchedContact ? matchedContact.nickname : 'ไม่ระบุชื่อ')}
+                        </span>
+                        {item.receiver_bank && (
+                          <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                            {item.receiver_bank}
+                          </span>
+                        )}
+                        {item.receiver_account_masked && (
+                          <span className="font-mono text-[11px] text-slate-500">
+                            ({item.receiver_account_masked})
+                          </span>
+                        )}
+                      </div>
+
+                      <div>
+                        {matchedContact ? (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-pink-100 text-pink-700 border border-pink-200 shadow-2xs">
+                            <span>{matchedContact.icon || '💖'}</span>
+                            <span>{matchedContact.nickname}</span>
+                            <span className="text-[10px] text-pink-500 font-normal">({matchedContact.group_name})</span>
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setContactToQuickAdd({
+                                nickname: '',
+                                matched_names: item.receiver_name ? [item.receiver_name] : [],
+                                matched_accounts: item.receiver_account_masked ? [item.receiver_account_masked] : [],
+                                bank_code: item.receiver_bank || null,
+                                group_name: 'Family',
+                                default_category: 'ให้ครอบครัว',
+                              });
+                              setIsContactsModalOpen(true);
+                            }}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-pink-700 bg-pink-50 hover:bg-pink-100 border border-dashed border-pink-300 rounded-lg transition cursor-pointer"
+                            title="บันทึกผู้รับนี้เป็นคนโปรด (ครอบครัว/เพื่อน) เพื่อจัดหมวดหมู่อัตโนมัติ"
+                          >
+                            <Star className="w-3.5 h-3.5 text-pink-500" />
+                            <span>จำคนโปรด</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
                   {/* Form Grid */}
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
                     {/* Date & Time */}
@@ -731,7 +926,7 @@ xxx-x-x1234-x
                           }
                           className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg text-slate-700 focus:ring-2 focus:ring-violet-500 outline-hidden bg-white"
                         >
-                          {categories.map((c) => (
+                          {Array.from(new Set([item.category, 'ให้ครอบครัว', ...categories].filter(Boolean))).map((c) => (
                             <option key={c} value={c}>
                               {c}
                             </option>
@@ -828,6 +1023,19 @@ xxx-x-x1234-x
           )}
         </div>
       </div>
+
+      {/* Favorite Contacts & Family Groups Modal */}
+      <FavoriteContactsModal
+        isOpen={isContactsModalOpen}
+        onClose={() => {
+          setIsContactsModalOpen(false);
+          setContactToQuickAdd(null);
+        }}
+        contacts={contacts}
+        onContactsUpdated={fetchInbox}
+        expenseCategories={expenseCategories}
+        initialData={contactToQuickAdd}
+      />
     </div>
   );
 }
