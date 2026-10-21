@@ -48,3 +48,86 @@ html { scroll-padding-top: 5rem; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
 }
+
+/* Hallmark pre-emit critique: P4 H4 E4 S5 R5 V4. Existing emerald/Geist system. */
+.welcome-page {
+  --welcome-paper: #fafaf7;
+  --welcome-surface: #ffffff;
+  --welcome-ink: #182b25;
+  --welcome-muted: #52635b;
+  --welcome-rule: #dce3dd;
+  --welcome-accent: #065f46;
+  --welcome-dark: #022c22;
+  --welcome-soft: #eaf0e9;
+  background: var(--welcome-paper);
+  color: var(--welcome-ink);
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.welcome-page * { min-width: 0; }
+.welcome-width, .welcome-header { width: min(100% - 2rem, 1120px); margin-inline: auto; }
+.welcome-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding-block: 1rem; border-bottom: 1px solid var(--welcome-rule); }
+.welcome-brand { display: flex; align-items: center; gap: .65rem; font-size: .9rem; font-weight: 700; }
+.welcome-brand img { flex-shrink: 0; }
+.welcome-signin, .welcome-footer a { display: inline-flex; align-items: center; gap: .5rem; min-height: 44px; white-space: nowrap; font-size: .875rem; font-weight: 600; color: var(--welcome-accent); }
+.welcome-hero { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); align-items: center; gap: 4rem; padding-block: 5rem; }
+.welcome-eyebrow { font-size: .75rem; font-weight: 600; letter-spacing: .04em; color: var(--welcome-accent); margin-bottom: 1.1rem; }
+.welcome-page h1 { font-size: clamp(2.35rem, 5vw, 4rem); line-height: 1.22; font-weight: 650; letter-spacing: -.04em; overflow-wrap: anywhere; }
+.welcome-page h2 { font-size: clamp(1.65rem, 3vw, 2.4rem); font-weight: 600; line-height: 1.4; letter-spacing: -.025em; overflow-wrap: anywhere; }
+.welcome-lead { margin-top: 1.5rem; max-width: 36rem; font-size: 1rem; line-height: 1.95; color: var(--welcome-muted); }
+.welcome-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; margin-top: 2rem; }
+.welcome-primary, .welcome-secondary { display: inline-flex; align-items: center; justify-content: center; gap: .75rem; min-height: 48px; padding: .75rem 1.15rem; border-radius: .65rem; font-size: .875rem; font-weight: 600; white-space: nowrap; }
+.welcome-primary { background: var(--welcome-accent); color: var(--welcome-surface); }
+.welcome-primary:hover { background: var(--welcome-dark); }
+.welcome-secondary { border: 1px solid var(--welcome-rule); }
+.welcome-secondary:hover { background: var(--welcome-soft); }
+.welcome-caption { font-size: .75rem; line-height: 1.8; color: var(--welcome-muted); margin-top: 1rem; }
+.welcome-map { background: var(--welcome-soft); border: 1px solid var(--welcome-rule); padding: 2rem; border-radius: 1rem; }
+.welcome-map h2 { font-size: 1.7rem; }
+.welcome-map ul { margin-top: 1.5rem; }
+.welcome-map li { display: flex; gap: 1rem; align-items: center; padding: 1.1rem 0; border-bottom: 1px solid var(--welcome-rule); }
+.welcome-map li > svg { width: 22px; flex-shrink: 0; color: var(--welcome-accent); }
+.welcome-map strong, .welcome-map small { display: block; }
+.welcome-map strong { font-size: .9rem; font-weight: 600; }
+.welcome-map small { color: var(--welcome-muted); font-size: .75rem; margin-top: .35rem; }
+.welcome-map-foot { margin-top: 1.25rem; font-size: .8rem; line-height: 1.8; color: var(--welcome-accent); }
+.welcome-features { padding-block: 2rem 5rem; scroll-margin-top: 1.5rem; }
+.welcome-section-heading { padding-bottom: 2rem; }
+.welcome-feature-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 2.5rem; }
+.welcome-feature-grid article { border-top: 1px solid var(--welcome-rule); padding-block: 1.5rem 2rem; }
+.welcome-feature-top { display: flex; align-items: center; justify-content: space-between; color: var(--welcome-accent); margin-bottom: 1.2rem; }
+.welcome-feature-top span { font-size: .7rem; color: var(--welcome-muted); font-variant-numeric: tabular-nums; }
+.welcome-page h3 { font-size: 1.05rem; font-weight: 600; line-height: 1.6; }
+.welcome-feature-grid p { margin-block: .6rem 1.2rem; font-size: .9rem; line-height: 1.9; color: var(--welcome-muted); }
+.welcome-feature-grid small { font-size: .7rem; line-height: 1.8; color: var(--welcome-accent); }
+.welcome-start { padding-block: 4rem; background: var(--welcome-soft); }
+.welcome-start-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 4rem; }
+.welcome-start .welcome-primary { margin-top: 2rem; }
+.welcome-start li { display: flex; align-items: flex-start; gap: 1.5rem; padding-block: 1.25rem; border-bottom: 1px solid var(--welcome-rule); }
+.welcome-start li:first-child { padding-top: 0; }
+.welcome-start li > span { color: var(--welcome-accent); font-size: .8rem; padding-top: .25rem; }
+.welcome-start li p { margin-top: .5rem; color: var(--welcome-muted); font-size: .9rem; line-height: 1.9; }
+.welcome-faq { padding-block: 4rem; max-width: 760px; }
+.welcome-faq h2 { margin-bottom: 2rem; }
+.welcome-faq details { border-bottom: 1px solid var(--welcome-rule); }
+.welcome-faq summary { cursor: pointer; padding-block: 1.25rem; min-height: 48px; font-size: .95rem; font-weight: 600; }
+.welcome-faq details p { padding-bottom: 1.5rem; font-size: .9rem; line-height: 1.95; color: var(--welcome-muted); }
+.welcome-footer { border-top: 1px solid var(--welcome-rule); padding-block: 1.5rem; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 1rem; color: var(--welcome-muted); font-size: .75rem; }
+.welcome-skip { position: fixed; top: -100px; left: 1rem; z-index: 60; background: var(--welcome-surface); padding: 1rem; color: var(--welcome-accent); }
+.welcome-skip:focus { top: 1rem; }
+@media (max-width: 767px) {
+  .welcome-header { gap: .5rem; }
+  .welcome-brand { font-size: .75rem; gap: .35rem; }
+  .welcome-brand img { width: 35px; height: auto; }
+  .welcome-signin { font-size: .75rem; gap: .25rem; }
+  .welcome-hero { grid-template-columns: minmax(0, 1fr); gap: 2.5rem; padding-block: 3rem; }
+  .welcome-map { padding: 1.5rem; }
+  .welcome-feature-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 1.25rem; }
+  .welcome-start-grid { grid-template-columns: minmax(0, 1fr); gap: 2.5rem; }
+  .welcome-features { padding-bottom: 2rem; }
+  .welcome-start, .welcome-faq { padding-block: 2.5rem; }
+}
+@media (max-width: 374px) {
+  .welcome-feature-grid { grid-template-columns: minmax(0, 1fr); }
+  .welcome-actions { align-items: stretch; flex-direction: column; }
+}

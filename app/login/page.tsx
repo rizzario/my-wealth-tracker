@@ -3,6 +3,7 @@
 
 import { useState } from 'react';
 import Image from 'next/image';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import type { Provider } from '@supabase/supabase-js';
@@ -97,6 +98,7 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
       <div className="max-w-md w-full bg-white rounded-2xl shadow-sm border border-gray-100 p-8 space-y-6">
+        <Link href="/welcome" className="inline-flex min-h-11 items-center text-sm font-medium text-emerald-700 hover:underline">About Personal Wealth Hub</Link>
         <div className="text-center space-y-2">
           <div className="mx-auto w-16 h-16 flex items-center justify-center p-2 rounded-2xl bg-emerald-50 border border-emerald-100 shadow-xs mb-3">
             <Image

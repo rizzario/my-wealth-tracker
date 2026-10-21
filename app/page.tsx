@@ -1,6 +1,7 @@
 'use client';
 
 import Image from 'next/image';
+import GettingStarted from '@/components/GettingStarted';
 import MobileNavigation from '@/components/MobileNavigation';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
@@ -166,6 +167,7 @@ export default function Home() {
   const [allTransactions, setAllTransactions] = useState<any[]>([]);
   const [recurringCommitments, setRecurringCommitments] = useState<any[]>([]);
   const [hideValues, setHideValues] = useState<boolean>(false);
+  const [setupDataReady, setSetupDataReady] = useState(false);
   const [pendingSlipCount, setPendingSlipCount] = useState<number>(0);
 
   // Close desktop dropdown and mobile drawer on Escape key or click outside
@@ -258,6 +260,7 @@ export default function Home() {
       }
     }
 
+    setSetupDataReady(Boolean(hData && cData && fData && !hasMore));
     setAllTransactions(allTxns);
     setRecentTransactions(allTxns.slice(0, 5));
 
@@ -872,6 +875,14 @@ export default function Home() {
             </nav>
           )}
         </div>
+        {activeTab === 'overview' && setupDataReady && (
+          <GettingStarted
+            hasAccount={financialAccounts.length > 0}
+            hasAssets={holdings.length > 0 || cashPvd.length > 0}
+            hasTransaction={allTransactions.length > 0}
+            onNavigate={navigateMobile}
+          />
+        )}
         {/* Top Cards: Net Worth & Financial Health */}
         <section id="wealth-summary" aria-label="Wealth summary" className={`wealth-summary ${summaryExpanded ? 'grid' : 'hidden'} md:grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4`}>
           <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">

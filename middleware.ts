@@ -11,7 +11,7 @@ export async function middleware(request: NextRequest) {
   const pathname = url.pathname;
 
   // 1. สำคัญที่สุด: ถ้าเป็น path /auth หรือ /api/update-prices หรือ /api/slip-inbox ปล่อยให้ผ่านเลย (Route Handler จะตรวจสิทธิ์ Bearer Token / Session เอง)
-  if (pathname.startsWith('/auth') || pathname.startsWith('/api/update-prices') || pathname.startsWith('/api/slip-inbox')) {
+  if (pathname === '/welcome' || pathname.startsWith('/auth') || pathname.startsWith('/api/update-prices') || pathname.startsWith('/api/slip-inbox')) {
     return supabaseResponse;
   }
 
@@ -45,7 +45,7 @@ export async function middleware(request: NextRequest) {
     if (pathname.startsWith('/api/')) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    url.pathname = '/login';
+    url.pathname = pathname === '/' ? '/welcome' : '/login';
     return NextResponse.redirect(url);
   }
 
