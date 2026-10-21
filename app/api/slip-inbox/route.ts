@@ -896,43 +896,45 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: 'Missing slip id or ids to delete' }, { status: 400 });
     }
 
+    let affectedIds: { id: string }[] = [];
+    let operationError: any = null;
+
     const isSoft =
       searchParams.get('action') === 'dismiss' ||
       searchParams.get('mode') === 'dismiss' ||
       searchParams.get('soft') === 'true';
 
-    let error: any = null;
+    const { data, error } = await auth.supabase
+      .from('slip_inbox')
+      .delete()
+      .in('id', validIds)
+      .eq('user_id', auth.user!.id)
+      .select('id');
 
-    if (isSoft) {
-      // Soft-delete: update status to 'dismissed' (strictly scoped to user_id)
-      const { error: updateError } = await auth.supabase
-        .from('slip_inbox')
-        .update({ status: 'dismissed', updated_at: new Date().toISOString() })
-        .in('id', validIds)
-        .eq('user_id', auth.user!.id);
-      error = updateError;
-    } else {
-      // Hard-delete: permanently remove from staging table (strictly scoped to user_id)
-      const { error: deleteError } = await auth.supabase
-        .from('slip_inbox')
-        .delete()
-        .in('id', validIds)
-        .eq('user_id', auth.user!.id);
-      error = deleteError;
-    }
+    affectedIds = data ?? [];
+    operationError = error;
 
-    if (error) {
-      console.error('Failed to delete/dismiss slip_inbox items:', error);
-      return NextResponse.json({ error: error.message }, { status: 500 });
+    const affectedCount = affectedIds.length;
+
+    if (affectedCount === 0) {
+      return NextResponse.json(
+        {
+          status: 'not_found',
+          message: 'No accessible slips matched the requested IDs',
+          count: 0,
+        },
+        { status: 404 }
+      );
     }
 
     return NextResponse.json({
       status: 'success',
       message: isSoft
-        ? `Successfully dismissed ${validIds.length} slip(s)`
-        : `Successfully deleted ${validIds.length} slip(s)`,
-      count: validIds.length,
+        ? `Successfully dismissed ${affectedCount} slip(s)`
+        : `Successfully deleted ${affectedCount} slip(s)`,
+      count: affectedCount,
     });
+      
   } catch (err: any) {
     console.error('Error in DELETE /api/slip-inbox:', err);
     return NextResponse.json({ error: err.message }, { status: 500 });
