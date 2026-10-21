@@ -527,90 +527,16 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Action 1: Bulk Approve multiple inbox items into expense_income_transactions
+    // Phase 2.4.2: Bulk approval is paused until a single atomic bulk RPC exists.
+    // Do not fall back to separate INSERT + UPDATE calls.
     if (body.action === 'approve_bulk' || (body.action === 'approve' && Array.isArray(body.items))) {
-      const itemsToApprove = body.items || [];
-      if (itemsToApprove.length === 0) {
-        return NextResponse.json({ error: 'No items provided to approve' }, { status: 400 });
-      }
-
-      // Validate items
-      for (const item of itemsToApprove) {
-        if (!item.amount || parseFloat(item.amount) <= 0) {
-          return NextResponse.json(
-            { error: `Item with amount ${item.amount} must be greater than 0` },
-            { status: 400 }
-          );
-        }
-        if (item.type === 'TRANSFER' && (!item.matched_account_id && !item.account_id || !item.matched_to_account_id && !item.to_account_id)) {
-          return NextResponse.json(
-            { error: `Transfer of ฿${item.amount} requires both source and destination accounts` },
-            { status: 400 }
-          );
-        }
-      }
-
-      // Ownership Verification: Check that all source & destination accounts belong to auth.user.id
-      const accountIdsToVerify = itemsToApprove.flatMap((item: any) => [
-        item.matched_account_id || item.account_id,
-        item.type === 'TRANSFER' ? item.matched_to_account_id || item.to_account_id : null,
-      ]);
-
-      const ownershipCheck = await validateAccountOwnership(auth.supabase, auth.user!.id, accountIdsToVerify);
-      if (!ownershipCheck.valid) {
-        return NextResponse.json(
-          { error: 'Forbidden: Account ownership check failed', details: ownershipCheck.error },
-          { status: 403 }
-        );
-      }
-
-      const payloads = itemsToApprove.map((item: any) => ({
-        user_id: auth.user!.id, // Strictly server-resolved user identity
-        transaction_date: item.transaction_date || new Date().toISOString(),
-        type: item.type || 'EXPENSE',
-        transaction_type: (item.type || 'EXPENSE').toLowerCase(),
-        category: (item.category || 'อื่นๆ').trim(),
-        amount: parseFloat(item.amount) || 0,
-        account_id: item.matched_account_id || item.account_id || null,
-        to_account_id: item.type === 'TRANSFER' ? item.matched_to_account_id || item.to_account_id || null : null,
-        note: item.memo || item.note ? (item.memo || item.note).trim() : null,
-        is_historical: Boolean(item.is_historical),
-      }));
-
-      const { data: insertedTxns, error: insertError } = await auth.supabase
-        .from('expense_income_transactions')
-        .insert(payloads)
-        .select();
-
-      if (insertError) {
-        return NextResponse.json(
-          { error: 'Failed to insert transactions', details: insertError.message },
-          { status: 500 }
-        );
-      }
-
-      // Mark slip_inbox items as approved (scoped to user_id)
-      const idsToMark = itemsToApprove
-        .map((i: any) => i.id)
-        .filter((id: string) => id && !id.startsWith('ephemeral_'));
-
-      if (idsToMark.length > 0) {
-        await auth.supabase
-          .from('slip_inbox')
-          .update({ status: 'approved', updated_at: new Date().toISOString() })
-          .in('id', idsToMark)
-          .eq('user_id', auth.user!.id);
-      }
-
-      return NextResponse.json({
-        status: 'success',
-        message: `Successfully approved ${payloads.length} slips into expense transactions`,
-        count: payloads.length,
-        data: insertedTxns,
-      });
+      return NextResponse.json(
+        { error: 'Bulk approval temporarily unavailable until atomic bulk RPC is implemented' },
+        { status: 501 }
+      );
     }
 
-    // Action 2: Approve single inbox item into expense_income_transactions
+    // Action 2: Approve a single persisted slip atomically.
     if (body.action === 'approve') {
       const {
         id,
@@ -624,63 +550,71 @@ export async function POST(req: NextRequest) {
         is_historical = false,
       } = body;
 
-      if (!amount || parseFloat(amount) <= 0) {
-        return NextResponse.json({ error: 'Amount must be greater than 0' }, { status: 400 });
+      // Reject ephemeral and missing slip IDs: these cannot be safely approved by RPC.
+      const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      if (typeof id !== 'string' || !uuidPattern.test(id)) {
+        return NextResponse.json({ error: 'A persisted slip UUID is required for approval' }, { status: 400 });
       }
 
-      if (type === 'TRANSFER' && (!account_id || !to_account_id)) {
-        return NextResponse.json({ error: 'Transfers require both source and destination accounts' }, { status: 400 });
+      const parsedAmount = Number(amount);
+      if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+        return NextResponse.json({ error: 'Amount must be a positive number' }, { status: 400 });
       }
 
-      // Ownership Verification: Check that source & destination accounts belong to auth.user.id
-      const accountIdsToVerify = [
-        account_id,
-        type === 'TRANSFER' ? to_account_id : null,
-      ];
+      const resolvedType = String(type).trim().toUpperCase();
+      if (!['EXPENSE', 'INCOME', 'TRANSFER'].includes(resolvedType)) {
+        return NextResponse.json({ error: 'Invalid transaction type' }, { status: 400 });
+      }
+      if (typeof category !== 'string' || !category.trim()) {
+        return NextResponse.json({ error: 'Category is required' }, { status: 400 });
+      }
 
-      const ownershipCheck = await validateAccountOwnership(auth.supabase, auth.user!.id, accountIdsToVerify);
-      if (!ownershipCheck.valid) {
+      // The RPC expects a timestamp without time zone. Normalize to UTC wall-clock.
+      const parsedDate = transaction_date ? new Date(transaction_date) : new Date();
+      if (Number.isNaN(parsedDate.getTime())) {
+        return NextResponse.json({ error: 'Invalid transaction date' }, { status: 400 });
+      }
+      const rpcDate = parsedDate.toISOString().replace('T', ' ').replace('Z', '');
+
+      const sourceAccountId = account_id || null;
+      const destinationAccountId = resolvedType === 'TRANSFER' ? to_account_id || null : null;
+      if (resolvedType === 'TRANSFER' && (!sourceAccountId || !destinationAccountId || sourceAccountId === destinationAccountId)) {
+        return NextResponse.json({ error: 'Transfer requires two different accounts' }, { status: 400 });
+      }
+
+      const { data: transactionId, error: approvalError } = await auth.supabase.rpc(
+        'approve_slip_atomic',
+        {
+          p_slip_id: id,
+          p_amount: parsedAmount,
+          p_transaction_date: rpcDate,
+          p_type: resolvedType,
+          p_category: category.trim(),
+          p_account_id: sourceAccountId,
+          p_to_account_id: destinationAccountId,
+          p_note: typeof note === 'string' ? note.trim() || null : null,
+          p_is_historical: Boolean(is_historical),
+        }
+      );
+
+      if (approvalError) {
+        const message = approvalError.message || 'Approval failed';
+        const httpStatus = message.includes('SLIP_NOT_FOUND') ? 404
+          : message.includes('SLIP_ALREADY_PROCESSED') || approvalError.code === '23505' ? 409
+          : message.includes('AUTH_REQUIRED') ? 401
+          : message.includes('INVALID_') ? 400
+          : 500;
+        console.error('[slip-inbox] Atomic approval failed:', approvalError);
         return NextResponse.json(
-          { error: 'Forbidden: Account ownership check failed', details: ownershipCheck.error },
-          { status: 403 }
+          { error: httpStatus === 500 ? 'Failed to approve slip' : message },
+          { status: httpStatus }
         );
-      }
-
-      const txnPayload = {
-        user_id: auth.user!.id, // Strictly server-resolved user identity
-        transaction_date: transaction_date || new Date().toISOString(),
-        type,
-        transaction_type: type.toLowerCase(),
-        category: category.trim(),
-        amount: parseFloat(amount),
-        account_id: account_id || null,
-        to_account_id: type === 'TRANSFER' ? to_account_id || null : null,
-        note: note ? note.trim() : null,
-        is_historical: Boolean(is_historical),
-      };
-
-      const { data: insertedTxn, error: insertError } = await auth.supabase
-        .from('expense_income_transactions')
-        .insert([txnPayload])
-        .select()
-        .single();
-
-      if (insertError) {
-        return NextResponse.json({ error: 'Failed to insert transaction', details: insertError.message }, { status: 500 });
-      }
-
-      if (id && !id.startsWith('ephemeral_')) {
-        await auth.supabase
-          .from('slip_inbox')
-          .update({ status: 'approved', updated_at: new Date().toISOString() })
-          .eq('id', id)
-          .eq('user_id', auth.user!.id);
       }
 
       return NextResponse.json({
         status: 'success',
         message: 'Slip approved and saved to expense transactions',
-        data: insertedTxn,
+        transaction_id: transactionId,
       });
     }
 
