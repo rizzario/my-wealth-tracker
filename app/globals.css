@@ -25,3 +25,26 @@ body {
   font-family: var(--font-geist-sans), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Sarabun", "Prompt", sans-serif;
 }
 
+/* Hallmark pre-emit critique: P4 H4 E4 S4 R5 V3 */
+html, body { overflow-x: clip; }
+html { scroll-padding-top: 5rem; }
+:root { --mobile-focus: #047857; }
+:focus-visible { outline: 3px solid var(--mobile-focus); outline-offset: 3px; }
+.mobile-bottom-nav { padding-bottom: env(safe-area-inset-bottom, 0px); }
+@media (max-width: 767px) {
+  .wealth-app { padding-bottom: calc(5.5rem + env(safe-area-inset-bottom, 0px)); }
+  .wealth-app > header { padding-top: env(safe-area-inset-top, 0px); }
+  .wealth-app button, .wealth-app select, .wealth-app input:not([type='checkbox']):not([type='radio']) { min-height: 44px; }
+  .wealth-app button { touch-action: manipulation; }
+  .wealth-app input:not([type='checkbox']):not([type='radio']), .wealth-app select, .wealth-app textarea { font-size: 16px; max-width: 100%; }
+  .wealth-app main > * { min-width: 0; }
+  .wealth-app .overflow-x-auto { max-width: 100%; overscroll-behavior-x: contain; }
+  .wealth-app .overflow-x-auto table { min-width: 640px; }
+  .wealth-app .wealth-summary p { overflow-wrap: anywhere; }
+  .wealth-app .mobile-menu { max-height: calc(100dvh - 10rem - env(safe-area-inset-bottom, 0px)); overflow-y: auto; overscroll-behavior: contain; }
+  .wealth-app .fixed.inset-0 { padding-top: max(12px, env(safe-area-inset-top)); padding-bottom: max(12px, env(safe-area-inset-bottom)); }
+  .wealth-app .fixed.inset-0 > .bg-white { max-height: calc(100dvh - 32px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+}

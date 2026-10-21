@@ -1,7 +1,7 @@
-// app/page.tsx
 'use client';
 
 import Image from 'next/image';
+import MobileNavigation from '@/components/MobileNavigation';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { createClient } from '@/lib/supabase/client';
@@ -142,6 +142,16 @@ export default function Home() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
   const [openDropdown, setOpenDropdown] = useState<'investment' | 'asset' | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+
+  const [summaryExpanded, setSummaryExpanded] = useState(false);
+  const currentTab = ALL_TABS.find((tab) => tab.id === activeTab) ?? OVERVIEW_TAB;
+
+  const navigateMobile = (tab: TabKey) => {
+    setActiveTab(tab);
+    setMobileMenuOpen(false);
+    setSummaryExpanded(false);
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  };
 
   const desktopNavRef = useRef<HTMLElement>(null);
 
@@ -325,7 +335,7 @@ export default function Home() {
   }, [holdings, cashPvd, financialAccounts]);
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 pb-12">
+    <div className="wealth-app min-h-screen bg-slate-50 text-slate-900 pb-12">
       {/* Header */}
       <header className="bg-emerald-950 text-white border-b border-emerald-900 sticky top-0 z-30 shadow-md">
         <div className="max-w-6xl mx-auto px-3 sm:px-4">
@@ -615,6 +625,8 @@ export default function Home() {
               <button
                 type="button"
                 onClick={() => setMobileMenuOpen((prev) => !prev)}
+                aria-expanded={mobileMenuOpen}
+                aria-controls="mobile-menu"
                 className={`p-2 rounded-xl border transition cursor-pointer ${
                   mobileMenuOpen
                     ? 'bg-emerald-800 text-white border-emerald-600'
@@ -631,7 +643,7 @@ export default function Home() {
 
         {/* Mobile Slide-Down Drawer Menu (Expanded overlay on hamburger click) */}
         {mobileMenuOpen && (
-          <div className="md:hidden border-t border-emerald-900 bg-emerald-950/95 backdrop-blur-md px-4 py-4 space-y-4 shadow-xl">
+          <div id="mobile-menu" className="mobile-menu md:hidden border-t border-emerald-900 bg-emerald-950/95 backdrop-blur-md px-4 py-4 space-y-4 shadow-xl">
             <div className="text-[11px] font-semibold text-emerald-400 uppercase tracking-wider px-1">
               หมวดหมู่เมนูการทำงาน
             </div>
@@ -843,9 +855,25 @@ export default function Home() {
         )}
       </header>
 
-      <main className="max-w-6xl mx-auto px-4 mt-4 sm:mt-6 space-y-6">
+      <main id="main-content" className="w-full min-w-0 max-w-6xl mx-auto px-4 mt-4 sm:mt-6 space-y-6">
+        <div className="md:hidden">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="min-w-0 text-xl font-bold text-slate-900">{currentTab.shortLabel || currentTab.label}</h2>
+            <button type="button" onClick={() => setSummaryExpanded(!summaryExpanded)} aria-expanded={summaryExpanded} aria-controls="wealth-summary" className="shrink-0 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600">
+              {summaryExpanded ? '\u0e22\u0e48\u0e2d\u0e2a\u0e23\u0e38\u0e1b\u0e22\u0e2d\u0e14' : '\u0e14\u0e39\u0e2a\u0e23\u0e38\u0e1b\u0e22\u0e2d\u0e14'}
+            </button>
+          </div>
+          <p className="mt-1 text-xs leading-relaxed text-slate-500">{currentTab.description}</p>
+          {isInvestmentActive && (
+            <nav aria-label="Investment pages" className="mt-3 grid grid-cols-3 gap-2">
+              {INVESTMENT_GROUP.subItems.map((tab) => (
+                <button key={tab.id} type="button" onClick={() => navigateMobile(tab.id)} aria-current={activeTab === tab.id ? 'page' : undefined} className={`rounded-xl px-2 text-xs font-semibold whitespace-nowrap ${activeTab === tab.id ? 'bg-emerald-800 text-white' : 'border border-slate-200 bg-white text-slate-600'}`}>{tab.shortLabel}</button>
+              ))}
+            </nav>
+          )}
+        </div>
         {/* Top Cards: Net Worth & Financial Health */}
-        <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+        <section id="wealth-summary" aria-label="Wealth summary" className={`wealth-summary ${summaryExpanded ? 'grid' : 'hidden'} md:grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4`}>
           <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
             <div className="flex items-center justify-between">
               <span className="text-xs font-medium text-slate-500 flex items-center gap-1.5">
@@ -1006,6 +1034,7 @@ export default function Home() {
           />
         )}
       </main>
+      <MobileNavigation activeTab={activeTab} onNavigate={navigateMobile} pendingCount={pendingSlipCount} />
     </div>
   );
 }

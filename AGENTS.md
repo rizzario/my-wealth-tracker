@@ -243,9 +243,13 @@ Daily income, expense, and internal transfer / bill payment log.
 | `to_account_id` | UUID, nullable, FK → `financial_accounts(id)` | Destination account (inflow for transfer / debt deduction for credit card) |
 | `note` | TEXT, nullable | |
 | `is_historical` | BOOLEAN, default `false` | True when recorded from past/historical slips via Gemini AI (should bypass balance adjustment trigger) |
+| `source_slip_id` | UUID, nullable, FK → `slip_inbox(id)` ON DELETE SET NULL | Originating staging slip ID. Protected by unique index `uq_expense_transactions_source_slip` (one transaction per slip). |
 | `created_at` | TIMESTAMPTZ, default `now()` | |
 
 **Trigger:** `on_transaction_changed` — `AFTER INSERT OR UPDATE OR DELETE FOR EACH ROW EXECUTE apply_txn_to_balance()`. Automatically keeps both source and destination accounts accurately synchronized without double-counting debt payments as expenses. When `is_historical = true`, balance adjustments should be skipped to prevent distorting current account balances.
+
+**Unique Constraint & Deduplication:**
+- `uq_expense_transactions_source_slip`: Partial unique index `CREATE UNIQUE INDEX IF NOT EXISTS uq_expense_transactions_source_slip ON public.expense_income_transactions(source_slip_id) WHERE source_slip_id IS NOT NULL;`. Enforces that each staging slip in `slip_inbox` can be approved into at most one financial transaction, preventing accidental double-approval and duplicate records.
 
 ### 3.8 Net worth — canonical formula
 
@@ -359,6 +363,56 @@ Staging buffer table for incoming slips from external sources (iOS Shortcuts, mo
 | `created_at` / `updated_at` | TIMESTAMPTZ, default `now()` | |
 
 **Buffer Guard Principle**: External clients push to `slip_inbox` (or `/api/slip-inbox`). The row **does not affect balances** until the user reviews and clicks `[⚡ ยืนยันบันทึกลงรายจ่าย]`. This protects financial account balances from optical recognition errors.
+
+**Row Level Security (RLS):**
+```sql
+CREATE POLICY "Users manage own slips"
+ON public.slip_inbox
+FOR ALL
+TO authenticated
+USING ((SELECT auth.uid()) = user_id)
+WITH CHECK ((SELECT auth.uid()) = user_id);
+```
+
+#### 3.12.1 Atomic Slip Approval (`approve_slip_atomic`)
+
+Introduced in **Phase 2.4.1** to guarantee concurrency safety, data consistency, and duplicate prevention when transitioning a staged slip to a permanent financial transaction.
+
+```sql
+public.approve_slip_atomic(
+  p_slip_id uuid,
+  p_amount numeric,
+  p_transaction_date timestamp without time zone,
+  p_type text,
+  p_category text,
+  p_account_id uuid DEFAULT NULL,
+  p_to_account_id uuid DEFAULT NULL,
+  p_note text DEFAULT NULL,
+  p_is_historical boolean DEFAULT false
+) RETURNS bigint
+```
+
+**Key Architectural Guarantees:**
+1. **Row-level Concurrency Lock**:
+   Executes `SELECT * FROM public.slip_inbox WHERE id = p_slip_id AND user_id = v_user_id FOR UPDATE`. This row-lock guarantees that parallel requests or rapid user clicks cannot approve the same slip twice.
+2. **Server-Side Account Ownership Enforcement**:
+   Explicitly verifies that `p_account_id` and `p_to_account_id` exist in `public.financial_accounts` and belong to `auth.uid()`, preventing cross-user account attribution vulnerabilities.
+3. **Strict State Validations**:
+   - `AUTH_REQUIRED`: Caller must have an authenticated session (`auth.uid() IS NOT NULL`).
+   - `SLIP_NOT_FOUND`: Slip must exist and belong to `auth.uid()`.
+   - `SLIP_ALREADY_PROCESSED`: Status must be `'pending'`.
+   - `INVALID_AMOUNT`, `INVALID_DATE`, `INVALID_TYPE` (`EXPENSE`, `INCOME`, `TRANSFER`), `INVALID_CATEGORY`.
+   - `INVALID_TRANSFER_ACCOUNTS`: Transfers require distinct source and destination accounts.
+   - `INVALID_SOURCE_ACCOUNT` / `INVALID_DESTINATION_ACCOUNT`: Reject unowned accounts before transaction creation.
+4. **All-or-Nothing Mutation**:
+   Within a single database transaction, inserts the row into `public.expense_income_transactions` (linking `source_slip_id`), updates `public.slip_inbox` status to `'approved'` (`updated_at = now()`), and returns the generated `bigint` transaction id.
+5. **Security Defenses**:
+   - Defined as `SECURITY INVOKER` with `SET search_path = ''` to prevent search-path hijacking and execute strictly under the caller's RLS context.
+   - Execution restricted via:
+     ```sql
+     REVOKE ALL ON FUNCTION public.approve_slip_atomic(...) FROM PUBLIC, anon;
+     GRANT EXECUTE ON FUNCTION public.approve_slip_atomic(...) TO authenticated;
+     ```
 
 ---
 
@@ -514,6 +568,24 @@ To achieve 100% deterministic, 0-cost, and 0ms-latency slip extraction on-device
 5. **Favorite Contacts Directory & Auto-Enrichment (`lib/favorite-contacts.ts`)**:
    - `matchFavoriteContact(contacts, slip)`: Weighted heuristic matching across receiver name, receiver account, sender name, and bank code.
    - Automatically enriches slips with friendly nicknames (`💖 คุณแม่ [Family]`), auto-assigns custom default category (e.g. `'ให้ครอบครัว'`), and displays direct management controls in `SlipInboxModal`.
+
+### 4.7 Slip Ingestion & API Authentication Architecture
+
+To ensure multi-tenant security while supporting automated background slip uploads from iOS Shortcuts and mobile apps, `/api/slip-inbox` enforces a three-channel authentication matrix:
+
+| Channel | Authentication Credential | Identity Resolution | Permitted Actions / Scope |
+|---|---|---|---|
+| **Apple Shortcuts (iOS)** | Shared Secret (`SLIP_INBOX_SECRET` via `Authorization: Bearer` or `x-slip-inbox-secret`) | Bound strictly to `SLIP_INBOX_USER_ID` from server `.env` | **Write-Only Staging**: Ingest OCR text/images (`Action 3`). All management actions (`approve`, `approve_bulk`, `delete_contact`, `save_contact`, `DELETE`, `GET`) are rejected with `403 Forbidden`. |
+| **Next.js Web** | Supabase Session Cookie | Authenticated user via `supabase.auth.getUser()` | **Full Access**: Staging review, single/bulk approval, regex playground, favorite contacts management. |
+| **Expo Mobile App** | Supabase Access Token (JWT Bearer) | Authenticated user via `supabase.auth.getUser(token)` | **Full Access**: Mobile slip upload, staging review, and approval for authenticated account. |
+
+**Access Control & Isolation Principles:**
+1. **No Client-Supplied `user_id` Trust**:
+   The API never accepts `user_id` from client payloads, and never runs fallback queries like `.from('profiles').select('id').limit(1)`. The owner identity is always derived server-side.
+2. **Strict Favorite Contacts Scoping**:
+   Contact lookup queries use `.eq('user_id', userId)` without matching orphaned contacts (`user_id.is.null`).
+3. **Database-Level Atomic Transition**:
+   Slip approval calls `approve_slip_atomic` RPC (§3.12.1). The database acquires a row lock (`FOR UPDATE`), validates account ownership against `financial_accounts`, creates the financial transaction with `source_slip_id` (§3.7), and updates the slip status to `'approved'` in a single atomic transaction.
 
 ---
 
